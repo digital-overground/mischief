@@ -1,0 +1,59 @@
+{
+  "name": "mischief",
+  "displayName": "Mischief",
+  "version": "0.1.0",
+  "description": "A VS Code project, workspace, and agent-thread browser for MagPi.",
+  "categories": [
+    "Chat",
+    "Other"
+  ],
+  "keywords": [
+    "acp",
+    "agent",
+    "magpi",
+    "magpie",
+    "workspace"
+  ],
+  "homepage": "https://github.com/kylehumphrey-ao/mischief#readme",
+  "bugs": {
+    "url": "https://github.com/kylehumphrey-ao/mischief/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kylehumphrey-ao/mischief"
+  },
+  "publisher": "kyle",
+  "main": "./dist/extension.js",
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "build:watch": "node esbuild.mjs --watch",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint .",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.26.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.25.0",
+    "oxfmt": "0.65.0",
+    "oxlint": "1.80.0",
+    "typescript": "^5.7.0",
+    "ultracite": "7.10.6",
+    "vitest": "^3.0.0"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "packageManager": "pnpm@10.32.1"
+}
