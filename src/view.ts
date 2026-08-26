@@ -508,11 +508,11 @@ function renderTranscript() {
   else if (!selected.items.length) empty(transcript, 'Send a prompt to start this Thread.');
   else for (const item of selected.items) transcript.append(transcriptItem(item));
 
-  const draftKey = selected?.id + ':' + (selected?.drafts || []).join('\u0000');
+  const draftKey = selected?.id + ':' + (selected?.drafts || []).join('\\u0000');
   if (!selected?.drafts?.length) consumedDrafts = '';
   if (selected?.drafts?.length && consumedDrafts !== draftKey) {
     const box = $('composer');
-    box.value = [box.value, ...selected.drafts].filter(Boolean).join('\n\n');
+    box.value = [box.value, ...selected.drafts].filter(Boolean).join('\\n\\n');
     consumedDrafts = draftKey;
     vscode.postMessage({ type: 'draftsConsumed' });
   }
