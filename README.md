@@ -2,7 +2,7 @@
 
 A VS Code extension for managing Projects, Workspaces, and graphical Agent Threads powered by MagPi ACP.
 
-The first working slice provides a profile-wide Project/Workspace browser with Git worktree discovery, Git status, membership controls, and Workspace navigation. Thread support comes next.
+Mischief provides a profile-wide Project/Workspace browser plus durable MagPi-backed Threads with streamed messages, thinking, tools, plans, inline interaction requests, Agent configuration, cancellation, and transcript restoration.
 
 Its domain hierarchy is:
 
@@ -22,6 +22,8 @@ pnpm check
 ```
 
 Press **F5** in VS Code to launch the extension development host, or run `pnpm build` and package the extension with `vsce package`.
+
+Development automatically uses `../magpi-acp/dist/index.js` when present. Otherwise install `magpi-acp` on `PATH` or set `mischief.magpiAcpPath` to its executable or built `index.js`.
 
 ## Tooling
 

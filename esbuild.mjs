@@ -9,6 +9,7 @@ const context = await esbuild.context({
   target: "node20",
   outfile: "dist/extension.js",
   external: ["vscode"],
+  minify: !watch,
   sourcemap: true,
 });
 

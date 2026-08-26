@@ -76,6 +76,10 @@
       {
         "command": "mischief.refresh",
         "title": "Mischief: Refresh"
+      },
+      {
+        "command": "mischief.newThread",
+        "title": "Mischief: New Thread"
       }
     ],
     "configuration": {
@@ -85,6 +89,11 @@
           "type": "string",
           "default": "",
           "description": "Font family for the Mischief view. Empty uses the VS Code UI font."
+        },
+        "mischief.magpiAcpPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the MagPi ACP executable or built index.js. Empty uses magpi-acp from PATH. Reload the window after changing it."
         }
       }
     }
