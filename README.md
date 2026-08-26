@@ -2,7 +2,9 @@
 
 A VS Code extension for managing Projects, Workspaces, and graphical Agent Threads powered by MagPi ACP.
 
-The project is intentionally starting clean. Its domain hierarchy is:
+The first working slice provides a profile-wide Project/Workspace browser with Git worktree discovery, Git status, membership controls, and Workspace navigation. Thread support comes next.
+
+Its domain hierarchy is:
 
 ```text
 Project
@@ -19,7 +21,7 @@ pnpm install
 pnpm check
 ```
 
-Press **F5** from VS Code after adding a launch configuration, or run `pnpm build` and package the extension with `vsce package`.
+Press **F5** in VS Code to launch the extension development host, or run `pnpm build` and package the extension with `vsce package`.
 
 ## Tooling
 

@@ -1,0 +1,12 @@
+.gitignore
+.vscode/**
+src/**
+docs/**
+AGENTS.md
+CONTEXT.md
+skills-lock.json
+tsconfig.json
+esbuild.mjs
+pnpm-lock.yaml
+node_modules/**
+*.vsix

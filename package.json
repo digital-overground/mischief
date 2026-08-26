@@ -49,6 +49,46 @@
     "ultracite": "7.10.6",
     "vitest": "^3.0.0"
   },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mischief",
+          "title": "Mischief",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "mischief": [
+        {
+          "id": "mischief.view",
+          "name": "Mischief",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "mischief.addWorkspace",
+        "title": "Mischief: Add Workspace…"
+      },
+      {
+        "command": "mischief.refresh",
+        "title": "Mischief: Refresh"
+      }
+    ],
+    "configuration": {
+      "title": "Mischief",
+      "properties": {
+        "mischief.fontFamily": {
+          "type": "string",
+          "default": "",
+          "description": "Font family for the Mischief view. Empty uses the VS Code UI font."
+        }
+      }
+    }
+  },
   "activationEvents": [
     "onStartupFinished"
   ],
