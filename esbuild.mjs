@@ -2,15 +2,15 @@ import esbuild from "esbuild";
 
 const watch = process.argv.includes("--watch");
 const context = await esbuild.context({
-  entryPoints: ["src/extension.ts"],
   bundle: true,
-  format: "cjs",
-  platform: "node",
-  target: "node20",
-  outfile: "dist/extension.js",
+  entryPoints: ["src/extension.ts"],
   external: ["vscode"],
+  format: "cjs",
   minify: !watch,
+  outfile: "dist/extension.cjs",
+  platform: "node",
   sourcemap: true,
+  target: "node20",
 });
 
 if (watch) {

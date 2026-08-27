@@ -1,32 +1,53 @@
-import { expect, test, vi } from "vitest";
+import { Script } from "node:vm";
+
+import { describe, expect, test, vi } from "vitest";
+
 import { MischiefView } from "./view";
 
-vi.mock("vscode", () => ({
-  workspace: {
-    getConfiguration: () => ({ get: () => "" }),
-  },
-}));
+vi.mock(
+  import("vscode"),
+  () =>
+    ({
+      workspace: {
+        getConfiguration: vi.fn<() => { get: () => string }>(() => ({
+          get: () => "",
+        })),
+      },
+    }) as never
+);
 
-test("webview script remains valid after interpolation", () => {
-  const webview = {
-    options: {},
-    html: "",
-    onDidReceiveMessage: vi.fn(),
-    postMessage: vi.fn(),
-  };
-  const view = {
-    webview,
-    onDidDispose: vi.fn(),
-  };
-  const threads = {
-    onChange: vi.fn(),
-    snapshot: () => ({ threads: [] }),
-  };
-  const provider = new MischiefView({} as never, threads as never);
+describe("view provider", () => {
+  test("webview script remains valid after interpolation", () => {
+    const webview = {
+      html: "",
+      onDidReceiveMessage: vi.fn<() => void>(),
+      options: {},
+      postMessage: vi.fn<() => void>(),
+    };
+    const view = {
+      onDidDispose: vi.fn<() => void>(),
+      webview,
+    };
+    const threads = {
+      onChange: vi.fn<() => void>(),
+      snapshot: () => ({ threads: [] }),
+    };
+    const provider = new MischiefView({} as never, threads as never);
 
-  provider.resolveWebviewView(view as never);
+    provider.resolveWebviewView(view as never);
 
-  const script = webview.html.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/)?.[1];
-  expect(script).toBeDefined();
-  expect(() => new Function(script!)).not.toThrow();
+    const script = webview.html.match(
+      /<script nonce="(?<nonce>[^"]+)">(?<script>[\s\S]*?)<\/script>/u
+    )?.groups?.script;
+    expect(script).toBeDefined();
+    if (!script) {
+      throw new Error("Webview script was not generated");
+    }
+    expect(() => new Script(script)).not.toThrow();
+    expect(webview.html).toContain("event.key === 'Enter' && !event.shiftKey");
+    expect(webview.html).toContain(
+      "sendButton.textContent = running ? 'Stop' : 'Send';"
+    );
+    expect(webview.html).not.toContain('id="stop"');
+  });
 });

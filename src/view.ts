@@ -1,19 +1,35 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
+
 import * as vscode from "vscode";
-import { Projects, type ProjectsSnapshot, type Workspace } from "./projects/projects";
-import { Threads, type ThreadInteractionResponse } from "./threads/threads";
+
+import type {
+  Projects,
+  ProjectsSnapshot,
+  Workspace,
+} from "./projects/projects";
+import type { ThreadInteractionResponse, Threads } from "./threads/threads";
 
 const VIEW_ID = "mischief.view";
+const DEFAULT_FONT_FAMILY =
+  'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+// These helpers are assigned after the class declaration.
+// oxlint-disable prefer-const
+let html: () => string;
+let interactionResponse: (
+  value: unknown
+) => ThreadInteractionResponse | undefined;
+// oxlint-enable prefer-const
 
 export class MischiefView implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private projectsSnapshot: ProjectsSnapshot = { projects: [], ungrouped: [] };
+  private readonly projects: Projects;
+  private readonly threads: Threads;
 
-  constructor(
-    private readonly projects: Projects,
-    private readonly threads: Threads,
-  ) {
+  constructor(projects: Projects, threads: Threads) {
+    this.projects = projects;
+    this.threads = threads;
     threads.onChange(() => this.render());
   }
 
@@ -32,7 +48,9 @@ export class MischiefView implements vscode.WebviewViewProvider {
       canSelectMany: false,
       openLabel: "Add Workspace",
     });
-    if (!selected?.[0]) return;
+    if (!selected?.[0]) {
+      return;
+    }
     this.projectsSnapshot = await this.projects.add(selected[0].fsPath);
     await this.syncThreads();
     this.render();
@@ -57,9 +75,13 @@ export class MischiefView implements vscode.WebviewViewProvider {
     this.view = view;
     view.webview.options = { enableScripts: true };
     view.webview.html = html();
-    view.webview.onDidReceiveMessage((message: unknown) => void this.handleMessage(message));
+    view.webview.onDidReceiveMessage((message: unknown) => {
+      void this.handleMessage(message);
+    });
     view.onDidDispose(() => {
-      if (this.view === view) this.view = undefined;
+      if (this.view === view) {
+        this.view = undefined;
+      }
     });
     this.render();
   }
@@ -67,105 +89,203 @@ export class MischiefView implements vscode.WebviewViewProvider {
   private async syncThreads(): Promise<void> {
     const current = this.workspaces().find((workspace) => workspace.current);
     const active = this.threads.snapshot().workspace;
-    if (current && active !== current.path) await this.threads.openWorkspace(current.path);
-    else if (!current && active) await this.threads.closeWorkspace();
+    if (current && active !== current.path) {
+      await this.threads.openWorkspace(current.path);
+    } else if (!current && active) {
+      await this.threads.closeWorkspace();
+    }
   }
 
   private async handleMessage(message: unknown): Promise<void> {
-    if (!message || typeof message !== "object") return;
+    if (!message || typeof message !== "object") {
+      return;
+    }
     const data = message as Record<string, unknown>;
     try {
-      if (data.type === "ready") this.render();
-      else if (data.type === "add") await this.addWorkspace();
-      else if (data.type === "refresh") await this.refresh();
-      else if (data.type === "newThread") this.threads.newThread();
-      else if (data.type === "openWorkspace" && typeof data.path === "string") {
-        await this.openWorkspace(data.path);
-      } else if (data.type === "removeMembership" && typeof data.path === "string") {
-        await this.removeMembership(data.path);
-      } else if (data.type === "selectThread" && typeof data.id === "string") {
-        await this.threads.select(data.id);
-      } else if (data.type === "removeThread" && typeof data.id === "string") {
-        await this.threads.remove(data.id);
-      } else if (data.type === "renameThread") {
-        await this.renameThread();
-      } else if (data.type === "prompt" && typeof data.text === "string") {
-        if (data.text.length > 1_000_000) throw new Error("Prompt is too large");
-        this.run(this.threads.prompt(data.text));
-      } else if (data.type === "cancel") {
-        await this.threads.cancel();
-      } else if (data.type === "retry") {
-        this.run(this.threads.retry());
-      } else if (
-        data.type === "setConfig" &&
-        typeof data.id === "string" &&
-        (typeof data.value === "string" || typeof data.value === "boolean")
-      ) {
-        await this.threads.setConfig(data.id, data.value);
-      } else if (data.type === "respond" && typeof data.id === "string") {
-        const response = interactionResponse(data.response);
-        if (response) await this.threads.respond(data.id, response);
-      } else if (data.type === "draftsConsumed") {
-        this.threads.consumeDrafts();
-      } else if (data.type === "authenticate") {
-        this.authenticate();
-      } else if (data.type === "openLocation" && typeof data.path === "string") {
-        await this.openLocation(data.path, typeof data.line === "number" ? data.line : undefined);
-      } else if (data.type === "openDiff" && typeof data.path === "string") {
-        await this.openDiff(data.path);
+      if (await this.handleWorkspaceMessage(data)) {
+        return;
       }
+      if (await this.handleThreadMessage(data)) {
+        return;
+      }
+      await this.handleInteractionMessage(data);
     } catch (error) {
       void vscode.window.showErrorMessage(
-        `Mischief: ${error instanceof Error ? error.message : String(error)}`,
+        `Mischief: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }
 
-  private run(operation: Promise<void>): void {
-    void operation.catch((error) => {
-      void vscode.window.showErrorMessage(
-        `Mischief: ${error instanceof Error ? error.message : String(error)}`,
+  private async handleWorkspaceMessage(
+    data: Record<string, unknown>
+  ): Promise<boolean> {
+    if (data.type === "ready") {
+      this.render();
+      return true;
+    }
+    if (data.type === "add") {
+      await this.addWorkspace();
+      return true;
+    }
+    if (data.type === "refresh") {
+      await this.refresh();
+      return true;
+    }
+    if (data.type === "newThread") {
+      this.threads.newThread();
+      return true;
+    }
+    if (data.type === "openWorkspace" && typeof data.path === "string") {
+      await this.openWorkspace(data.path);
+      return true;
+    }
+    if (data.type === "removeMembership" && typeof data.path === "string") {
+      await this.removeMembership(data.path);
+      return true;
+    }
+    return false;
+  }
+
+  private async handleThreadMessage(
+    data: Record<string, unknown>
+  ): Promise<boolean> {
+    if (data.type === "selectThread" && typeof data.id === "string") {
+      await this.threads.select(data.id);
+      return true;
+    }
+    if (data.type === "removeThread" && typeof data.id === "string") {
+      await this.threads.remove(data.id);
+      return true;
+    }
+    if (data.type === "renameThread") {
+      await this.renameThread();
+      return true;
+    }
+    if (data.type === "prompt" && typeof data.text === "string") {
+      if (data.text.length > 1_000_000) {
+        throw new Error("Prompt is too large");
+      }
+      void MischiefView.run(this.threads.prompt(data.text));
+      return true;
+    }
+    if (data.type === "cancel") {
+      await this.threads.cancel();
+      return true;
+    }
+    if (data.type === "retry") {
+      void MischiefView.run(this.threads.retry());
+      return true;
+    }
+    if (
+      data.type === "setConfig" &&
+      typeof data.id === "string" &&
+      (typeof data.value === "string" || typeof data.value === "boolean")
+    ) {
+      await this.threads.setConfig(data.id, data.value);
+      return true;
+    }
+    return false;
+  }
+
+  private async handleInteractionMessage(
+    data: Record<string, unknown>
+  ): Promise<void> {
+    if (data.type === "respond" && typeof data.id === "string") {
+      const response = interactionResponse(data.response);
+      if (response) {
+        await this.threads.respond(data.id, response);
+      }
+      return;
+    }
+    if (data.type === "draftsConsumed") {
+      this.threads.consumeDrafts();
+      return;
+    }
+    if (data.type === "authenticate") {
+      this.authenticate();
+      return;
+    }
+    if (data.type === "openLocation" && typeof data.path === "string") {
+      await this.openLocation(
+        data.path,
+        typeof data.line === "number" ? data.line : undefined
       );
-    });
+      return;
+    }
+    if (data.type === "openDiff" && typeof data.path === "string") {
+      await this.openDiff(data.path);
+    }
+  }
+
+  private static async run(operation: Promise<void>): Promise<void> {
+    try {
+      await operation;
+    } catch (error) {
+      void vscode.window.showErrorMessage(
+        `Mischief: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
   private async openWorkspace(candidate: string): Promise<void> {
     const workspace = this.workspaces().find((item) => item.path === candidate);
-    if (!workspace || workspace.current) return;
-    await vscode.commands.executeCommand("vscode.openFolder", vscode.Uri.file(candidate), {
-      forceNewWindow: true,
-    });
+    if (!workspace || workspace.current) {
+      return;
+    }
+    await vscode.commands.executeCommand(
+      "vscode.openFolder",
+      vscode.Uri.file(candidate),
+      {
+        forceNewWindow: true,
+      }
+    );
   }
 
   private async removeMembership(candidate: string): Promise<void> {
-    const project = this.projectsSnapshot.projects.find((item) => item.root === candidate);
-    const standalone = this.projectsSnapshot.ungrouped.find((item) => item.path === candidate);
-    if (!project && !standalone) return;
+    const project = this.projectsSnapshot.projects.find(
+      (item) => item.root === candidate
+    );
+    const standalone = this.projectsSnapshot.ungrouped.find(
+      (item) => item.path === candidate
+    );
+    if (!project && !standalone) {
+      return;
+    }
     const removesCurrent =
-      project?.workspaces.some((workspace) => workspace.current) || standalone?.current;
+      project?.workspaces.some((workspace) => workspace.current) ||
+      standalone?.current;
     this.projectsSnapshot = await this.projects.remove(candidate);
-    if (removesCurrent) await this.threads.closeWorkspace();
+    if (removesCurrent) {
+      await this.threads.closeWorkspace();
+    }
     this.render();
   }
 
   private async renameThread(): Promise<void> {
-    const selected = this.threads.snapshot().selected;
-    if (!selected?.id) return;
+    const { selected } = this.threads.snapshot();
+    if (!selected?.id) {
+      return;
+    }
     const name = await vscode.window.showInputBox({
       title: "Rename Thread",
+      validateInput: (value) =>
+        value.trim() ? undefined : "Enter a Thread name",
       value: selected.name,
-      validateInput: (value) => (value.trim() ? undefined : "Enter a Thread name"),
     });
-    if (name !== undefined) await this.threads.rename(selected.id, name);
+    if (name !== undefined) {
+      await this.threads.rename(selected.id, name);
+    }
   }
 
   private authenticate(): void {
     const authentication = this.threads.snapshot().selected?.authentication;
-    if (!authentication) return;
+    if (!authentication) {
+      return;
+    }
     const terminal = vscode.window.createTerminal({
       name: `Mischief: ${authentication.label}`,
-      shellPath: authentication.command,
       shellArgs: authentication.args,
+      shellPath: authentication.command,
       ...(authentication.env ? { env: authentication.env } : {}),
     });
     terminal.show();
@@ -177,10 +297,13 @@ export class MischiefView implements vscode.WebviewViewProvider {
       .selected?.items.find(
         (entry) =>
           entry.locations?.some((location) => location.path === candidate) ||
-          entry.diffs?.some((diff) => diff.path === candidate),
+          entry.diffs?.some((diff) => diff.path === candidate)
       );
-    if (!item) return;
-    const selection = line && line > 0 ? new vscode.Range(line - 1, 0, line - 1, 0) : undefined;
+    if (!item) {
+      return;
+    }
+    const selection =
+      line && line > 0 ? new vscode.Range(line - 1, 0, line - 1, 0) : undefined;
     await vscode.window.showTextDocument(vscode.Uri.file(candidate), {
       preview: true,
       ...(selection ? { selection } : {}),
@@ -192,7 +315,9 @@ export class MischiefView implements vscode.WebviewViewProvider {
       .snapshot()
       .selected?.items.flatMap((item) => item.diffs ?? [])
       .find((item) => item.path === candidate);
-    if (!diff) return;
+    if (!diff) {
+      return;
+    }
     const [before, after] = await Promise.all([
       vscode.workspace.openTextDocument({ content: diff.oldText ?? "" }),
       vscode.workspace.openTextDocument({ content: diff.newText }),
@@ -201,44 +326,58 @@ export class MischiefView implements vscode.WebviewViewProvider {
       "vscode.diff",
       before.uri,
       after.uri,
-      `${path.basename(candidate)} (Agent Diff)`,
+      `${path.basename(candidate)} (Agent Diff)`
     );
   }
 
   private workspaces(): Workspace[] {
     return [
-      ...this.projectsSnapshot.projects.flatMap((project) => project.workspaces),
+      ...this.projectsSnapshot.projects.flatMap(
+        (project) => project.workspaces
+      ),
       ...this.projectsSnapshot.ungrouped,
     ];
   }
 
   private render(): void {
-    if (!this.view) return;
-    const font = vscode.workspace.getConfiguration("mischief").get<string>("fontFamily")?.trim();
-    void this.view.webview.postMessage({
-      type: "state",
+    if (!this.view) {
+      return;
+    }
+    const font = vscode.workspace
+      .getConfiguration("mischief")
+      .get<string>("fontFamily")
+      ?.trim();
+    const postMessage = this.view.webview.postMessage.bind(this.view.webview);
+    void postMessage({
+      font: font || DEFAULT_FONT_FAMILY,
       projects: this.projectsSnapshot,
       threads: this.threads.snapshot(),
-      font: font || "var(--vscode-font-family)",
+      type: "state",
     });
   }
 }
 
-export function registerMischiefView(
+export const registerMischiefView = (
   context: vscode.ExtensionContext,
-  provider: MischiefView,
-): void {
+  provider: MischiefView
+): void => {
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(VIEW_ID, provider, {
       webviewOptions: { retainContextWhenHidden: true },
-    }),
+    })
   );
-}
+};
 
-function interactionResponse(value: unknown): ThreadInteractionResponse | undefined {
-  if (!value || typeof value !== "object") return undefined;
+interactionResponse = (
+  value: unknown
+): ThreadInteractionResponse | undefined => {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
   const response = value as Record<string, unknown>;
-  if (response.action === "cancel") return { action: "cancel" };
+  if (response.action === "cancel") {
+    return { action: "cancel" };
+  }
   if (response.action === "select" && typeof response.optionId === "string") {
     return { action: "select", optionId: response.optionId };
   }
@@ -248,12 +387,15 @@ function interactionResponse(value: unknown): ThreadInteractionResponse | undefi
     typeof response.values === "object" &&
     !Array.isArray(response.values)
   ) {
-    return { action: "accept", values: response.values as Record<string, unknown> };
+    return {
+      action: "accept",
+      values: response.values as Record<string, unknown>,
+    };
   }
   return undefined;
-}
+};
 
-function html(): string {
+html = (): string => {
   const nonce = randomBytes(16).toString("hex");
   return `<!doctype html>
 <html lang="en">
@@ -262,9 +404,12 @@ function html(): string {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
 <style nonce="${nonce}">
-:root { --mischief-font: var(--vscode-font-family); }
+:root {
+  --mischief-font: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}
 * { box-sizing: border-box; }
-body { margin: 0; height: 100vh; overflow: hidden; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font: var(--vscode-font-size) var(--mischief-font); }
+body { margin: 0; height: 100vh; overflow: hidden; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font-family: var(--mischief-font); font-size: var(--vscode-font-size); }
 main { height: 100%; display: flex; flex-direction: column; }
 section { min-height: 0; display: flex; flex-direction: column; border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border)); }
 #projects { flex: 0 0 30%; }
@@ -286,11 +431,12 @@ button:disabled, textarea:disabled, select:disabled { opacity: .5; cursor: defau
 .meta { color: var(--vscode-descriptionForeground); font-size: 11px; white-space: nowrap; }
 .selected .meta { color: inherit; opacity: .8; }
 .empty { margin: auto; padding: 14px; color: var(--vscode-descriptionForeground); text-align: center; line-height: 1.5; }
-#thread-header { flex-wrap: wrap; text-transform: none; }
+#thread-header { text-transform: none; }
 #thread-title { font-size: 12px; }
-#configs { width: 100%; display: flex; gap: 4px; overflow-x: auto; }
+#configs { min-width: 0; display: flex; align-items: center; gap: 4px; overflow-x: auto; }
 #configs:empty { display: none; }
-#configs select { min-width: 0; flex: 1; border: 1px solid var(--vscode-dropdown-border); background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); }
+#configs label { display: flex; align-items: center; gap: 5px; color: var(--vscode-descriptionForeground); font-size: 11px; white-space: nowrap; }
+#configs select { min-width: 0; max-width: 220px; border: 0; border-radius: 3px; padding: 5px 7px; background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); }
 #transcript { flex: 1; min-height: 0; overflow: auto; padding: 8px; }
 .entry { margin: 0 0 10px; border-left: 2px solid transparent; padding-left: 8px; overflow-wrap: anywhere; }
 .entry.user { border-color: var(--vscode-charts-purple); }
@@ -313,11 +459,12 @@ details.entry > summary { cursor: pointer; color: var(--vscode-descriptionForegr
 .interaction-buttons { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
 .action { border: 1px solid var(--vscode-button-border, transparent); border-radius: 2px; padding: 3px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); cursor: pointer; }
 .action.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
-footer { border-top: 1px solid var(--vscode-panel-border); padding: 7px; background: var(--vscode-sideBar-background); }
-#composer { display: block; width: 100%; min-height: 58px; max-height: 160px; resize: vertical; border: 1px solid var(--vscode-input-border); border-radius: 2px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); padding: 6px; outline: none; }
-#composer:focus { border-color: var(--vscode-focusBorder); }
-.footer-row { margin-top: 5px; display: flex; align-items: center; gap: 5px; }
-#hint { flex: 1; color: var(--vscode-descriptionForeground); font-size: 11px; }
+footer { border-top: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background, var(--vscode-sideBar-background)); }
+#composer { display: block; width: 100%; min-height: 86px; max-height: 220px; resize: vertical; border: 0; background: transparent; color: var(--vscode-input-foreground); padding: 12px 14px 6px; outline: none; line-height: 1.45; }
+#composer:focus { outline: none; }
+.footer-row { min-height: 38px; display: flex; align-items: center; gap: 6px; padding: 4px 8px 7px; }
+#hint { flex: 1; min-width: 0; color: var(--vscode-descriptionForeground); font-size: 11px; }
+#send { min-width: 32px; }
 .cancelled { color: var(--vscode-descriptionForeground); font-size: 10px; }
 </style>
 </head>
@@ -325,7 +472,7 @@ footer { border-top: 1px solid var(--vscode-panel-border); padding: 7px; backgro
 <main>
   <section id="projects"><header><span class="heading">Projects / Workspaces</span><button class="icon" id="add" title="Add Workspace" aria-label="Add Workspace">＋</button><button class="icon" id="refresh" title="Refresh" aria-label="Refresh">↻</button></header><div class="content" id="project-list"></div></section>
   <section id="threads"><header><span class="heading" id="threads-title">Threads</span><button class="icon" id="new-thread" title="New Thread" aria-label="New Thread">＋</button></header><div class="content" id="thread-list"></div></section>
-  <section id="thread"><header id="thread-header"><span class="heading" id="thread-title">Thread</span><button class="icon" id="rename-thread" title="Rename Thread" aria-label="Rename Thread">✎</button><div id="configs"></div></header><div id="transcript"></div><div id="notice"></div><div id="actions"></div><div id="interaction"></div><footer><textarea id="composer" placeholder="Message MagPi…"></textarea><div class="footer-row"><span id="hint">⌘↵ to send</span><button class="action" id="stop">Stop</button><button class="action primary" id="send">Send</button></div></footer></section>
+  <section id="thread"><header id="thread-header"><span class="heading" id="thread-title">Thread</span><button class="icon" id="rename-thread" title="Rename Thread" aria-label="Rename Thread">✎</button></header><div id="transcript"></div><div id="notice"></div><div id="actions"></div><div id="interaction"></div><footer><textarea id="composer" placeholder="Message magpi-acp — @ to include context, / for commands"></textarea><div class="footer-row"><span id="hint">Enter to send · Shift+Enter for newline</span><div id="configs"></div><button class="action primary" id="send" title="Send" aria-label="Send">Send</button></div></footer></section>
 </main>
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
@@ -339,10 +486,15 @@ $('add').addEventListener('click', () => vscode.postMessage({ type: 'add' }));
 $('refresh').addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
 $('new-thread').addEventListener('click', () => vscode.postMessage({ type: 'newThread' }));
 $('rename-thread').addEventListener('click', () => vscode.postMessage({ type: 'renameThread' }));
-$('stop').addEventListener('click', () => vscode.postMessage({ type: 'cancel' }));
-$('send').addEventListener('click', send);
+$('send').addEventListener('click', () => {
+  if (state.threads.selected && ['running', 'waiting'].includes(state.threads.selected.status)) {
+    vscode.postMessage({ type: 'cancel' });
+  } else {
+    send();
+  }
+});
 $('composer').addEventListener('keydown', (event) => {
-  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); send(); }
+  if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send(); }
 });
 
 function send() {
@@ -501,8 +653,13 @@ function renderTranscript() {
   renderActions(selected);
   renderInteraction(selected?.interaction);
   $('composer').disabled = !selected;
-  $('send').disabled = !selected;
-  $('stop').disabled = !selected || !['running', 'waiting'].includes(selected.status);
+  const running = selected && ['running', 'waiting'].includes(selected.status);
+  const sendButton = $('send');
+  sendButton.disabled = !selected;
+  sendButton.textContent = running ? 'Stop' : 'Send';
+  sendButton.title = running ? 'Stop' : 'Send';
+  sendButton.setAttribute('aria-label', running ? 'Stop' : 'Send');
+  sendButton.classList.toggle('primary', !running);
 
   if (!selected) empty(transcript, 'Select a managed Workspace.');
   else if (!selected.items.length) empty(transcript, 'Send a prompt to start this Thread.');
@@ -704,4 +861,4 @@ vscode.postMessage({ type: 'ready' });
 </script>
 </body>
 </html>`;
-}
+};

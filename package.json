@@ -24,16 +24,17 @@
     "url": "https://github.com/kylehumphrey-ao/mischief"
   },
   "publisher": "kyle",
-  "main": "./dist/extension.js",
+  "type": "module",
+  "main": "./dist/extension.cjs",
   "scripts": {
     "build": "node esbuild.mjs",
     "build:watch": "node esbuild.mjs --watch",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "lint": "oxlint .",
+    "lint": "ultracite check",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.26.0"
@@ -88,7 +89,7 @@
         "mischief.fontFamily": {
           "type": "string",
           "default": "",
-          "description": "Font family for the Mischief view. Empty uses the VS Code UI font."
+          "description": "Font family for the Mischief view. Empty uses a monospace system font."
         },
         "mischief.magpiAcpPath": {
           "type": "string",

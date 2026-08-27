@@ -1,6 +1,15 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { ClientSideConnection, ndJsonStream, type Client } from "@agentclientprotocol/sdk";
-import type { AgentConnection, AgentConnectionFactory, AgentHandlers } from "./threads";
+import { spawn } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { once } from "node:events";
+
+import { ClientSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
+import type { Client } from "@agentclientprotocol/sdk";
+
+import type {
+  AgentConnection,
+  AgentConnectionFactory,
+  AgentHandlers,
+} from "./threads";
 
 export interface AgentLaunch {
   command: string;
@@ -8,24 +17,24 @@ export interface AgentLaunch {
   env?: Record<string, string>;
 }
 
-export function acpConnectionFactory(
-  launch: AgentLaunch,
-  log: (message: string) => void,
-): AgentConnectionFactory {
-  return (handlers) => new AcpConnection(launch, handlers, log);
-}
-
 class AcpConnection implements AgentConnection {
   private child?: ChildProcessWithoutNullStreams;
   private connection?: ClientSideConnection;
   private starting?: Promise<void>;
   private disposed = false;
+  private readonly launch: AgentLaunch;
+  private readonly handlers: AgentHandlers;
+  private readonly log: (message: string) => void;
 
   constructor(
-    private readonly launch: AgentLaunch,
-    private readonly handlers: AgentHandlers,
-    private readonly log: (message: string) => void,
-  ) {}
+    launch: AgentLaunch,
+    handlers: AgentHandlers,
+    log: (message: string) => void
+  ) {
+    this.launch = launch;
+    this.handlers = handlers;
+    this.log = log;
+  }
 
   async create(cwd: string) {
     await this.start();
@@ -34,15 +43,19 @@ class AcpConnection implements AgentConnection {
 
   async load(sessionId: string, cwd: string) {
     await this.start();
-    return this.requireConnection().loadSession({ sessionId, cwd, mcpServers: [] });
+    return this.requireConnection().loadSession({
+      cwd,
+      mcpServers: [],
+      sessionId,
+    });
   }
 
   async prompt(sessionId: string, text: string, messageId: string) {
     await this.start();
     return this.requireConnection().prompt({
-      sessionId,
-      prompt: [{ type: "text", text }],
       _meta: { "magpi-acp/client-message-id": messageId },
+      prompt: [{ text, type: "text" }],
+      sessionId,
     });
   }
 
@@ -51,12 +64,16 @@ class AcpConnection implements AgentConnection {
     await this.requireConnection().cancel({ sessionId });
   }
 
-  async setConfig(sessionId: string, configId: string, value: string | boolean): Promise<void> {
+  async setConfig(
+    sessionId: string,
+    configId: string,
+    value: string | boolean
+  ): Promise<void> {
     await this.start();
     await this.requireConnection().setSessionConfigOption(
       typeof value === "boolean"
-        ? { sessionId, configId, type: "boolean", value }
-        : { sessionId, configId, value },
+        ? { configId, sessionId, type: "boolean", value }
+        : { configId, sessionId, value }
     );
   }
 
@@ -64,12 +81,16 @@ class AcpConnection implements AgentConnection {
     this.disposed = true;
     this.connection = undefined;
     this.starting = undefined;
-    if (this.child && !this.child.killed) this.child.kill();
+    if (this.child && !this.child.killed) {
+      this.child.kill();
+    }
     this.child = undefined;
   }
 
   private async start(): Promise<void> {
-    if (this.connection) return;
+    if (this.connection) {
+      return;
+    }
     this.disposed = false;
     this.starting ??= this.startInternal();
     try {
@@ -87,35 +108,39 @@ class AcpConnection implements AgentConnection {
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.child = child;
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
+    child.stdout.setEncoding("utf-8");
+    child.stderr.setEncoding("utf-8");
     child.stderr.on("data", (chunk: string) => {
       const message = chunk.trim();
-      if (message) this.log(message);
+      if (message) {
+        this.log(message);
+      }
     });
     child.on("exit", (code, signal) => {
-      if (this.child !== child) return;
+      if (this.child !== child) {
+        return;
+      }
       this.child = undefined;
       this.connection = undefined;
       this.starting = undefined;
       if (!this.disposed) {
         this.handlers.error(
           new Error(
-            `MagPi ACP exited${code === null ? ` (${signal ?? "unknown"})` : ` (${code})`}`,
-          ),
+            `MagPi ACP exited${code === null ? ` (${signal ?? "unknown"})` : ` (${code})`}`
+          )
         );
       }
     });
 
     const output = new WritableStream<Uint8Array>({
-      write: (chunk) =>
-        new Promise<void>((resolve, reject) => {
-          if (!child.stdin.writable) {
-            reject(new Error("MagPi ACP input closed"));
-            return;
-          }
-          child.stdin.write(Buffer.from(chunk), (error) => (error ? reject(error) : resolve()));
-        }),
+      write: async (chunk) => {
+        if (!child.stdin.writable) {
+          throw new Error("MagPi ACP input closed");
+        }
+        if (!child.stdin.write(Buffer.from(chunk))) {
+          await once(child.stdin, "drain");
+        }
+      },
     });
     const input = new ReadableStream<Uint8Array>({
       start: (controller) => {
@@ -128,29 +153,46 @@ class AcpConnection implements AgentConnection {
     });
     const client: Client = {
       requestPermission: (request) => this.handlers.permission(request),
-      sessionUpdate: async ({ update }) => this.handlers.update(update),
-      unstable_createElicitation: (request) => this.handlers.elicitation(request),
+      sessionUpdate: async ({ update }) => {
+        await this.handlers.update(update);
+      },
+      unstable_createElicitation: (request) =>
+        this.handlers.elicitation(request),
     };
-    const connection = new ClientSideConnection(() => client, ndJsonStream(output, input));
+    const connection = new ClientSideConnection(
+      () => client,
+      ndJsonStream(output, input)
+    );
     this.connection = connection;
 
     const initialized = connection.initialize({
-      protocolVersion: 1,
-      clientInfo: { name: "mischief", title: "Mischief", version: "0.1.0" },
       clientCapabilities: {
-        plan: {},
-        elicitation: { form: {} },
         _meta: { "terminal-auth": true },
+        elicitation: { form: {} },
+        plan: {},
       },
+      clientInfo: { name: "mischief", title: "Mischief", version: "0.1.0" },
+      protocolVersion: 1,
     });
-    await Promise.race([
-      initialized,
-      new Promise<never>((_, reject) => child.once("error", reject)),
-    ]);
+    const childError = async (): Promise<never> => {
+      const [error] = await once(child, "error");
+      throw error;
+    };
+    await Promise.race([initialized, childError()]);
   }
 
   private requireConnection(): ClientSideConnection {
-    if (!this.connection) throw new Error("MagPi ACP is not connected");
+    if (!this.connection) {
+      throw new Error("MagPi ACP is not connected");
+    }
     return this.connection;
   }
 }
+
+export const acpConnectionFactory =
+  (
+    launch: AgentLaunch,
+    log: (message: string) => void
+  ): AgentConnectionFactory =>
+  (handlers) =>
+    new AcpConnection(launch, handlers, log);

@@ -4,29 +4,17 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 
 ## Language
 
-**Project**:
-A conceptual Git-based grouping deliberately managed by Mischief. A Project is anchored to one Git checkout root and contains that root plus any linked Git Workspaces.
-_Avoid_: Repository, application, VS Code workspace.
+**Project**: A conceptual Git-based grouping deliberately managed by Mischief. A Project is anchored to one Git checkout root and contains that root plus any linked Git Workspaces. _Avoid_: Repository, application, VS Code workspace.
 
-**Workspace**:
-A concrete folder or checkout where a Thread runs. Linked Git worktrees are separate Workspaces in the same Project.
-_Avoid_: Project, session, checkout when the folder itself is meant.
+**Workspace**: A concrete folder or checkout where a Thread runs. Linked Git worktrees are separate Workspaces in the same Project. _Avoid_: Project, session, checkout when the folder itself is meant.
 
-**Thread**:
-A conversation owned by Mischief and executed by one Agent in one Workspace.
-_Avoid_: Session, chat, task.
+**Thread**: A conversation owned by Mischief and executed by one Agent in one Workspace. _Avoid_: Session, chat, task.
 
-**Agent**:
-An ACP-speaking executable that runs Threads. MagPi ACP is the default Agent.
-_Avoid_: Model, provider, session.
+**Agent**: An ACP-speaking executable that runs Threads. MagPi ACP is the default Agent. _Avoid_: Model, provider, session.
 
-**Membership**:
-Whether a Project or standalone Workspace is present in Mischief's profile-wide managed list. Removing membership does not delete Threads or Agent history.
-_Avoid_: Deletion, archive.
+**Membership**: Whether a Project or standalone Workspace is present in Mischief's profile-wide managed list. Removing membership does not delete Threads or Agent history. _Avoid_: Deletion, archive.
 
-**ACP session**:
-The protocol-level runtime/session identified by an ACP Agent. It is an implementation detail behind a Mischief Thread.
-_Avoid_: Thread when speaking about the user's domain.
+**ACP session**: The protocol-level runtime/session identified by an ACP Agent. It is an implementation detail behind a Mischief Thread. _Avoid_: Thread when speaking about the user's domain.
 
 ## Relationships
 

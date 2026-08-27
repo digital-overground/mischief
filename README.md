@@ -31,7 +31,7 @@ Mischief is TypeScript-based and uses Ultracite's Oxlint + Oxfmt provider:
 
 - `pnpm format` formats supported files.
 - `pnpm format:check` verifies formatting.
-- `pnpm lint` runs Oxlint.
+- `pnpm lint` runs Ultracite's Oxlint + Oxfmt checks.
 - `pnpm typecheck` runs TypeScript.
 - `pnpm test` runs tests.
 - `pnpm check` runs every validation step and builds the extension.
