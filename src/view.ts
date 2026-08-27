@@ -11,8 +11,8 @@ import type {
 import type { ThreadInteractionResponse, Threads } from "./threads/threads";
 
 const VIEW_ID = "mischief.view";
-const DEFAULT_FONT_FAMILY =
-  'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+const DEFAULT_MONO_FONT_FAMILY =
+  '"Lilex", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
 // These helpers are assigned after the class declaration.
 // oxlint-disable prefer-const
 let html: () => string;
@@ -62,9 +62,10 @@ export class MischiefView implements vscode.WebviewViewProvider {
     this.render();
   }
 
-  newThread(): void {
-    this.threads.newThread();
+  async newThread(): Promise<void> {
+    const creating = this.threads.newThread();
     this.view?.show(true);
+    await creating;
   }
 
   configurationChanged(): void {
@@ -132,7 +133,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
       return true;
     }
     if (data.type === "newThread") {
-      this.threads.newThread();
+      await this.threads.newThread();
       return true;
     }
     if (data.type === "openWorkspace" && typeof data.path === "string") {
@@ -349,7 +350,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
       ?.trim();
     const postMessage = this.view.webview.postMessage.bind(this.view.webview);
     void postMessage({
-      font: font || DEFAULT_FONT_FAMILY,
+      font: font || DEFAULT_MONO_FONT_FAMILY,
       projects: this.projectsSnapshot,
       threads: this.threads.snapshot(),
       type: "state",
@@ -405,11 +406,12 @@ html = (): string => {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
 <style nonce="${nonce}">
 :root {
-  --mischief-font: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas,
+  --mischief-ui-font: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mischief-mono-font: "Lilex", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas,
     "Liberation Mono", "Courier New", monospace;
 }
 * { box-sizing: border-box; }
-body { margin: 0; height: 100vh; overflow: hidden; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font-family: var(--mischief-font); font-size: var(--vscode-font-size); }
+body { margin: 0; height: 100vh; overflow: hidden; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font-family: var(--mischief-ui-font); font-size: 13px; }
 main { height: 100%; display: flex; flex-direction: column; }
 section { min-height: 0; display: flex; flex-direction: column; border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border)); }
 #projects { flex: 0 0 30%; }
@@ -433,22 +435,25 @@ button:disabled, textarea:disabled, select:disabled { opacity: .5; cursor: defau
 .empty { margin: auto; padding: 14px; color: var(--vscode-descriptionForeground); text-align: center; line-height: 1.5; }
 #thread-header { text-transform: none; }
 #thread-title { font-size: 12px; }
-#configs { min-width: 0; display: flex; align-items: center; gap: 4px; overflow-x: auto; }
+#configs { min-width: 0; flex: 1; display: flex; align-items: center; gap: 3px; overflow-x: auto; }
 #configs:empty { display: none; }
-#configs label { display: flex; align-items: center; gap: 5px; color: var(--vscode-descriptionForeground); font-size: 11px; white-space: nowrap; }
-#configs select { min-width: 0; max-width: 220px; border: 0; border-radius: 3px; padding: 5px 7px; background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); }
-#transcript { flex: 1; min-height: 0; overflow: auto; padding: 8px; }
+#configs label { display: flex; align-items: center; gap: 3px; color: var(--vscode-descriptionForeground); font-size: 10px; white-space: nowrap; }
+.config-control { min-width: 0; display: flex; align-items: center; gap: 3px; }
+.config-icon { display: inline-flex; flex: none; width: 14px; height: 14px; color: var(--vscode-descriptionForeground); }
+#configs select { min-width: 0; max-width: 180px; height: 22px; border: 0; border-radius: 3px; padding: 1px 5px; background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); font-size: 11px; }
+.lucide { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+#transcript { flex: 1; min-height: 0; overflow: auto; padding: 8px; font-family: var(--mischief-mono-font); font-size: 13px; }
 .entry { margin: 0 0 10px; border-left: 2px solid transparent; padding-left: 8px; overflow-wrap: anywhere; }
 .entry.user { border-color: var(--vscode-charts-purple); }
 .entry.assistant { border-color: var(--vscode-textLink-foreground); }
 .entry.thought { border-color: var(--vscode-charts-yellow); color: var(--vscode-descriptionForeground); }
 .entry.plan { border-color: var(--vscode-charts-green); }
-.role { margin-bottom: 3px; color: var(--vscode-descriptionForeground); font-size: 10px; text-transform: uppercase; }
-.body, pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; line-height: 1.45; }
-details.entry > summary { cursor: pointer; color: var(--vscode-descriptionForeground); }
+.role { margin-bottom: 3px; color: var(--vscode-descriptionForeground); font-family: var(--mischief-ui-font); font-size: 10px; text-transform: uppercase; }
+.body, pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mischief-mono-font); line-height: 1.35; }
+details.entry > summary { cursor: pointer; color: var(--vscode-descriptionForeground); font-family: var(--mischief-ui-font); }
 .tool-body { margin-top: 6px; }
 .tool-body pre { margin: 4px 0; padding: 6px; background: var(--vscode-textCodeBlock-background); max-height: 180px; overflow: auto; }
-.link { border: 0; padding: 2px 0; display: block; background: transparent; color: var(--vscode-textLink-foreground); cursor: pointer; text-align: left; }
+.link { border: 0; padding: 2px 0; display: block; background: transparent; color: var(--vscode-textLink-foreground); cursor: pointer; font-family: var(--mischief-ui-font); text-align: left; }
 #notice { padding: 0 8px; color: var(--vscode-errorForeground); white-space: pre-wrap; }
 #actions { padding: 4px 8px; display: flex; gap: 5px; }
 #actions:empty, #interaction:empty { display: none; }
@@ -460,11 +465,17 @@ details.entry > summary { cursor: pointer; color: var(--vscode-descriptionForegr
 .action { border: 1px solid var(--vscode-button-border, transparent); border-radius: 2px; padding: 3px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); cursor: pointer; }
 .action.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
 footer { border-top: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background, var(--vscode-sideBar-background)); }
-#composer { display: block; width: 100%; min-height: 86px; max-height: 220px; resize: vertical; border: 0; background: transparent; color: var(--vscode-input-foreground); padding: 12px 14px 6px; outline: none; line-height: 1.45; }
+#processing { flex: none; padding: 0 10px 6px; color: var(--vscode-textLink-foreground); font-family: var(--mischief-mono-font); font-size: 18px; line-height: 1; }
+#processing[hidden] { display: none; }
+#composer { display: block; width: 100%; min-height: 86px; max-height: 220px; resize: vertical; border: 0; background: transparent; color: var(--vscode-input-foreground); padding: 12px 14px 6px; outline: none; font-family: var(--mischief-mono-font); font-size: 13px; line-height: 1.35; }
 #composer:focus { outline: none; }
-.footer-row { min-height: 38px; display: flex; align-items: center; gap: 6px; padding: 4px 8px 7px; }
-#hint { flex: 1; min-width: 0; color: var(--vscode-descriptionForeground); font-size: 11px; }
-#send { min-width: 32px; }
+.footer-row { min-height: 28px; display: flex; align-items: center; gap: 4px; padding: 2px 6px 4px; }
+#send { width: 22px; min-width: 22px; height: 22px; margin-left: auto; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+#send .lucide { width: 14px; height: 14px; }
+#send .stop-icon { display: none; fill: currentColor; }
+#send.stop { color: var(--vscode-errorForeground); }
+#send.stop .send-icon { display: none; }
+#send.stop .stop-icon { display: block; }
 .cancelled { color: var(--vscode-descriptionForeground); font-size: 10px; }
 </style>
 </head>
@@ -472,7 +483,7 @@ footer { border-top: 1px solid var(--vscode-panel-border); background: var(--vsc
 <main>
   <section id="projects"><header><span class="heading">Projects / Workspaces</span><button class="icon" id="add" title="Add Workspace" aria-label="Add Workspace">＋</button><button class="icon" id="refresh" title="Refresh" aria-label="Refresh">↻</button></header><div class="content" id="project-list"></div></section>
   <section id="threads"><header><span class="heading" id="threads-title">Threads</span><button class="icon" id="new-thread" title="New Thread" aria-label="New Thread">＋</button></header><div class="content" id="thread-list"></div></section>
-  <section id="thread"><header id="thread-header"><span class="heading" id="thread-title">Thread</span><button class="icon" id="rename-thread" title="Rename Thread" aria-label="Rename Thread">✎</button></header><div id="transcript"></div><div id="notice"></div><div id="actions"></div><div id="interaction"></div><footer><textarea id="composer" placeholder="Message magpi-acp — @ to include context, / for commands"></textarea><div class="footer-row"><span id="hint">Enter to send · Shift+Enter for newline</span><div id="configs"></div><button class="action primary" id="send" title="Send" aria-label="Send">Send</button></div></footer></section>
+  <section id="thread"><header id="thread-header"><span class="heading" id="thread-title">Thread</span><button class="icon" id="rename-thread" title="Rename Thread" aria-label="Rename Thread">✎</button></header><div id="transcript"></div><div id="notice"></div><div id="actions"></div><div id="interaction"></div><div id="processing" role="status" aria-label="Agent is working" hidden><span id="braille" aria-hidden="true">⠋</span></div><footer><textarea id="composer" placeholder="Message magpi-acp — @ to include context, / for commands"></textarea><div class="footer-row"><div id="configs"></div><button class="action" id="send" title="Send" aria-label="Send"><svg class="lucide send-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></svg><svg class="lucide stop-icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect></svg></button></div></footer></section>
 </main>
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
@@ -480,6 +491,8 @@ const $ = (id) => document.getElementById(id);
 let state = { projects: { projects: [], ungrouped: [] }, threads: { threads: [] } };
 let renderedThread;
 let consumedDrafts = '';
+let brailleFrame = 0;
+const brailleFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const openTools = new Set();
 
 $('add').addEventListener('click', () => vscode.postMessage({ type: 'add' }));
@@ -597,6 +610,73 @@ function renderThreads() {
   else if (!state.threads.threads.length) empty(list, 'No durable Threads yet.');
 }
 
+const icons = {
+  brain: '<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 18V5"></path><path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"></path><path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"></path><path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"></path><path d="M18 18a4 4 0 0 0 2-7.464"></path><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"></path><path d="M6 18a4 4 0 0 1-2-7.464"></path><path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"></path></svg>',
+  bot: '<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2"></path><path d="M20 14h2"></path><path d="M15 13v2"></path><path d="M9 13v2"></path></svg>',
+};
+
+function configKind(config) {
+  const id = String(config.id || '').toLowerCase();
+  const name = String(config.name || '').toLowerCase();
+  if (id === 'model' || name === 'model') return 'model';
+  if (id === 'thought_level' || id === 'thinking' || name.includes('thinking')) return 'thinking';
+  return '';
+}
+
+function displayModelName(name) {
+  const slash = name.indexOf('/');
+  return slash > 0 ? name.slice(slash + 1) : name;
+}
+
+function appendOptions(select, config, kind) {
+  if (kind === 'model') {
+    const groups = new Map();
+    for (const item of config.options) {
+      if (!('value' in item)) {
+        const group = document.createElement('optgroup');
+        group.label = item.name;
+        for (const child of item.options) group.append(option(child.value, displayModelName(child.name)));
+        select.append(group);
+        continue;
+      }
+      const slash = item.name.indexOf('/');
+      if (slash < 1) {
+        select.append(option(item.value, item.name));
+        continue;
+      }
+      const provider = item.name.slice(0, slash);
+      let group = groups.get(provider);
+      if (!group) {
+        group = document.createElement('optgroup');
+        group.label = provider;
+        groups.set(provider, group);
+        select.append(group);
+      }
+      group.append(option(item.value, displayModelName(item.name)));
+    }
+    return;
+  }
+  for (const item of config.options) {
+    if ('value' in item) {
+      const name = kind === 'thinking' ? item.name.replace(/^Thinking:\\s*/i, '') : item.name;
+      select.append(option(item.value, name));
+    } else {
+      const group = document.createElement('optgroup');
+      group.label = item.name;
+      for (const child of item.options) group.append(option(child.value, child.name));
+      select.append(group);
+    }
+  }
+}
+
+function configIcon(kind, title) {
+  const icon = document.createElement('span');
+  icon.className = 'config-icon';
+  icon.title = title;
+  icon.innerHTML = icons[kind];
+  return icon;
+}
+
 function renderConfig(selected) {
   const configs = $('configs');
   configs.replaceChildren();
@@ -613,21 +693,21 @@ function renderConfig(selected) {
       configs.append(label);
       continue;
     }
+    const kind = configKind(config);
     const select = document.createElement('select');
     select.title = config.description || config.name;
     select.setAttribute('aria-label', config.name);
-    for (const item of config.options) {
-      if ('value' in item) select.append(option(item.value, item.name));
-      else {
-        const group = document.createElement('optgroup');
-        group.label = item.name;
-        for (const child of item.options) group.append(option(child.value, child.name));
-        select.append(group);
-      }
-    }
+    appendOptions(select, config, kind);
     select.value = config.currentValue;
     select.addEventListener('change', () => vscode.postMessage({ type: 'setConfig', id: config.id, value: select.value }));
-    configs.append(select);
+    if (kind) {
+      const control = document.createElement('div');
+      control.className = 'config-control';
+      control.append(configIcon(kind === 'model' ? 'bot' : 'brain', config.name), select);
+      configs.append(control);
+    } else {
+      configs.append(select);
+    }
   }
 }
 
@@ -653,13 +733,13 @@ function renderTranscript() {
   renderActions(selected);
   renderInteraction(selected?.interaction);
   $('composer').disabled = !selected;
+  $('processing').hidden = !selected || selected.status !== 'running' || selected.streaming;
   const running = selected && ['running', 'waiting'].includes(selected.status);
   const sendButton = $('send');
   sendButton.disabled = !selected;
-  sendButton.textContent = running ? 'Stop' : 'Send';
   sendButton.title = running ? 'Stop' : 'Send';
   sendButton.setAttribute('aria-label', running ? 'Stop' : 'Send');
-  sendButton.classList.toggle('primary', !running);
+  sendButton.classList.toggle('stop', Boolean(running));
 
   if (!selected) empty(transcript, 'Select a managed Workspace.');
   else if (!selected.items.length) empty(transcript, 'Send a prompt to start this Thread.');
@@ -851,12 +931,17 @@ function empty(container, text) {
 window.addEventListener('message', (event) => {
   if (event.data?.type !== 'state') return;
   state = event.data;
-  document.documentElement.style.setProperty('--mischief-font', state.font);
+  document.documentElement.style.setProperty('--mischief-mono-font', state.font);
   renderProjects();
   renderThreads();
   renderTranscript();
 });
 setInterval(renderThreads, 60000);
+setInterval(() => {
+  if ($('processing').hidden) return;
+  brailleFrame = (brailleFrame + 1) % brailleFrames.length;
+  $('braille').textContent = brailleFrames[brailleFrame];
+}, 40);
 vscode.postMessage({ type: 'ready' });
 </script>
 </body>

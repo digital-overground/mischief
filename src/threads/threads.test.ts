@@ -1,4 +1,5 @@
 import { RequestError } from "@agentclientprotocol/sdk";
+import type { SessionConfigOption } from "@agentclientprotocol/sdk";
 import { describe, expect, test } from "vitest";
 
 import { Threads } from "./threads";
@@ -39,6 +40,8 @@ const memoryStorage = (): ThreadsStorage => {
 };
 
 class FakeAgent {
+  createCalls = 0;
+  initialConfigOptions: SessionConfigOption[] = [];
   failCreate = false;
   createError?: Error;
   replayOnLoad = false;
@@ -94,13 +97,17 @@ class FakeAgent {
         return Promise.resolve();
       },
       create: () => {
+        this.createCalls += 1;
         if (this.createError) {
           throw this.createError;
         }
         if (this.failCreate) {
           throw new Error("Agent unavailable");
         }
-        return Promise.resolve({ sessionId: "session-1" });
+        return Promise.resolve({
+          configOptions: this.initialConfigOptions,
+          sessionId: "session-1",
+        });
       },
       dispose: () => {
         this.disposed = true;
@@ -266,7 +273,7 @@ describe("threads module", () => {
     await threads.openWorkspace("/workspace");
     await threads.prompt("First");
     const firstId = threads.snapshot().selected?.id;
-    threads.newThread();
+    await threads.newThread();
     await threads.prompt("Second");
     const secondId = threads.snapshot().selected?.id;
 
@@ -322,21 +329,52 @@ describe("threads module", () => {
     });
   });
 
-  test("an empty New Thread is not durable", async () => {
+  test("new Threads start the Agent and expose its configuration", async () => {
+    const agent = new FakeAgent();
+    agent.initialConfigOptions = [
+      {
+        currentValue: "high",
+        id: "thinking",
+        name: "Thinking",
+        options: [{ name: "High", value: "high" }],
+        type: "select",
+      },
+    ];
+    const threads = new Threads(memoryStorage(), agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    await threads.newThread();
+
+    expect(agent.createCalls).toBe(1);
+    expect(threads.snapshot().selected).toMatchObject({
+      configOptions: [{ currentValue: "high", id: "thinking" }],
+      id: expect.any(String),
+      status: "idle",
+    });
+  });
+
+  test("new empty Threads are durable and can be added repeatedly", async () => {
     const storage = memoryStorage();
     const threads = new Threads(storage, new FakeAgent().factory);
     await threads.openWorkspace("/workspace");
     await threads.prompt("Keep me");
 
-    threads.newThread();
+    await threads.newThread();
+    const firstId = threads.snapshot().selected?.id;
+    await threads.newThread();
+    const secondId = threads.snapshot().selected?.id;
 
     expect(threads.snapshot()).toMatchObject({
-      selected: { id: null, name: "New Thread" },
-      threads: [{}],
+      selected: { id: secondId, name: "New Thread", status: "idle" },
+      threads: [
+        { id: secondId, name: "New Thread" },
+        { id: firstId, name: "New Thread" },
+        { name: "Fix tests" },
+      ],
     });
     const restored = new Threads(storage, new FakeAgent().factory);
     await restored.openWorkspace("/workspace");
-    expect(restored.snapshot().selected?.id).not.toBeNull();
+    expect(restored.snapshot().selected?.id).toBe(secondId);
   });
 
   test("stopping a running Thread preserves output and restores queued prompts as drafts", async () => {
@@ -346,7 +384,12 @@ describe("threads module", () => {
     await threads.openWorkspace("/workspace");
 
     const first = threads.prompt("First");
+    expect(threads.snapshot().selected).toMatchObject({
+      status: "running",
+      streaming: false,
+    });
     await agent.firstPromptStarted;
+    expect(threads.snapshot().selected?.streaming).toBeTruthy();
     const second = threads.prompt("Second");
     await agent.secondPromptStarted;
 
@@ -369,6 +412,7 @@ describe("threads module", () => {
         { kind: "assistant", text: "Partial" },
       ],
       status: "idle",
+      streaming: false,
     });
   });
 

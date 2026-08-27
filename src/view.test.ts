@@ -39,15 +39,19 @@ describe("view provider", () => {
     const script = webview.html.match(
       /<script nonce="(?<nonce>[^"]+)">(?<script>[\s\S]*?)<\/script>/u
     )?.groups?.script;
-    expect(script).toBeDefined();
     if (!script) {
       throw new Error("Webview script was not generated");
     }
     expect(() => new Script(script)).not.toThrow();
     expect(webview.html).toContain("event.key === 'Enter' && !event.shiftKey");
     expect(webview.html).toContain(
-      "sendButton.textContent = running ? 'Stop' : 'Send';"
+      "sendButton.classList.toggle('stop', Boolean(running));"
     );
-    expect(webview.html).not.toContain('id="stop"');
+    expect(webview.html).toMatch(
+      /id="processing"[\s\S]*id="braille"[\s\S]*<\/div><footer>[\s\S]*selected\.status !== 'running' \|\| selected\.streaming/u
+    );
+    expect(webview.html).not.toMatch(
+      /id="stop"|class="morse"|Enter to send|>Send<|>Stop</u
+    );
   });
 });

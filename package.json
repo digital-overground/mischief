@@ -89,7 +89,7 @@
         "mischief.fontFamily": {
           "type": "string",
           "default": "",
-          "description": "Font family for the Mischief view. Empty uses a monospace system font."
+          "description": "Font family for Mischief chat text. Empty uses a system monospace font."
         },
         "mischief.magpiAcpPath": {
           "type": "string",
@@ -102,6 +102,7 @@
   "activationEvents": [
     "onStartupFinished"
   ],
+  "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.85.0"
   },

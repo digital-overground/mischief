@@ -15,6 +15,7 @@ import type {
 } from "@agentclientprotocol/sdk";
 
 const STORAGE_KEY = "mischief.threads";
+const STREAMING_IDLE_MS = 300;
 
 export interface ThreadsStorage {
   get: <T>(key: string, fallback: T) => T;
@@ -117,6 +118,7 @@ export interface ThreadDetail {
   id: string | null;
   name: string;
   status: ThreadStatus;
+  streaming: boolean;
   items: TranscriptItem[];
   configOptions: SessionConfigOption[];
   interaction?: ThreadInteraction;
@@ -152,6 +154,8 @@ interface StoredThreads {
 interface Runtime {
   connection: AgentConnection;
   status: ThreadStatus;
+  streaming: boolean;
+  streamingTimer?: ReturnType<typeof setTimeout>;
   items: TranscriptItem[];
   configOptions: SessionConfigOption[];
   drafts: string[];
@@ -163,6 +167,14 @@ interface Runtime {
   elicitationRequest?: Extract<CreateElicitationRequest, { mode: "form" }>;
   resolveElicitation?: (response: CreateElicitationResponse) => void;
 }
+
+const stopStreaming = (runtime: Runtime): void => {
+  if (runtime.streamingTimer) {
+    clearTimeout(runtime.streamingTimer);
+    runtime.streamingTimer = undefined;
+  }
+  runtime.streaming = false;
+};
 
 // These helpers are assigned after the class declaration.
 // oxlint-disable prefer-const
@@ -243,13 +255,25 @@ export class Threads {
     return () => this.listeners.delete(listener);
   }
 
-  newThread(): void {
+  async newThread(): Promise<void> {
     if (!this.workspace) {
       return;
     }
-    this.selectedId = undefined;
-    this.draft = true;
+    const now = new Date().toISOString();
+    const record: StoredThread = {
+      createdAt: now,
+      id: randomUUID(),
+      name: "New Thread",
+      updatedAt: now,
+      workspace: this.workspace,
+    };
+    this.stored.threads.unshift(record);
+    this.stored.selected[this.workspace] = record.id;
+    this.selectedId = record.id;
+    this.draft = false;
+    await this.persist();
     this.emit();
+    await this.createSession(record, this.runtime(record));
   }
 
   async select(id: string): Promise<void> {
@@ -364,17 +388,10 @@ export class Threads {
       await runtime.registration;
       runtime.registration = undefined;
       if (!record.sessionId) {
-        runtime.setup ??= (async () => {
-          const setup = await runtime.connection.create(record.workspace);
-          runtime.configOptions = setup.configOptions ?? [];
-          this.emit();
-          return setup.sessionId;
-        })();
-        try {
-          record.sessionId = await runtime.setup;
-        } finally {
-          runtime.setup = undefined;
-        }
+        await this.createSession(record, runtime);
+      }
+      if (!record.sessionId) {
+        throw new Error(record.error ?? "Agent unavailable");
       }
       const result = await runtime.connection.prompt(
         record.sessionId,
@@ -392,7 +409,8 @@ export class Threads {
       runtime.status = "error";
       record.error = errorMessage(error);
       record.retryText = message;
-      record.authentication = terminalAuthentication(error);
+      record.authentication =
+        terminalAuthentication(error) ?? record.authentication;
     } finally {
       runtime.pending = runtime.pending.filter(
         (pending) => pending.id !== messageId
@@ -400,6 +418,9 @@ export class Threads {
       updateQueue(runtime);
       if (runtime.status !== "error" && !runtime.interaction) {
         runtime.status = runtime.pending.length ? "running" : "idle";
+      }
+      if (runtime.status !== "running") {
+        stopStreaming(runtime);
       }
     }
     await this.persist();
@@ -424,6 +445,7 @@ export class Threads {
       return;
     }
     if (!record.sessionId) {
+      await this.createSession(record, this.runtime(record));
       return;
     }
     this.runtimes.get(record.id)?.connection.dispose();
@@ -494,6 +516,7 @@ export class Threads {
       const resolve = runtime.resolvePermission;
       runtime.resolvePermission = undefined;
       runtime.interaction = undefined;
+      stopStreaming(runtime);
       runtime.status = "running";
       this.emit();
       resolve(selected);
@@ -519,6 +542,7 @@ export class Threads {
       runtime.resolveElicitation = undefined;
       runtime.elicitationRequest = undefined;
       runtime.interaction = undefined;
+      stopStreaming(runtime);
       runtime.status = "running";
       this.emit();
       resolve(result);
@@ -604,6 +628,7 @@ export class Threads {
         items: [],
         name: "New Thread",
         status: "idle",
+        streaming: false,
       };
     }
     const runtime = this.runtimes.get(record.id);
@@ -630,21 +655,39 @@ export class Threads {
       items,
       name: record.name,
       status: runtime?.status ?? (record.error ? "error" : "idle"),
+      streaming: Boolean(runtime?.streaming),
     };
   }
 
   dispose(): void {
     for (const runtime of this.runtimes.values()) {
+      stopStreaming(runtime);
       runtime.connection.dispose();
     }
     this.runtimes.clear();
     this.listeners.clear();
   }
 
+  private markStreaming(runtime: Runtime, text: string): void {
+    if (!text) {
+      return;
+    }
+    runtime.streaming = true;
+    if (runtime.streamingTimer) {
+      clearTimeout(runtime.streamingTimer);
+    }
+    runtime.streamingTimer = setTimeout(() => {
+      runtime.streamingTimer = undefined;
+      runtime.streaming = false;
+      this.emit();
+    }, STREAMING_IDLE_MS);
+  }
+
   private static async cancelRuntime(
     record: StoredThread,
     runtime: Runtime
   ): Promise<void> {
+    stopStreaming(runtime);
     runtime.resolvePermission?.({ outcome: { outcome: "cancelled" } });
     runtime.resolveElicitation?.({ action: "cancel" });
     runtime.resolvePermission = undefined;
@@ -668,6 +711,35 @@ export class Threads {
     runtime.status = "idle";
   }
 
+  private async createSession(
+    record: StoredThread,
+    runtime: Runtime
+  ): Promise<void> {
+    try {
+      runtime.setup ??= (async () => {
+        const setup = await runtime.connection.create(record.workspace);
+        runtime.configOptions = setup.configOptions ?? [];
+        this.emit();
+        return setup.sessionId;
+      })();
+      record.sessionId = await runtime.setup;
+      record.error = undefined;
+      record.authentication = undefined;
+      if (!runtime.pending.length && !runtime.interaction) {
+        runtime.status = "idle";
+      }
+    } catch (error) {
+      stopStreaming(runtime);
+      runtime.status = "error";
+      record.error = errorMessage(error);
+      record.authentication = terminalAuthentication(error);
+    } finally {
+      runtime.setup = undefined;
+    }
+    await this.persist();
+    this.emit();
+  }
+
   private async load(record: StoredThread): Promise<void> {
     if (!record.sessionId || this.runtimes.has(record.id)) {
       return;
@@ -679,11 +751,13 @@ export class Threads {
         record.workspace
       );
       runtime.configOptions = setup.configOptions ?? [];
+      stopStreaming(runtime);
       runtime.status = "idle";
       record.error = undefined;
       record.authentication = undefined;
       this.emit();
     } catch (error) {
+      stopStreaming(runtime);
       runtime.status = "error";
       record.error = errorMessage(error);
       record.authentication = terminalAuthentication(error);
@@ -705,6 +779,7 @@ export class Threads {
           record.error = errorMessage(error);
           const active = this.runtimes.get(record.id);
           if (active) {
+            stopStreaming(active);
             active.status = "error";
           }
           void this.persist();
@@ -717,6 +792,7 @@ export class Threads {
       items: [],
       pending: [],
       status: record.error ? "error" : "idle",
+      streaming: false,
     };
     this.runtimes.set(record.id, runtime);
     return runtime;
@@ -730,6 +806,7 @@ export class Threads {
     if (!runtime) {
       return Promise.resolve({ outcome: { outcome: "cancelled" } });
     }
+    stopStreaming(runtime);
     runtime.status = "waiting";
     runtime.interaction = {
       id: randomUUID(),
@@ -756,6 +833,7 @@ export class Threads {
     if (!runtime || request.mode !== "form") {
       return Promise.resolve({ action: "decline" });
     }
+    stopStreaming(runtime);
     runtime.status = "waiting";
     runtime.interaction = {
       fields: elicitationFields(request),
@@ -790,6 +868,7 @@ export class Threads {
       update.sessionUpdate === "agent_message_chunk" &&
       update.content.type === "text"
     ) {
+      this.markStreaming(runtime, update.content.text);
       appendText(
         runtime.items,
         "assistant",
@@ -800,6 +879,7 @@ export class Threads {
       update.sessionUpdate === "agent_thought_chunk" &&
       update.content.type === "text"
     ) {
+      this.markStreaming(runtime, update.content.text);
       appendText(
         runtime.items,
         "thought",
