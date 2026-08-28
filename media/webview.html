@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; style-src {{cspSource}}; script-src 'nonce-{{nonce}}';"
+      content="default-src 'none'; img-src data:; style-src {{cspSource}}; script-src 'nonce-{{nonce}}';"
     />
     <link rel="stylesheet" href="{{styleUri}}" />
   </head>
@@ -105,6 +105,7 @@
             id="composer"
             placeholder="Message magpi-acp — @ to include context, / for commands"
           ></textarea>
+          <div id="attachments" aria-live="polite"></div>
           <div class="footer-row">
             <div id="usage" hidden tabindex="0">
               <div id="usage-fill"></div>

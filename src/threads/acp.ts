@@ -27,6 +27,7 @@ import type {
   AgentToolUpdate,
   AgentUpdate,
   ElicitationField,
+  PromptImage,
   TerminalAuthentication,
   ThreadConfigChoice,
   ThreadConfigOption,
@@ -380,7 +381,7 @@ export const translateSessionUpdate = (
     case "user_message_chunk":
     case "agent_message_chunk":
     case "agent_thought_chunk": {
-      if (update.content.type !== "text") {
+      if (update.content.type !== "text" && update.content.type !== "image") {
         return undefined;
       }
       let kind: "user" | "assistant" | "thought" = "thought";
@@ -392,7 +393,16 @@ export const translateSessionUpdate = (
       return {
         ...(update.messageId ? { messageId: update.messageId } : {}),
         kind,
-        text: update.content.text,
+        ...(update.content.type === "text"
+          ? { text: update.content.text }
+          : {
+              images: [
+                {
+                  data: update.content.data,
+                  mimeType: update.content.mimeType,
+                },
+              ],
+            }),
         type: "message",
       };
     }
@@ -542,12 +552,20 @@ class AcpConnection implements AgentConnection {
     });
   }
 
-  prompt(sessionId: string, text: string, messageId: string) {
+  prompt(
+    sessionId: string,
+    text: string,
+    messageId: string,
+    images: PromptImage[]
+  ) {
     return AcpConnection.call(async () => {
       await this.start();
       const response = await this.requireConnection().prompt({
         _meta: { "magpi-acp/client-message-id": messageId },
-        prompt: [{ text, type: "text" }],
+        prompt: [
+          ...(text ? [{ text, type: "text" as const }] : []),
+          ...images.map((image) => ({ ...image, type: "image" as const })),
+        ],
         sessionId,
       });
       return {

@@ -90,6 +90,10 @@ describe("view provider", () => {
       modelAlignment: /#configs option \{ text-align: right; \}/u.test(
         document
       ),
+      pastedImage:
+        /id="attachments"[\s\S]*readAsDataURL[\s\S]*addEventListener\('paste'[\s\S]*type: 'prompt'/u.test(
+          document
+        ),
       planLayout:
         /#plan-body \{ max-height: 110px; overflow-y: auto;[\s\S]*id="processing"[\s\S]*id="plan"[\s\S]*<\/div><footer>/u.test(
           document
@@ -110,6 +114,10 @@ describe("view provider", () => {
         /const transcriptNodes[\s\S]*kind === 'thought'[\s\S]*const thinkingGroup[\s\S]*'entry thought thinking-group'/u.test(
           document
         ),
+      transcriptImages:
+        /\.transcript-images img[\s\S]*const imageGallery[\s\S]*item\.images/u.test(
+          document
+        ),
     }).toStrictEqual({
       accordion: true,
       chatFlow: true,
@@ -120,12 +128,14 @@ describe("view provider", () => {
       dropdowns: true,
       markdown: true,
       modelAlignment: true,
+      pastedImage: true,
       planLayout: true,
       planRendering: true,
       processing: true,
       progressWidth: true,
       resizable: true,
       thinking: true,
+      transcriptImages: true,
     });
     expect(document).not.toMatch(
       /id="stop"|class="morse"|Enter to send|>Send<|>Stop</u

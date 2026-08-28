@@ -6,6 +6,7 @@ import type {
   AgentConnectionFactory,
   AgentHandlers,
   AgentPromptResult,
+  PromptImage,
   ThreadConfigOption,
   ThreadsStorage,
 } from "./threads";
@@ -62,6 +63,7 @@ class FakeAgent {
   private readonly firstPromptStartedDeferred = deferred();
   private readonly secondPromptStartedDeferred = deferred();
   readonly promptResolvers: ((response: AgentPromptResult) => void)[] = [];
+  promptImages: PromptImage[] = [];
   readonly permissionStarted = this.permissionStartedDeferred.promise;
   readonly elicitationStarted = this.elicitationStartedDeferred.promise;
   readonly firstPromptStarted = this.firstPromptStartedDeferred.promise;
@@ -125,7 +127,8 @@ class FakeAgent {
         }
         return Promise.resolve({ configOptions: [], sessionId: "session-1" });
       },
-      prompt: async () => {
+      prompt: async (_sessionId, _text, _messageId, images) => {
+        this.promptImages = images;
         if (this.holdPrompts) {
           const count = this.promptResolvers.length + 1;
           if (count === 1) {
@@ -224,6 +227,26 @@ class FakeAgent {
 }
 
 describe("threads module", () => {
+  test("sends a pasted image without requiring text", async () => {
+    const agent = new FakeAgent();
+    const threads = new Threads(memoryStorage(), agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    await threads.prompt("", [
+      { data: "c2NyZWVuc2hvdA==", mimeType: "image/png" },
+    ]);
+
+    expect(agent.promptImages).toStrictEqual([
+      { data: "c2NyZWVuc2hvdA==", mimeType: "image/png" },
+    ]);
+    expect(
+      threads.snapshot().selected?.items.find((item) => item.kind === "user")
+    ).toMatchObject({
+      images: [{ data: "c2NyZWVuc2hvdA==", mimeType: "image/png" }],
+      text: "Pasted image",
+    });
+  });
+
   test("a user-renamed Thread ignores later automatic titles", async () => {
     const threads = new Threads(memoryStorage(), new FakeAgent().factory);
     await threads.openWorkspace("/workspace");

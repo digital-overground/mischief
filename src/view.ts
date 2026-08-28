@@ -8,13 +8,48 @@ import type {
   ProjectsSnapshot,
   Workspace,
 } from "./projects/projects";
-import type { ThreadInteractionResponse, Threads } from "./threads/threads";
+import type {
+  PromptImage,
+  ThreadInteractionResponse,
+  Threads,
+} from "./threads/threads";
 import { webviewHtml } from "./webview";
 
 const VIEW_ID = "mischief.view";
 const DEFAULT_MONO_FONT_FAMILY =
   '"Lilex", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
 const markdown = new MarkdownIt({ breaks: true, html: false, linkify: true });
+
+const promptImages = (value: unknown): PromptImage[] => {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.length > 10) {
+    throw new Error("Invalid pasted images");
+  }
+  let size = 0;
+  return value.map((candidate) => {
+    if (!candidate || typeof candidate !== "object") {
+      throw new Error("Invalid pasted image");
+    }
+    const image = candidate as Record<string, unknown>;
+    if (
+      typeof image.data !== "string" ||
+      typeof image.mimeType !== "string" ||
+      !["image/gif", "image/jpeg", "image/png", "image/webp"].includes(
+        image.mimeType
+      ) ||
+      !/^[A-Za-z\d+/]*={0,2}$/u.test(image.data)
+    ) {
+      throw new Error("Invalid pasted image");
+    }
+    size += image.data.length;
+    if (size > 20_000_000) {
+      throw new Error("Pasted images are too large");
+    }
+    return { data: image.data, mimeType: image.mimeType };
+  });
+};
 
 const interactionResponse = (
   value: unknown
@@ -205,7 +240,8 @@ export class MischiefView implements vscode.WebviewViewProvider {
       if (data.text.length > 1_000_000) {
         throw new Error("Prompt is too large");
       }
-      void MischiefView.run(this.threads.prompt(data.text));
+      const images = promptImages(data.images);
+      void MischiefView.run(this.threads.prompt(data.text, images));
       return true;
     }
     if (data.type === "cancel") {

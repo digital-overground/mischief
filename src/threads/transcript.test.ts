@@ -20,6 +20,12 @@ describe("transcript reducer", () => {
       type: "message",
     });
     reduceTranscript(items, {
+      images: [{ data: "aW1hZ2U=", mimeType: "image/png" }],
+      kind: "assistant",
+      messageId: "message-1",
+      type: "message",
+    });
+    reduceTranscript(items, {
       output: "result",
       title: "Run command",
       toolCallId: "tool-1",
@@ -42,6 +48,7 @@ describe("transcript reducer", () => {
     expect(items).toStrictEqual([
       {
         id: "assistant:message-1",
+        images: [{ data: "aW1hZ2U=", mimeType: "image/png" }],
         kind: "assistant",
         text: "Hello",
       },

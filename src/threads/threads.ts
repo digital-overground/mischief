@@ -49,6 +49,11 @@ export interface AgentPromptResult {
   stopReason: "completed" | "cancelled";
 }
 
+export interface PromptImage {
+  data: string;
+  mimeType: string;
+}
+
 export interface AgentPermissionRequest {
   message: string;
   options: { id: string; name: string; kind: string }[];
@@ -82,7 +87,8 @@ export type AgentUpdate =
   | {
       type: "message";
       kind: "user" | "assistant" | "thought";
-      text: string;
+      text?: string;
+      images?: PromptImage[];
       messageId?: string;
     }
   | ({ type: "tool" } & AgentToolUpdate)
@@ -114,7 +120,8 @@ export interface AgentConnection {
   prompt: (
     sessionId: string,
     text: string,
-    messageId: string
+    messageId: string,
+    images: PromptImage[]
   ) => Promise<AgentPromptResult>;
   setConfig: (
     sessionId: string,
@@ -158,6 +165,7 @@ export interface TranscriptItem {
   id: string;
   kind: "user" | "assistant" | "thought" | "tool" | "plan" | "system";
   text?: string;
+  images?: PromptImage[];
   title?: string;
   status?: string;
   input?: string;
@@ -275,6 +283,7 @@ interface Runtime {
   configOptions: ThreadConfigOption[];
   drafts: string[];
   pending: { id: string; text: string }[];
+  retryImages?: PromptImage[];
   setup?: Promise<string>;
   registration?: PromiseLike<void>;
   interaction?: ThreadInteraction;
@@ -289,6 +298,9 @@ const threadUsage = (
   const usage = runtime?.usage ?? record.usage;
   return usage ? { usage } : {};
 };
+
+const hasPromptContent = (text: string, images: PromptImage[]): boolean =>
+  Boolean(text.trim() || images.length);
 
 const stopStreaming = (runtime: Runtime): void => {
   if (runtime.streamingTimer) {
@@ -434,9 +446,10 @@ export class Threads {
     this.emit();
   }
 
-  async prompt(text: string): Promise<void> {
+  // oxlint-disable-next-line complexity -- prompt owns the existing turn lifecycle
+  async prompt(text: string, images: PromptImage[] = []): Promise<void> {
     const message = text;
-    if (!message.trim() || !this.workspace) {
+    if (!hasPromptContent(message, images) || !this.workspace) {
       return;
     }
 
@@ -471,7 +484,8 @@ export class Threads {
     const item: TranscriptItem = {
       id: messageId,
       kind: "user",
-      text: message,
+      text: message || "Pasted image",
+      ...(images.length ? { images } : {}),
       ...(runtime.pending.length ? { queued: runtime.pending.length } : {}),
     };
     runtime.items.push(item);
@@ -496,7 +510,8 @@ export class Threads {
       const result = await runtime.connection.prompt(
         record.sessionId,
         message,
-        messageId
+        messageId,
+        images
       );
       if (result.stopReason === "cancelled") {
         item.cancelled = true;
@@ -504,6 +519,7 @@ export class Threads {
         completed = true;
       }
       record.retryText = undefined;
+      runtime.retryImages = undefined;
       record.authentication = undefined;
       record.updatedAt = new Date().toISOString();
     } catch (error) {
@@ -511,6 +527,7 @@ export class Threads {
       runtime.status = "error";
       record.error = errorMessage(error);
       record.retryText = message;
+      runtime.retryImages = images;
       record.authentication =
         agentAuthentication(error) ?? record.authentication;
     } finally {
@@ -539,14 +556,12 @@ export class Threads {
     if (!record) {
       return;
     }
-    if (record.retryText) {
-      if (!record.sessionId) {
-        const runtime = this.runtimes.get(record.id);
-        if (runtime) {
-          runtime.items = [];
-        }
+    if (record.retryText !== undefined) {
+      const runtime = this.runtimes.get(record.id);
+      if (!record.sessionId && runtime) {
+        runtime.items = [];
       }
-      await this.prompt(record.retryText);
+      await this.prompt(record.retryText, runtime?.retryImages);
       return;
     }
     if (!record.sessionId) {
@@ -971,7 +986,7 @@ export class Threads {
       return;
     }
     if (update.type === "message" && update.kind !== "user") {
-      this.markStreaming(runtime, update.text);
+      this.markStreaming(runtime, update.text ?? "");
     }
     reduceTranscript(runtime.items, update);
     if (update.type === "usage") {

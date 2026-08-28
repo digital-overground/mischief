@@ -2,21 +2,30 @@ import { randomUUID } from "node:crypto";
 
 import type { AgentToolUpdate, AgentUpdate, TranscriptItem } from "./threads";
 
-const appendText = (
+const appendMessage = (
   items: TranscriptItem[],
   kind: "user" | "assistant" | "thought",
-  text: string,
+  text?: string,
+  images?: TranscriptItem["images"],
   messageId?: string
 ): void => {
-  if (!text) {
+  if (!text && !images?.length) {
     return;
   }
   const id = messageId ? `${kind}:${messageId}` : undefined;
   const existing = id ? items.find((item) => item.id === id) : items.at(-1);
   if (existing?.kind === kind) {
-    existing.text = (existing.text ?? "") + text;
+    existing.text = (existing.text ?? "") + (text ?? "");
+    if (images?.length) {
+      existing.images = [...(existing.images ?? []), ...images];
+    }
   } else {
-    items.push({ id: id ?? randomUUID(), kind, text });
+    items.push({
+      id: id ?? randomUUID(),
+      kind,
+      ...(text ? { text } : {}),
+      ...(images?.length ? { images } : {}),
+    });
   }
 };
 
@@ -64,7 +73,13 @@ export const reduceTranscript = (
   update: AgentUpdate
 ): void => {
   if (update.type === "message") {
-    appendText(items, update.kind, update.text, update.messageId);
+    appendMessage(
+      items,
+      update.kind,
+      update.text,
+      update.images,
+      update.messageId
+    );
   } else if (update.type === "tool") {
     upsertTool(items, update);
   } else if (update.type === "plan") {

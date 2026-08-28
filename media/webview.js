@@ -112,6 +112,18 @@ const markdownBody = (item, className = "body markdown") => {
   return body;
 };
 
+const imageGallery = (images) => {
+  const gallery = document.createElement("div");
+  gallery.className = "transcript-images";
+  for (const image of images || []) {
+    const preview = document.createElement("img");
+    preview.alt = "Attached image";
+    preview.src = `data:${image.mimeType};base64,${image.data}`;
+    gallery.append(preview);
+  }
+  return gallery;
+};
+
 const labelledPre = (label, text) => {
   const container = document.createElement("div");
   const heading = document.createElement("b");
@@ -155,6 +167,7 @@ const empty = (container, text) => {
   let renderedThread;
   let consumedDrafts = "";
   let brailleFrame = 0;
+  let images = [];
   const brailleFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
   const openTools = new Set();
   const panes = [...document.querySelectorAll("main > section")];
@@ -302,14 +315,64 @@ const empty = (container, text) => {
     return true;
   };
 
+  const removeAttachmentButton = (image) =>
+    iconButton("×", "Remove pasted image", () => {
+      images = images.filter((candidate) => candidate !== image);
+      renderAttachments();
+    });
+
+  const renderAttachments = () => {
+    const container = $("attachments");
+    container.replaceChildren();
+    for (const image of images) {
+      const attachment = document.createElement("div");
+      attachment.className = "attachment";
+      const preview = document.createElement("img");
+      preview.alt = "Pasted image";
+      preview.src = `data:${image.mimeType};base64,${image.data}`;
+      const remove = removeAttachmentButton(image);
+      attachment.append(preview, remove);
+      container.append(attachment);
+    }
+  };
+
+  const readImage = (file) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const result = String(reader.result);
+      images.push({
+        data: result.slice(result.indexOf(",") + 1),
+        mimeType: file.type,
+      });
+      renderAttachments();
+    });
+    reader.readAsDataURL(file);
+  };
+
+  $("composer").addEventListener("paste", (event) => {
+    const files = [...event.clipboardData.items]
+      .filter((item) => item.type.startsWith("image/"))
+      .map((item) => item.getAsFile())
+      .filter(Boolean);
+    if (!files.length) {
+      return;
+    }
+    event.preventDefault();
+    for (const file of files) {
+      readImage(file);
+    }
+  });
+
   const send = () => {
     const box = $("composer");
     const text = box.value;
-    if (!text.trim() || !state.threads.selected) {
+    if ((!text.trim() && !images.length) || !state.threads.selected) {
       return;
     }
-    postMessage({ text, type: "prompt" });
+    postMessage({ images, text, type: "prompt" });
     box.value = "";
+    images = [];
+    renderAttachments();
   };
 
   const workspaceRow = (workspace, removable = false) => {
@@ -840,6 +903,9 @@ const empty = (container, text) => {
     article.className = `entry ${item.kind}`;
     content.className = "entry-content";
     content.append(markdownBody(item));
+    if (item.images?.length) {
+      content.append(imageGallery(item.images));
+    }
     if (item.kind === "user" || item.kind === "assistant") {
       article.append(content);
     } else {
