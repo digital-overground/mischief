@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { reduceTranscript } from "./transcript";
+
 const STORAGE_KEY = "mischief.threads";
 const STREAMING_IDLE_MS = 300;
 
@@ -298,17 +300,9 @@ const stopStreaming = (runtime: Runtime): void => {
 
 // These helpers are assigned after the class declaration.
 // oxlint-disable prefer-const
-let appendText: (
-  items: TranscriptItem[],
-  kind: "user" | "assistant" | "thought",
-  text: string,
-  messageId?: string
-) => void;
 let errorMessage: (error: unknown) => string;
 let readStored: (storage: ThreadsStorage) => StoredThreads;
 let updateQueue: (runtime: Runtime) => void;
-let upsertPlan: (items: TranscriptItem[], text: string) => void;
-let upsertTool: (items: TranscriptItem[], update: AgentToolUpdate) => void;
 // oxlint-enable prefer-const
 
 export class Threads {
@@ -976,16 +970,11 @@ export class Threads {
     if (!runtime) {
       return;
     }
-    if (update.type === "message") {
-      if (update.kind !== "user") {
-        this.markStreaming(runtime, update.text);
-      }
-      appendText(runtime.items, update.kind, update.text, update.messageId);
-    } else if (update.type === "tool") {
-      upsertTool(runtime.items, update);
-    } else if (update.type === "plan") {
-      upsertPlan(runtime.items, update.text);
-    } else if (update.type === "usage") {
+    if (update.type === "message" && update.kind !== "user") {
+      this.markStreaming(runtime, update.text);
+    }
+    reduceTranscript(runtime.items, update);
+    if (update.type === "usage") {
       runtime.usage = update.usage;
       record.usage = update.usage;
       void this.persist();
@@ -1039,63 +1028,6 @@ updateQueue = (runtime: Runtime): void => {
       continue;
     }
     item.queued = index || undefined;
-  }
-};
-
-appendText = (
-  items: TranscriptItem[],
-  kind: "user" | "assistant" | "thought",
-  text: string,
-  messageId?: string
-): void => {
-  if (!text) {
-    return;
-  }
-  const id = messageId ? `${kind}:${messageId}` : undefined;
-  const existing = id ? items.find((item) => item.id === id) : items.at(-1);
-  if (existing?.kind === kind) {
-    existing.text = (existing.text ?? "") + text;
-  } else {
-    items.push({ id: id ?? randomUUID(), kind, text });
-  }
-};
-
-upsertTool = (items: TranscriptItem[], update: AgentToolUpdate): void => {
-  const id = `tool:${update.toolCallId}`;
-  let item = items.find((candidate) => candidate.id === id);
-  if (!item) {
-    item = { id, kind: "tool" };
-    items.push(item);
-  }
-  if (update.title !== undefined) {
-    item.title = update.title;
-  }
-  if (update.status !== undefined) {
-    item.status = update.status;
-  }
-  if (update.input !== undefined) {
-    item.input = update.input;
-  }
-  if (update.output !== undefined) {
-    item.output = update.output;
-  }
-  if (update.locations) {
-    item.locations = update.locations;
-  }
-  if (update.diffs?.length) {
-    item.diffs = update.diffs;
-  }
-  if (update.terminalOutput !== undefined) {
-    item.output = (item.output ?? "") + update.terminalOutput;
-  }
-};
-
-upsertPlan = (items: TranscriptItem[], text: string): void => {
-  const existing = items.find((item) => item.id === "plan");
-  if (existing) {
-    existing.text = text;
-  } else {
-    items.push({ id: "plan", kind: "plan", text, title: "Plan" });
   }
 };
 
