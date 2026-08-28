@@ -81,11 +81,22 @@ export class MischiefView implements vscode.WebviewViewProvider {
     view.webview.onDidReceiveMessage((message: unknown) => {
       void this.handleMessage(message);
     });
+    view.onDidChangeVisibility?.(() => {
+      if (view.visible) {
+        this.threads.markViewed();
+      } else {
+        this.threads.markHidden();
+      }
+    });
     view.onDidDispose(() => {
+      this.threads.markHidden();
       if (this.view === view) {
         this.view = undefined;
       }
     });
+    if (view.visible) {
+      this.threads.markViewed();
+    }
     this.render();
   }
 
@@ -123,6 +134,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     data: Record<string, unknown>
   ): Promise<boolean> {
     if (data.type === "ready") {
+      this.threads.markViewed();
       this.render();
       return true;
     }
@@ -351,6 +363,12 @@ export class MischiefView implements vscode.WebviewViewProvider {
       .get<string>("fontFamily")
       ?.trim();
     const threads = this.threads.snapshot();
+    this.view.badge = threads.attentionCount
+      ? {
+          tooltip: `${threads.attentionCount} Thread${threads.attentionCount === 1 ? "" : "s"} need attention`,
+          value: threads.attentionCount,
+        }
+      : undefined;
     if (threads.selected) {
       threads.selected = {
         ...threads.selected,
@@ -455,22 +473,43 @@ button:disabled, textarea:disabled, select:disabled { opacity: .5; cursor: defau
 .row-open { min-width: 0; flex: 1; display: flex; align-items: center; gap: 6px; border: 0; padding: 3px 5px 3px 0; text-align: left; background: transparent; cursor: pointer; }
 .meta { color: var(--vscode-descriptionForeground); font-size: 11px; white-space: nowrap; }
 .selected .meta { color: inherit; opacity: .8; }
+.thread-status { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 14px; line-height: 1; }
+.thread-status:not(.active) { width: 8px; height: 8px; margin: 0 2px; border-radius: 50%; background: currentColor; }
+.thread-status.active { color: var(--vscode-textLink-foreground); font-family: var(--mischief-mono-font); font-size: 11px; }
+.thread-status.waiting, .thread-status.error { color: var(--vscode-errorForeground); }
+.thread-status.completed { color: var(--vscode-charts-green); }
+.thread-status.idle { color: var(--vscode-descriptionForeground); opacity: .75; }
+.attention-badge { display: inline-flex; align-items: center; gap: 4px; color: var(--vscode-descriptionForeground); font-size: 10px; font-weight: 400; }
+.attention-badge[hidden] { display: none; }
+.attention-badge .thread-status { transform: scale(.8); }
 .empty { margin: 0; padding: 14px; color: var(--vscode-descriptionForeground); text-align: left; line-height: 1.5; }
 #thread-header { text-transform: none; }
 #thread-title { font-size: 12px; }
-#configs { min-width: 0; flex: 1; display: flex; align-items: center; gap: 3px; overflow-x: auto; }
+#usage { position: relative; flex: 0 1 42%; display: flex; align-items: center; min-width: 48px; max-width: 200px; height: 18px; cursor: help; outline: 0; }
+#usage[hidden] { display: none; }
+#usage::before { position: absolute; right: 0; left: 0; height: 5px; border-radius: 3px; background: var(--vscode-widget-border, var(--vscode-panel-border)); content: ''; }
+#usage-fill { position: relative; z-index: 1; width: 0; height: 5px; border-radius: 3px; background: var(--vscode-descriptionForeground); }
+#usage-fill.warning { background: var(--vscode-charts-yellow); }
+#usage-fill.danger { background: var(--vscode-errorForeground); }
+#usage::after { position: absolute; z-index: 1; bottom: calc(100% + 4px); left: 50%; padding: 3px 6px; border-radius: 3px; transform: translateX(-50%); background: var(--vscode-editorHoverWidget-background); color: var(--vscode-editorHoverWidget-foreground); box-shadow: 0 1px 4px var(--vscode-widget-shadow); content: attr(data-tooltip); opacity: 0; pointer-events: none; transition: opacity .1s; white-space: nowrap; }
+#usage:hover::after, #usage:focus-visible::after { opacity: 1; }
+#configs { min-width: 0; flex: 0 1 auto; margin-left: auto; display: flex; align-items: center; justify-content: flex-end; gap: 3px; overflow-x: auto; }
 #configs:empty { display: none; }
+#configs:empty + #send { margin-left: auto; }
 #configs label { display: flex; align-items: center; gap: 3px; color: var(--vscode-descriptionForeground); font-size: 10px; white-space: nowrap; }
-.config-control { min-width: 0; display: flex; align-items: center; gap: 3px; }
-.config-icon { display: inline-flex; flex: none; width: 14px; height: 14px; color: var(--vscode-descriptionForeground); }
-#configs select { min-width: 0; max-width: 180px; height: 22px; border: 0; border-radius: 3px; padding: 1px 5px; background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); font-size: 11px; }
+.config-control { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.config-icon { flex: none; display: inline-flex; width: 14px; height: 14px; color: var(--vscode-descriptionForeground); pointer-events: none; }
+#configs select { min-width: 0; max-width: 180px; height: 22px; border: 0; border-radius: 3px; padding: 1px 5px; background: transparent; color: var(--vscode-foreground); font-size: 11px; text-align: right; }
+#configs option { text-align: right; }
+.config-control select { appearance: none; }
+#configs select:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
 .lucide { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 #chat { flex: 1; min-height: 0; overflow: auto; padding: 8px; font-family: var(--mischief-mono-font); font-size: 13px; }
 #transcript { min-height: 0; }
 .entry { --entry-accent: var(--vscode-descriptionForeground); margin: 0 0 8px; border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-left: 2px solid var(--entry-accent); border-radius: 4px; padding: 8px 9px; overflow-wrap: anywhere; background: var(--vscode-editorWidget-background); background: color-mix(in srgb, var(--entry-accent) 7%, var(--vscode-editor-background, var(--vscode-sideBar-background))); }
 article.entry { display: flex; align-items: flex-start; gap: 8px; }
-.entry.user { --entry-accent: var(--vscode-charts-purple); }
-.entry.assistant { --entry-accent: var(--vscode-textLink-foreground); }
+.entry.user { --entry-accent: transparent; border-left: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); background: var(--vscode-editor-background, var(--vscode-sideBar-background)); }
+.entry.assistant { --entry-accent: transparent; border-color: transparent; background: transparent; padding: 0; font-family: var(--mischief-ui-font); }
 .entry.thought { --entry-accent: var(--vscode-charts-yellow); color: var(--vscode-descriptionForeground); }
 .entry.tool { --entry-accent: var(--vscode-charts-orange, var(--vscode-charts-yellow)); }
 .entry.system { --entry-accent: var(--vscode-descriptionForeground); }
@@ -526,7 +565,7 @@ footer { border-top: 1px solid var(--vscode-panel-border); background: var(--vsc
 #composer { display: block; width: 100%; min-height: 86px; max-height: 220px; resize: vertical; border: 0; background: transparent; color: var(--vscode-input-foreground); padding: 12px 14px 6px; outline: none; font-family: var(--mischief-mono-font); font-size: 13px; line-height: 1.35; }
 #composer:focus { outline: none; }
 .footer-row { min-height: 28px; display: flex; align-items: center; gap: 4px; padding: 2px 6px 4px; }
-#send { width: 22px; min-width: 22px; height: 22px; margin-left: auto; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+#send { width: 22px; min-width: 22px; height: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
 #send .lucide { width: 14px; height: 14px; }
 #send .stop-icon { display: none; fill: currentColor; }
 #send.stop { color: var(--vscode-errorForeground); }
@@ -539,14 +578,14 @@ footer { border-top: 1px solid var(--vscode-panel-border); background: var(--vsc
 <main>
   <section id="projects"><header><span class="heading">Projects / Workspaces</span><button class="icon" id="add" title="Add Workspace" aria-label="Add Workspace">＋</button><button class="icon" id="refresh" title="Refresh" aria-label="Refresh">↻</button></header><div class="content" id="project-list"></div></section>
   <div class="resizer" data-before="projects" data-after="threads" role="separator" aria-label="Resize Projects and Threads" aria-orientation="horizontal" tabindex="0"></div>
-  <section id="threads"><header><span class="heading" id="threads-title">Threads</span><button class="icon" id="new-thread" title="New Thread" aria-label="New Thread">＋</button></header><div class="content" id="thread-list"></div></section>
+  <section id="threads"><header><span class="heading" id="threads-title">Threads</span><span id="threads-attention" class="attention-badge" role="status" hidden></span><button class="icon" id="new-thread" title="New Thread" aria-label="New Thread">＋</button></header><div class="content" id="thread-list"></div></section>
   <div class="resizer" data-before="threads" data-after="thread" role="separator" aria-label="Resize Threads and Thread" aria-orientation="horizontal" tabindex="0"></div>
-  <section id="thread"><header id="thread-header"><span class="heading" id="thread-title">Thread</span><button class="icon" id="rename-thread" title="Rename Thread" aria-label="Rename Thread">✎</button></header><div id="chat"><div id="transcript"></div><div id="processing" role="status" aria-label="Agent is working" hidden><span id="braille" aria-hidden="true">⠋</span></div><div id="notice"></div><div id="actions"></div><div id="interaction"></div></div><div id="plan" hidden><div id="plan-title"></div><pre id="plan-body"></pre></div><footer><textarea id="composer" placeholder="Message magpi-acp — @ to include context, / for commands"></textarea><div class="footer-row"><div id="configs"></div><button class="action" id="send" title="Send" aria-label="Send"><svg class="lucide send-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></svg><svg class="lucide stop-icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect></svg></button></div></footer></section>
+  <section id="thread"><header id="thread-header"><span class="heading" id="thread-title">Thread</span><button class="icon" id="rename-thread" title="Rename Thread" aria-label="Rename Thread">✎</button></header><div id="chat"><div id="transcript"></div><div id="processing" role="status" aria-label="Agent is working" hidden><span id="braille" aria-hidden="true">⠋</span></div><div id="notice"></div><div id="actions"></div><div id="interaction"></div></div><div id="plan" hidden><div id="plan-title"></div><pre id="plan-body"></pre></div><footer><textarea id="composer" placeholder="Message magpi-acp — @ to include context, / for commands"></textarea><div class="footer-row"><div id="usage" hidden tabindex="0"><div id="usage-fill"></div></div><div id="configs"></div><button class="action" id="send" title="Send" aria-label="Send"><svg class="lucide send-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></svg><svg class="lucide stop-icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect></svg></button></div></footer></section>
 </main>
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
 const $ = (id) => document.getElementById(id);
-let state = { projects: { projects: [], ungrouped: [] }, threads: { threads: [] } };
+let state = { projects: { projects: [], ungrouped: [] }, threads: { attentionCount: 0, threads: [] } };
 let renderedThread;
 let consumedDrafts = '';
 let brailleFrame = 0;
@@ -727,12 +766,60 @@ function compactTime(value) {
   return Math.floor(hours / 24) + 'd';
 }
 
+function indicatorKind(thread) {
+  if (['active', 'waiting', 'completed', 'idle', 'error'].includes(thread.indicator)) return thread.indicator;
+  if (thread.status === 'running') return 'active';
+  if (thread.status === 'waiting') return 'waiting';
+  if (thread.status === 'error') return 'error';
+  return 'idle';
+}
+
+function indicatorLabel(kind) {
+  if (kind === 'active') return 'Agent active';
+  if (kind === 'waiting') return 'Waiting for user input';
+  if (kind === 'completed') return 'Completed — needs attention';
+  if (kind === 'error') return 'Agent error — needs attention';
+  return 'Idle';
+}
+
+function statusIndicator(kind, label = indicatorLabel(kind)) {
+  const indicator = document.createElement('span');
+  indicator.className = 'thread-status ' + kind;
+  indicator.textContent = kind === 'active' ? brailleFrames[brailleFrame] : '';
+  indicator.title = label;
+  indicator.setAttribute('role', 'img');
+  indicator.setAttribute('aria-label', label);
+  return indicator;
+}
+
+function renderAttention() {
+  const badge = $('threads-attention');
+  const attention = state.threads.threads.filter((thread) => thread.needsAttention || ['waiting', 'completed', 'error'].includes(indicatorKind(thread)));
+  badge.replaceChildren();
+  badge.hidden = !attention.length;
+  if (!attention.length) return;
+  const waiting = attention.some((thread) => ['waiting', 'error'].includes(indicatorKind(thread)));
+  const completed = attention.some((thread) => indicatorKind(thread) === 'completed');
+  if (waiting) badge.append(statusIndicator('waiting', 'Thread waiting for user input'));
+  if (completed) badge.append(statusIndicator('completed', 'Thread completed while unread'));
+  const count = document.createElement('span');
+  count.textContent = String(attention.length);
+  badge.append(count);
+  badge.title = attention.length + (attention.length === 1 ? ' Thread needs attention' : ' Threads need attention');
+  badge.setAttribute('aria-label', badge.title);
+}
+
+function updateThreadIndicators() {
+  for (const indicator of document.querySelectorAll('.thread-status.active')) indicator.textContent = brailleFrames[brailleFrame];
+}
+
 function renderThreads() {
   const list = $('thread-list');
   list.replaceChildren();
   const selected = state.threads.selected;
   $('threads-title').textContent = state.threads.workspace ? 'Threads' : 'Threads';
   $('new-thread').disabled = !state.threads.workspace;
+  renderAttention();
   for (const thread of state.threads.threads) {
     const row = document.createElement('div');
     row.className = 'row' + (selected?.id === thread.id ? ' selected' : '');
@@ -745,7 +832,7 @@ function renderThreads() {
     const meta = document.createElement('span');
     meta.className = 'meta';
     meta.textContent = thread.status + '  ' + compactTime(thread.updatedAt);
-    open.append(name, meta);
+    open.append(statusIndicator(indicatorKind(thread)), name, meta);
     row.append(open, iconButton('×', 'Remove Thread', () => vscode.postMessage({ type: 'removeThread', id: thread.id })));
     list.append(row);
   }
@@ -780,6 +867,12 @@ function configKind(config) {
 function displayModelName(name) {
   const slash = name.indexOf('/');
   return slash > 0 ? name.slice(slash + 1) : name;
+}
+
+function isProfileConfig(config) {
+  const id = String(config.id || '').toLowerCase();
+  const name = String(config.name || '').toLowerCase();
+  return id === 'role' || id === 'profile' || name === 'role' || name === 'profile';
 }
 
 function appendOptions(select, config, kind) {
@@ -837,6 +930,26 @@ function configIcon(kind, title) {
   return inlineIcon(kind, 'config-icon', title);
 }
 
+function formatUsage(value) {
+  return value < 1000 ? String(value) : Math.round(value / 1000) + 'k';
+}
+
+function renderUsage(selected) {
+  const usage = $('usage');
+  const fill = $('usage-fill');
+  if (!selected?.usage || selected.usage.size <= 0) {
+    usage.hidden = true;
+    return;
+  }
+  const { used, size } = selected.usage;
+  usage.hidden = false;
+  fill.style.width = Math.min(100, used / size * 100) + '%';
+  fill.className = used > 150000 ? 'danger' : used >= 100000 ? 'warning' : '';
+  usage.title = formatUsage(used) + '/' + formatUsage(size);
+  usage.dataset.tooltip = usage.title;
+  usage.setAttribute('aria-label', 'Context usage ' + usage.title);
+}
+
 function renderConfig(selected) {
   const configs = $('configs');
   configs.replaceChildren();
@@ -859,11 +972,17 @@ function renderConfig(selected) {
     select.setAttribute('aria-label', config.name);
     appendOptions(select, config, kind);
     select.value = config.currentValue;
+    if (isProfileConfig(config) && select.selectedIndex < 0) {
+      const custom = option('', 'Custom');
+      custom.disabled = true;
+      select.prepend(custom);
+      select.value = '';
+    }
     select.addEventListener('change', () => vscode.postMessage({ type: 'setConfig', id: config.id, value: select.value }));
     if (kind) {
       const control = document.createElement('div');
       control.className = 'config-control';
-      control.append(configIcon(kind === 'model' ? 'bot' : 'brain', config.name), select);
+      control.append(select, configIcon(kind === 'model' ? 'bot' : 'brain', config.name));
       configs.append(control);
     } else {
       configs.append(select);
@@ -890,6 +1009,7 @@ function renderTranscript() {
   $('thread-title').textContent = selected?.name || 'Thread';
   $('rename-thread').disabled = !selected?.id;
   renderConfig(selected);
+  renderUsage(selected);
   $('notice').textContent = selected?.error || '';
   renderActions(selected);
   renderInteraction(selected?.interaction);
@@ -1004,7 +1124,8 @@ function transcriptItem(item) {
   article.className = 'entry ' + item.kind;
   content.className = 'entry-content';
   content.append(markdownBody(item));
-  article.append(inlineIcon(meta.icon, 'entry-icon', meta.label), content);
+  if (item.kind === 'user' || item.kind === 'assistant') article.append(content);
+  else article.append(inlineIcon(meta.icon, 'entry-icon', meta.label), content);
   if (item.queued) {
     const queued = document.createElement('div');
     queued.className = 'cancelled';
@@ -1137,9 +1258,9 @@ window.addEventListener('message', (event) => {
 });
 setInterval(renderThreads, 60000);
 setInterval(() => {
-  if ($('processing').hidden) return;
   brailleFrame = (brailleFrame + 1) % brailleFrames.length;
-  $('braille').textContent = brailleFrames[brailleFrame];
+  if (!$('processing').hidden) $('braille').textContent = brailleFrames[brailleFrame];
+  updateThreadIndicators();
 }, 60);
 vscode.postMessage({ type: 'ready' });
 </script>

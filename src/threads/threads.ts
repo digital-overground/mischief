@@ -50,11 +50,36 @@ export interface AgentConnection {
   ) => Promise<void>;
 }
 
+const indicatorFor = (
+  status: ThreadStatus,
+  unread: boolean
+): ThreadIndicator => {
+  if (status === "running") {
+    return "active";
+  }
+  if (status === "waiting") {
+    return "waiting";
+  }
+  if (status === "error") {
+    return "error";
+  }
+  return unread ? "completed" : "idle";
+};
+
+const indicatorNeedsAttention = (indicator: ThreadIndicator): boolean =>
+  indicator === "waiting" || indicator === "completed" || indicator === "error";
+
 export type AgentConnectionFactory = (
   handlers: AgentHandlers
 ) => AgentConnection;
 
 export type ThreadStatus = "idle" | "running" | "waiting" | "error";
+export type ThreadIndicator =
+  | "active"
+  | "waiting"
+  | "completed"
+  | "idle"
+  | "error";
 
 export interface TranscriptItem {
   id: string;
@@ -74,6 +99,8 @@ export interface ThreadSummary {
   id: string;
   name: string;
   status: ThreadStatus;
+  indicator: ThreadIndicator;
+  needsAttention: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -114,11 +141,17 @@ export interface TerminalAuthentication {
   label: string;
 }
 
+export interface ThreadUsage {
+  used: number;
+  size: number;
+}
+
 export interface ThreadDetail {
   id: string | null;
   name: string;
   status: ThreadStatus;
   streaming: boolean;
+  usage?: ThreadUsage;
   items: TranscriptItem[];
   configOptions: SessionConfigOption[];
   interaction?: ThreadInteraction;
@@ -128,6 +161,7 @@ export interface ThreadDetail {
 }
 
 export interface ThreadsSnapshot {
+  attentionCount: number;
   workspace?: string;
   threads: ThreadSummary[];
   selected?: ThreadDetail;
@@ -144,6 +178,8 @@ interface StoredThread {
   retryText?: string;
   authentication?: TerminalAuthentication;
   manualName?: boolean;
+  unread?: boolean;
+  usage?: ThreadUsage;
 }
 
 interface StoredThreads {
@@ -155,6 +191,7 @@ interface Runtime {
   connection: AgentConnection;
   status: ThreadStatus;
   streaming: boolean;
+  usage?: ThreadUsage;
   streamingTimer?: ReturnType<typeof setTimeout>;
   items: TranscriptItem[];
   configOptions: SessionConfigOption[];
@@ -167,6 +204,19 @@ interface Runtime {
   elicitationRequest?: Extract<CreateElicitationRequest, { mode: "form" }>;
   resolveElicitation?: (response: CreateElicitationResponse) => void;
 }
+
+const threadUsage = (
+  record: StoredThread,
+  runtime?: Runtime
+): { usage?: ThreadUsage } => {
+  const usage = runtime?.usage ?? record.usage;
+  return usage ? { usage } : {};
+};
+
+const usageUpdate = (update: SessionUpdate): ThreadUsage | undefined =>
+  update.sessionUpdate === "usage_update"
+    ? { size: update.size, used: update.used }
+    : undefined;
 
 const stopStreaming = (runtime: Runtime): void => {
   if (runtime.streamingTimer) {
@@ -224,6 +274,7 @@ export class Threads {
   private readonly listeners = new Set<() => void>();
   private workspace?: string;
   private selectedId?: string;
+  private viewedId?: string;
   private draft = false;
 
   constructor(
@@ -237,6 +288,7 @@ export class Threads {
 
   async openWorkspace(workspace: string): Promise<ThreadsSnapshot> {
     this.workspace = workspace;
+    this.viewedId = undefined;
     const records = this.records();
     const selected = this.stored.selected[workspace];
     this.selectedId = records.some((record) => record.id === selected)
@@ -270,6 +322,8 @@ export class Threads {
     this.stored.threads.unshift(record);
     this.stored.selected[this.workspace] = record.id;
     this.selectedId = record.id;
+    this.viewedId = record.id;
+    record.unread = false;
     this.draft = false;
     await this.persist();
     this.emit();
@@ -282,6 +336,8 @@ export class Threads {
       return;
     }
     this.selectedId = id;
+    this.viewedId = id;
+    record.unread = false;
     this.draft = false;
     this.stored.selected[record.workspace] = id;
     await this.persist();
@@ -296,6 +352,7 @@ export class Threads {
     }
     if (this.selectedId === id) {
       await this.cancel();
+      this.viewedId = undefined;
     }
     this.runtimes.get(id)?.connection.dispose();
     this.runtimes.delete(id);
@@ -306,6 +363,7 @@ export class Threads {
     if (this.selectedId === id) {
       const [next] = this.records();
       this.selectedId = next?.id;
+      this.viewedId = next?.id;
       this.draft = !next;
       if (next) {
         this.stored.selected[record.workspace] = next.id;
@@ -364,6 +422,8 @@ export class Threads {
       registration = this.persist();
     }
 
+    this.viewedId = record.id;
+    record.unread = false;
     const runtime = this.runtime(record);
     if (registration) {
       runtime.registration = registration;
@@ -384,6 +444,7 @@ export class Threads {
     void this.persist();
     this.emit();
 
+    let completed = false;
     try {
       await runtime.registration;
       runtime.registration = undefined;
@@ -400,6 +461,8 @@ export class Threads {
       );
       if (result.stopReason === "cancelled") {
         item.cancelled = true;
+      } else {
+        completed = true;
       }
       record.retryText = undefined;
       record.authentication = undefined;
@@ -421,6 +484,9 @@ export class Threads {
       }
       if (runtime.status !== "running") {
         stopStreaming(runtime);
+      }
+      if (completed && runtime.status === "idle" && !runtime.interaction) {
+        record.unread = this.viewedId !== record.id;
       }
     }
     await this.persist();
@@ -580,8 +646,29 @@ export class Threads {
     );
     this.workspace = undefined;
     this.selectedId = undefined;
+    this.viewedId = undefined;
     this.draft = false;
     this.emit();
+  }
+
+  markViewed(): void {
+    const record = this.selectedId
+      ? this.findRecord(this.selectedId)
+      : undefined;
+    if (!record) {
+      return;
+    }
+    this.viewedId = record.id;
+    if (!record.unread) {
+      return;
+    }
+    record.unread = false;
+    void this.persist();
+    this.emit();
+  }
+
+  markHidden(): void {
+    this.viewedId = undefined;
   }
 
   consumeDrafts(): void {
@@ -596,17 +683,24 @@ export class Threads {
   }
 
   snapshot(): ThreadsSnapshot {
-    const threads = this.records().map((record) => ({
-      createdAt: record.createdAt,
-      id: record.id,
-      name: record.name,
-      status:
+    const threads = this.records().map((record) => {
+      const status =
         this.runtimes.get(record.id)?.status ??
-        (record.error ? "error" : "idle"),
-      updatedAt: record.updatedAt,
-    }));
+        (record.error ? "error" : "idle");
+      const indicator = indicatorFor(status, Boolean(record.unread));
+      return {
+        createdAt: record.createdAt,
+        id: record.id,
+        indicator,
+        name: record.name,
+        needsAttention: indicatorNeedsAttention(indicator),
+        status,
+        updatedAt: record.updatedAt,
+      };
+    });
     const selected = this.selectedDetail();
     return {
+      attentionCount: threads.filter((thread) => thread.needsAttention).length,
       ...(this.workspace ? { workspace: this.workspace } : {}),
       ...(selected ? { selected } : {}),
       threads,
@@ -647,6 +741,7 @@ export class Threads {
       ...(record.authentication
         ? { authentication: record.authentication }
         : {}),
+      ...threadUsage(record, runtime),
       configOptions: runtime?.configOptions ?? [],
       ...(record.error ? { error: record.error } : {}),
       drafts: runtime?.drafts ?? [],
@@ -849,11 +944,26 @@ export class Threads {
     });
   }
 
+  private updateUsage(
+    record: StoredThread,
+    runtime: Runtime,
+    update: SessionUpdate
+  ): void {
+    const usage = usageUpdate(update);
+    if (!usage) {
+      return;
+    }
+    runtime.usage = usage;
+    record.usage = usage;
+    void this.persist();
+  }
+
   private handleUpdate(record: StoredThread, update: SessionUpdate): void {
     const runtime = this.runtimes.get(record.id);
     if (!runtime) {
       return;
     }
+    this.updateUsage(record, runtime, update);
     if (
       update.sessionUpdate === "user_message_chunk" &&
       update.content.type === "text"

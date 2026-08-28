@@ -62,7 +62,7 @@ class FakeAgent {
   private readonly firstPromptStartedDeferred = deferred();
   private readonly secondPromptStartedDeferred = deferred();
   readonly promptResolvers: ((response: {
-    stopReason: "cancelled";
+    stopReason: "cancelled" | "end_turn";
   }) => void)[] = [];
   readonly permissionStarted = this.permissionStartedDeferred.promise;
   readonly elicitationStarted = this.elicitationStartedDeferred.promise;
@@ -135,7 +135,9 @@ class FakeAgent {
             });
           }
           // oxlint-disable-next-line promise/avoid-new
-          const result = new Promise<{ stopReason: "cancelled" }>((resolve) => {
+          const result = new Promise<{
+            stopReason: "cancelled" | "end_turn";
+          }>((resolve) => {
             this.promptResolvers.push(resolve);
           });
           this.markPromptStarted(count);
@@ -175,6 +177,11 @@ class FakeAgent {
               { content: "Fix", priority: "medium", status: "pending" },
             ],
             sessionUpdate: "plan",
+          });
+          handlers.update({
+            sessionUpdate: "usage_update",
+            size: 245_000,
+            used: 125_000,
           });
           handlers.update({
             configOptions: [
@@ -264,7 +271,10 @@ describe("threads module", () => {
     await threads.closeWorkspace();
     await prompting;
 
-    expect(threads.snapshot()).toStrictEqual({ threads: [] });
+    expect(threads.snapshot()).toStrictEqual({
+      attentionCount: 0,
+      threads: [],
+    });
   });
 
   test("Threads stay newest-first and restore the last selection", async () => {
@@ -449,6 +459,24 @@ describe("threads module", () => {
         { kind: "plan", text: "✓ Inspect\n• Fix" },
         { kind: "assistant", text: "Done." },
       ],
+      usage: { size: 245_000, used: 125_000 },
+    });
+  });
+
+  test("context usage survives a Thread reload", async () => {
+    const storage = memoryStorage();
+    const agent = new FakeAgent();
+    agent.richUpdates = true;
+    const threads = new Threads(storage, agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Inspect it");
+
+    const restored = new Threads(storage, new FakeAgent().factory);
+    await restored.openWorkspace("/workspace");
+
+    expect(restored.snapshot().selected?.usage).toStrictEqual({
+      size: 245_000,
+      used: 125_000,
     });
   });
 
@@ -496,13 +524,23 @@ describe("threads module", () => {
     await agent.permissionStarted;
 
     const interaction = threads.snapshot().selected?.interaction;
-    expect(threads.snapshot().selected).toMatchObject({
-      interaction: {
-        kind: "permission",
-        message: "Run tests?",
-        options: [{ id: "yes", name: "Yes" }],
+    expect(threads.snapshot()).toMatchObject({
+      attentionCount: 1,
+      selected: {
+        interaction: {
+          kind: "permission",
+          message: "Run tests?",
+          options: [{ id: "yes", name: "Yes" }],
+        },
+        status: "waiting",
       },
-      status: "waiting",
+      threads: [
+        {
+          indicator: "waiting",
+          needsAttention: true,
+          status: "waiting",
+        },
+      ],
     });
     threads.respond(interaction?.id ?? "", {
       action: "select",
@@ -513,7 +551,43 @@ describe("threads module", () => {
     expect(agent.permissionResponse).toStrictEqual({
       outcome: { optionId: "yes", outcome: "selected" },
     });
-    expect(threads.snapshot().selected?.status).toBe("idle");
+    expect(threads.snapshot()).toMatchObject({
+      attentionCount: 0,
+      selected: { status: "idle" },
+      threads: [{ indicator: "idle", needsAttention: false, status: "idle" }],
+    });
+  });
+
+  test("completed background Threads stay green until viewed", async () => {
+    const agent = new FakeAgent();
+    agent.holdPrompts = true;
+    const threads = new Threads(memoryStorage(), agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    const firstPrompt = threads.prompt("First");
+    await agent.firstPromptStarted;
+    const firstId = threads.snapshot().selected?.id;
+    await threads.newThread();
+    agent.promptResolvers[0]?.({ stopReason: "end_turn" });
+    await firstPrompt;
+
+    expect(threads.snapshot()).toMatchObject({
+      attentionCount: 1,
+      threads: [
+        { indicator: "idle", needsAttention: false },
+        { id: firstId, indicator: "completed", needsAttention: true },
+      ],
+    });
+
+    await threads.select(firstId ?? "");
+
+    expect(threads.snapshot()).toMatchObject({
+      attentionCount: 0,
+      threads: [
+        { indicator: "idle", needsAttention: false },
+        { id: firstId, indicator: "idle", needsAttention: false },
+      ],
+    });
   });
 
   test("opening a durable Thread restores its transcript from ACP", async () => {
