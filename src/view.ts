@@ -1015,7 +1015,7 @@ function renderTranscript() {
   renderInteraction(selected?.interaction);
   renderPlan(selected);
   $('composer').disabled = !selected;
-  $('processing').hidden = !selected || selected.status !== 'running' || selected.streaming;
+  $('processing').hidden = !selected || selected.status !== 'running';
   const running = selected && ['running', 'waiting'].includes(selected.status);
   const sendButton = $('send');
   sendButton.disabled = !selected;

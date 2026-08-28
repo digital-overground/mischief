@@ -91,7 +91,10 @@ describe("view provider", () => {
         webview.html
       ),
       processing:
-        /id="braille"[\s\S]*selected\.status !== 'running' \|\| selected\.streaming/u.test(
+        /id="braille"[\s\S]*selected\.status !== 'running'/u.test(
+          webview.html
+        ) &&
+        !/selected\.status !== 'running' \|\| selected\.streaming/u.test(
           webview.html
         ),
       progressWidth: /#usage \{[^}]*max-width: 200px;/u.test(webview.html),
