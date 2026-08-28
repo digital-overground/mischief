@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { Script } from "node:vm";
 
 import { describe, expect, test, vi } from "vitest";
@@ -8,6 +10,11 @@ vi.mock(
   import("vscode"),
   () =>
     ({
+      Uri: {
+        joinPath: (base: { fsPath: string }, ...parts: string[]) => ({
+          fsPath: path.join(base.fsPath, ...parts),
+        }),
+      },
       workspace: {
         getConfiguration: vi.fn<() => { get: () => string }>(() => ({
           get: () => "",
@@ -17,94 +24,91 @@ vi.mock(
 );
 
 describe("view provider", () => {
-  test("webview script remains valid after interpolation", () => {
-    const webview = {
-      html: "",
-      onDidReceiveMessage: vi.fn<() => void>(),
-      options: {},
-      postMessage: vi.fn<() => void>(),
-    };
-    const view = {
-      onDidDispose: vi.fn<() => void>(),
-      webview,
-    };
-    const threads = {
-      onChange: vi.fn<() => void>(),
-      snapshot: () => ({ threads: [] }),
-    };
-    const provider = new MischiefView({} as never, threads as never);
+  test("static webview assets remain valid", () => {
+    const html = readFileSync("media/webview.html", "utf-8");
+    const style = readFileSync("media/webview.css", "utf-8");
+    const script = readFileSync("media/webview.js", "utf-8");
+    const normalizedHtml = html
+      .replaceAll(/\s+>/gu, ">")
+      .replaceAll(/>\s+</gu, "><");
+    const normalizedScript = script.replaceAll('"', "'");
+    const document =
+      `${style}\n${normalizedHtml}\n${normalizedScript}`.replaceAll(
+        /\s+/gu,
+        " "
+      );
 
-    provider.resolveWebviewView(view as never);
-
-    const script = webview.html.match(
-      /<script nonce="(?<nonce>[^"]+)">(?<script>[\s\S]*?)<\/script>/u
-    )?.groups?.script;
-    if (!script) {
-      throw new Error("Webview script was not generated");
-    }
     expect(() => new Script(script)).not.toThrow();
-    expect(webview.html).toContain("event.key === 'Enter' && !event.shiftKey");
-    expect(webview.html).toContain(
-      "sendButton.classList.toggle('stop', Boolean(running));"
-    );
+    expect({
+      enterToSend: document.includes(
+        "event.key === 'Enter' && !event.shiftKey"
+      ),
+      script: html.includes('src="{{scriptUri}}"'),
+      stopButton: document.includes(
+        "sendButton.classList.toggle('stop', Boolean(running));"
+      ),
+      style: html.includes('href="{{styleUri}}"'),
+    }).toStrictEqual({
+      enterToSend: true,
+      script: true,
+      stopButton: true,
+      style: true,
+    });
     expect({
       accordion:
-        /main > section\.collapsed[\s\S]*function togglePane[\s\S]*aria-expanded/u.test(
-          webview.html
+        /main > section\.collapsed[\s\S]*const togglePane[\s\S]*aria-expanded/u.test(
+          document
         ),
       chatFlow:
         /id="chat"><div id="transcript"><\/div><div id="processing"[\s\S]*<\/div><div id="plan"/u.test(
-          webview.html
+          document
         ),
       configAlignment:
         /#configs \{[^}]*margin-left: auto;[^}]*justify-content: flex-end;[\s\S]*#send \{(?![^}]*margin-left: auto;)[^}]*\}/u.test(
-          webview.html
+          document
         ),
       configIcons:
-        /\.config-control \{[^}]*gap: 8px;[^}]*\}[\s\S]*\.config-control select \{ appearance: none; \}[\s\S]*control\.append\(select, configIcon/u.test(
-          webview.html
+        /\.config-control \{[^}]*gap: 8px;[^}]*\}[\s\S]*\.config-control select \{ appearance: none; \}[\s\S]*control\.append\(\s*select, configIcon/u.test(
+          document
         ),
       contextTooltip:
         /#usage:hover::after, #usage:focus-visible::after[^}]*opacity: 1;[\s\S]*usage\.dataset\.tooltip = usage\.title/u.test(
-          webview.html
+          document
         ),
       customProfile:
         /isProfileConfig\(config\)[\s\S]*select\.selectedIndex < 0[\s\S]*option\('', 'Custom'\)[\s\S]*custom\.disabled = true/u.test(
-          webview.html
+          document
         ),
       dropdowns:
         /#configs select \{[^}]*background: transparent;[^}]*color: var\(--vscode-foreground\)/u.test(
-          webview.html
+          document
         ),
       markdown:
-        /\.markdown pre[\s\S]*function markdownBody[\s\S]*body\.innerHTML = item\.html/u.test(
-          webview.html
+        /\.markdown pre[\s\S]*const markdownBody[\s\S]*body\.innerHTML = item\.html/u.test(
+          document
         ),
       modelAlignment: /#configs option \{ text-align: right; \}/u.test(
-        webview.html
+        document
       ),
       planLayout:
         /#plan-body \{ max-height: 110px; overflow-y: auto;[\s\S]*id="processing"[\s\S]*id="plan"[\s\S]*<\/div><footer>/u.test(
-          webview.html
+          document
         ),
       planRendering: /renderPlan\(selected\)[\s\S]*item\.kind !== 'plan'/u.test(
-        webview.html
+        document
       ),
       processing:
-        /id="braille"[\s\S]*selected\.status !== 'running'/u.test(
-          webview.html
-        ) &&
-        !/selected\.status !== 'running' \|\| selected\.streaming/u.test(
-          webview.html
+        /id="braille"[\s\S]*selected\.status !== 'running' \|\| selected\.streaming/u.test(
+          document
         ),
-      progressWidth: /#usage \{[^}]*max-width: 200px;/u.test(webview.html),
+      progressWidth: /#usage \{[^}]*max-width: 200px;/u.test(document),
       resizable:
-        /class="resizer" data-before="projects" data-after="threads"[\s\S]*class="resizer" data-before="threads" data-after="thread"[\s\S]*function resizePanes/u.test(
-          webview.html
+        /class="resizer" data-before="projects" data-after="threads"[\s\S]*class="resizer" data-before="threads" data-after="thread"[\s\S]*const resizePanes/u.test(
+          document
         ),
       thinking:
-        /function transcriptNodes[\s\S]*kind === 'thought'[\s\S]*function thinkingGroup[\s\S]*'entry thought thinking-group'/u.test(
-          webview.html
+        /const transcriptNodes[\s\S]*kind === 'thought'[\s\S]*const thinkingGroup[\s\S]*'entry thought thinking-group'/u.test(
+          document
         ),
     }).toStrictEqual({
       accordion: true,
@@ -123,14 +127,18 @@ describe("view provider", () => {
       resizable: true,
       thinking: true,
     });
-    expect(webview.html).not.toMatch(
+    expect(document).not.toMatch(
       /id="stop"|class="morse"|Enter to send|>Send<|>Stop</u
     );
   });
 
-  test("bubbles Thread attention to the native view badge", () => {
+  test("loads static assets and bubbles Thread attention to the native view badge", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     const webview = {
+      asWebviewUri: (uri: { fsPath: string }) => ({
+        toString: () => `webview:${uri.fsPath}`,
+      }),
+      cspSource: "webview-csp",
       html: "",
       onDidReceiveMessage: vi.fn<() => void>(),
       options: {},
@@ -166,21 +174,35 @@ describe("view provider", () => {
         ],
       }),
     };
-    const provider = new MischiefView({} as never, threads as never);
+    const provider = new MischiefView(
+      {} as never,
+      threads as never,
+      {
+        fsPath: process.cwd(),
+      } as never
+    );
 
-    provider.resolveWebviewView(view as never);
+    await provider.resolveWebviewView(view as never);
 
     expect((view as { badge?: unknown }).badge).toStrictEqual({
       tooltip: "2 Threads need attention",
       value: 2,
     });
     expect(webview.html).toContain('id="threads-attention"');
-    expect(webview.html).toContain("statusIndicator(indicatorKind(thread))");
+    expect({
+      csp: webview.html.includes("webview-csp"),
+      placeholders: webview.html.includes("{{"),
+      uris: webview.html.includes("webview:/"),
+    }).toStrictEqual({ csp: true, placeholders: false, uris: true });
   });
 
-  test("renders Markdown without allowing raw HTML", () => {
+  test("renders Markdown without allowing raw HTML", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     const webview = {
+      asWebviewUri: (uri: { fsPath: string }) => ({
+        toString: () => `webview:${uri.fsPath}`,
+      }),
+      cspSource: "webview-csp",
       html: "",
       onDidReceiveMessage: vi.fn<() => void>(),
       options: {},
@@ -205,9 +227,15 @@ describe("view provider", () => {
         threads: [],
       }),
     };
-    const provider = new MischiefView({} as never, threads as never);
+    const provider = new MischiefView(
+      {} as never,
+      threads as never,
+      {
+        fsPath: process.cwd(),
+      } as never
+    );
 
-    provider.resolveWebviewView(view as never);
+    await provider.resolveWebviewView(view as never);
 
     const state = postMessage.mock.calls.at(-1)?.[0] as {
       threads: { selected: { items: { html: string }[] } };

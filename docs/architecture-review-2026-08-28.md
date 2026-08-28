@@ -24,7 +24,7 @@ The recommendations preserve the decisions in `CONTEXT.md`: `Projects` and `Thre
 
 **Problem:** `src/view.ts` contains two runtimes in one file: `MischiefView` runs in the extension host, while the generated HTML, CSS, and browser JavaScript run in the Webview. The browser implementation sits inside a string, so TypeScript and Oxlint cannot inspect it, 18 browser actions are coupled by string names, and the main test verifies structure with regular expressions.
 
-**Solution:** Put the browser document and rendering implementation in one dedicated Webview module behind the existing state/action message seam; leave `MischiefView` focused on VS Code actions and adapting `Projects` and `Threads` snapshots.
+**Solution:** Store the browser runtime as real static assets such as `media/webview.html`, `media/webview.css`, and `media/webview.js`, behind the existing state/action message seam. VS Code still requires assigning the loaded document to `webview.html`; load that file in the extension host, replace only CSP/asset placeholders, and resolve CSS and JavaScript through `webview.asWebviewUri(...)`. Leave `MischiefView` focused on VS Code actions and adapting `Projects` and `Threads` snapshots.
 
 **Deletion test:** Deleting that Webview module would spill all markup, rendering, pane behavior, interactions, and composer behavior back into the host adapter. It earns a deep module.
 
@@ -33,11 +33,12 @@ The recommendations preserve the decisions in `CONTEXT.md`: `Projects` and `Thre
 - **Locality:** browser changes stay together
 - **Leverage:** one document entry point
 - **Locality:** host actions stay in host
-- Browser code becomes directly checkable
+- Browser code becomes directly lintable and checkable without parsing an interpolated TypeScript string
+- Markup, styles, and browser behavior can change independently
 - Existing domain modules stay untouched
 - No UI framework required
 
-**Tests:** Keep focused host tests for snapshot posting and action routing. Check the browser source directly instead of searching one interpolated string. Add a DOM test dependency only if real browser defects justify it.
+**Tests:** Keep focused host tests for snapshot posting, action routing, static-asset URI resolution, and CSP placeholder replacement. Check the HTML and browser source files directly instead of searching one interpolated string. Add a DOM test dependency only if real browser defects justify it.
 
 #### Before
 
@@ -62,8 +63,8 @@ flowchart TD
 flowchart LR
   H["MischiefView<br/>extension-host adapter"]
   M{{"state / action seam"}}
-  W["Deep Webview module"]
-  I["markup · styles · renderers · interactions"]
+  W["Static Webview assets"]
+  I["webview.html · webview.css · webview.js"]
   HT["host checks"]
   WT["browser-source checks"]
 

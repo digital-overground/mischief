@@ -1,18 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type {
-  CreateElicitationRequest,
-  CreateElicitationResponse,
-  ElicitationContentValue,
-  ElicitationPropertySchema,
-  LoadSessionResponse,
-  NewSessionResponse,
-  PromptResponse,
-  RequestPermissionRequest,
-  RequestPermissionResponse,
-  SessionConfigOption,
-  SessionUpdate,
-} from "@agentclientprotocol/sdk";
+import { reduceTranscript } from "./transcript";
 
 const STORAGE_KEY = "mischief.threads";
 const STREAMING_IDLE_MS = 300;
@@ -22,27 +10,112 @@ export interface ThreadsStorage {
   update: (key: string, value: unknown) => PromiseLike<void>;
 }
 
+export interface ThreadConfigChoice {
+  value: string;
+  name: string;
+  description?: string;
+}
+
+export interface ThreadConfigGroup {
+  name: string;
+  options: ThreadConfigChoice[];
+}
+
+export type ThreadConfigOption =
+  | {
+      id: string;
+      name: string;
+      description?: string;
+      category?: string;
+      type: "select";
+      currentValue: string;
+      options: (ThreadConfigChoice | ThreadConfigGroup)[];
+    }
+  | {
+      id: string;
+      name: string;
+      description?: string;
+      category?: string;
+      type: "boolean";
+      currentValue: boolean;
+    };
+
+export interface AgentSession {
+  sessionId: string;
+  configOptions: ThreadConfigOption[];
+}
+
+export interface AgentPromptResult {
+  stopReason: "completed" | "cancelled";
+}
+
+export interface AgentPermissionRequest {
+  message: string;
+  options: { id: string; name: string; kind: string }[];
+}
+
+export type AgentPermissionResponse =
+  | { optionId: string }
+  | { cancelled: true };
+
+export interface AgentElicitationRequest {
+  message: string;
+  fields: ElicitationField[];
+}
+
+export type AgentElicitationResponse =
+  | { action: "accept"; values: Record<string, unknown> }
+  | { action: "cancel" };
+
+export interface AgentToolUpdate {
+  toolCallId: string;
+  title?: string;
+  status?: string;
+  input?: string;
+  output?: string;
+  terminalOutput?: string;
+  locations?: { path: string; line?: number }[];
+  diffs?: { path: string; oldText?: string; newText: string }[];
+}
+
+export type AgentUpdate =
+  | {
+      type: "message";
+      kind: "user" | "assistant" | "thought";
+      text: string;
+      messageId?: string;
+    }
+  | ({ type: "tool" } & AgentToolUpdate)
+  | { type: "plan"; text: string }
+  | { type: "usage"; usage: ThreadUsage }
+  | { type: "config"; options: ThreadConfigOption[] }
+  | { type: "sessionInfo"; title?: string; updatedAt?: string };
+
+export interface AgentError extends Error {
+  readonly authentication?: TerminalAuthentication;
+}
+
 export interface AgentHandlers {
-  error: (error: unknown) => void;
+  error: (error: AgentError) => void;
   elicitation: (
-    request: CreateElicitationRequest
-  ) => Promise<CreateElicitationResponse>;
+    request: AgentElicitationRequest
+  ) => Promise<AgentElicitationResponse>;
   permission: (
-    request: RequestPermissionRequest
-  ) => Promise<RequestPermissionResponse>;
-  update: (update: SessionUpdate) => void;
+    request: AgentPermissionRequest
+  ) => Promise<AgentPermissionResponse>;
+  update: (update: AgentUpdate) => void;
 }
 
 export interface AgentConnection {
   cancel: (sessionId: string) => Promise<void>;
-  create: (cwd: string) => Promise<NewSessionResponse>;
+  create: (cwd: string) => Promise<AgentSession>;
   dispose: () => void;
-  load: (sessionId: string, cwd: string) => Promise<LoadSessionResponse>;
+  load: (sessionId: string, cwd: string) => Promise<AgentSession>;
   prompt: (
     sessionId: string,
     text: string,
     messageId: string
-  ) => Promise<PromptResponse>;
+  ) => Promise<AgentPromptResult>;
   setConfig: (
     sessionId: string,
     configId: string,
@@ -146,6 +219,11 @@ export interface ThreadUsage {
   size: number;
 }
 
+const agentAuthentication = (
+  error: unknown
+): TerminalAuthentication | undefined =>
+  error instanceof Error ? (error as AgentError).authentication : undefined;
+
 export interface ThreadDetail {
   id: string | null;
   name: string;
@@ -153,7 +231,7 @@ export interface ThreadDetail {
   streaming: boolean;
   usage?: ThreadUsage;
   items: TranscriptItem[];
-  configOptions: SessionConfigOption[];
+  configOptions: ThreadConfigOption[];
   interaction?: ThreadInteraction;
   authentication?: TerminalAuthentication;
   error?: string;
@@ -194,15 +272,14 @@ interface Runtime {
   usage?: ThreadUsage;
   streamingTimer?: ReturnType<typeof setTimeout>;
   items: TranscriptItem[];
-  configOptions: SessionConfigOption[];
+  configOptions: ThreadConfigOption[];
   drafts: string[];
   pending: { id: string; text: string }[];
   setup?: Promise<string>;
   registration?: PromiseLike<void>;
   interaction?: ThreadInteraction;
-  resolvePermission?: (response: RequestPermissionResponse) => void;
-  elicitationRequest?: Extract<CreateElicitationRequest, { mode: "form" }>;
-  resolveElicitation?: (response: CreateElicitationResponse) => void;
+  resolvePermission?: (response: AgentPermissionResponse) => void;
+  resolveElicitation?: (response: AgentElicitationResponse) => void;
 }
 
 const threadUsage = (
@@ -212,11 +289,6 @@ const threadUsage = (
   const usage = runtime?.usage ?? record.usage;
   return usage ? { usage } : {};
 };
-
-const usageUpdate = (update: SessionUpdate): ThreadUsage | undefined =>
-  update.sessionUpdate === "usage_update"
-    ? { size: update.size, used: update.used }
-    : undefined;
 
 const stopStreaming = (runtime: Runtime): void => {
   if (runtime.streamingTimer) {
@@ -228,42 +300,9 @@ const stopStreaming = (runtime: Runtime): void => {
 
 // These helpers are assigned after the class declaration.
 // oxlint-disable prefer-const
-let appendText: (
-  items: TranscriptItem[],
-  kind: "user" | "assistant" | "thought",
-  text: string,
-  messageId?: string
-) => void;
-let elicitationContent: (
-  request: Extract<CreateElicitationRequest, { mode: "form" }>,
-  values: Record<string, unknown>
-) => Record<string, ElicitationContentValue>;
-let elicitationFields: (
-  request: Extract<CreateElicitationRequest, { mode: "form" }>
-) => ElicitationField[];
-let elicitationOptions: (
-  schema: ElicitationPropertySchema
-) => { value: string; name: string }[] | undefined;
-let elicitationValue: (
-  name: string,
-  schema: ElicitationPropertySchema,
-  value: unknown
-) => ElicitationContentValue;
 let errorMessage: (error: unknown) => string;
 let readStored: (storage: ThreadsStorage) => StoredThreads;
-let stringify: (value: unknown) => string;
-let terminalAuthentication: (
-  error: unknown
-) => TerminalAuthentication | undefined;
 let updateQueue: (runtime: Runtime) => void;
-let upsertPlan: (items: TranscriptItem[], text: string) => void;
-let upsertTool: (
-  items: TranscriptItem[],
-  update: Extract<
-    SessionUpdate,
-    { sessionUpdate: "tool_call" | "tool_call_update" }
-  >
-) => void;
 // oxlint-enable prefer-const
 
 export class Threads {
@@ -473,7 +512,7 @@ export class Threads {
       record.error = errorMessage(error);
       record.retryText = message;
       record.authentication =
-        terminalAuthentication(error) ?? record.authentication;
+        agentAuthentication(error) ?? record.authentication;
     } finally {
       runtime.pending = runtime.pending.filter(
         (pending) => pending.id !== messageId
@@ -572,13 +611,8 @@ export class Threads {
         runtime.interaction.options.some(
           (option) => option.id === response.optionId
         )
-          ? {
-              outcome: {
-                optionId: response.optionId,
-                outcome: "selected" as const,
-              },
-            }
-          : { outcome: { outcome: "cancelled" as const } };
+          ? { optionId: response.optionId }
+          : { cancelled: true as const };
       const resolve = runtime.resolvePermission;
       runtime.resolvePermission = undefined;
       runtime.interaction = undefined;
@@ -591,22 +625,14 @@ export class Threads {
 
     if (
       runtime.interaction.kind === "elicitation" &&
-      runtime.resolveElicitation &&
-      runtime.elicitationRequest
+      runtime.resolveElicitation
     ) {
-      const result: CreateElicitationResponse =
+      const result: AgentElicitationResponse =
         response.action === "accept"
-          ? {
-              action: "accept",
-              content: elicitationContent(
-                runtime.elicitationRequest,
-                response.values
-              ),
-            }
+          ? { action: "accept", values: response.values }
           : { action: "cancel" };
       const resolve = runtime.resolveElicitation;
       runtime.resolveElicitation = undefined;
-      runtime.elicitationRequest = undefined;
       runtime.interaction = undefined;
       stopStreaming(runtime);
       runtime.status = "running";
@@ -783,11 +809,10 @@ export class Threads {
     runtime: Runtime
   ): Promise<void> {
     stopStreaming(runtime);
-    runtime.resolvePermission?.({ outcome: { outcome: "cancelled" } });
+    runtime.resolvePermission?.({ cancelled: true });
     runtime.resolveElicitation?.({ action: "cancel" });
     runtime.resolvePermission = undefined;
     runtime.resolveElicitation = undefined;
-    runtime.elicitationRequest = undefined;
     runtime.interaction = undefined;
 
     const [active, ...queued] = runtime.pending;
@@ -827,7 +852,7 @@ export class Threads {
       stopStreaming(runtime);
       runtime.status = "error";
       record.error = errorMessage(error);
-      record.authentication = terminalAuthentication(error);
+      record.authentication = agentAuthentication(error);
     } finally {
       runtime.setup = undefined;
     }
@@ -855,7 +880,7 @@ export class Threads {
       stopStreaming(runtime);
       runtime.status = "error";
       record.error = errorMessage(error);
-      record.authentication = terminalAuthentication(error);
+      record.authentication = agentAuthentication(error);
       await this.persist();
       this.emit();
     }
@@ -872,6 +897,7 @@ export class Threads {
         elicitation: (request) => this.handleElicitation(record, request),
         error: (error) => {
           record.error = errorMessage(error);
+          record.authentication = error.authentication;
           const active = this.runtimes.get(record.id);
           if (active) {
             stopStreaming(active);
@@ -895,23 +921,19 @@ export class Threads {
 
   private handlePermission(
     record: StoredThread,
-    request: RequestPermissionRequest
-  ): Promise<RequestPermissionResponse> {
+    request: AgentPermissionRequest
+  ): Promise<AgentPermissionResponse> {
     const runtime = this.runtimes.get(record.id);
     if (!runtime) {
-      return Promise.resolve({ outcome: { outcome: "cancelled" } });
+      return Promise.resolve({ cancelled: true });
     }
     stopStreaming(runtime);
     runtime.status = "waiting";
     runtime.interaction = {
       id: randomUUID(),
       kind: "permission",
-      message: request.toolCall.title ?? "Permission required",
-      options: request.options.map((option) => ({
-        id: option.optionId,
-        kind: option.kind,
-        name: option.name,
-      })),
+      message: request.message,
+      options: request.options,
     };
     this.emit();
     // oxlint-disable-next-line promise/avoid-new
@@ -922,21 +944,20 @@ export class Threads {
 
   private handleElicitation(
     record: StoredThread,
-    request: CreateElicitationRequest
-  ): Promise<CreateElicitationResponse> {
+    request: AgentElicitationRequest
+  ): Promise<AgentElicitationResponse> {
     const runtime = this.runtimes.get(record.id);
-    if (!runtime || request.mode !== "form") {
-      return Promise.resolve({ action: "decline" });
+    if (!runtime) {
+      return Promise.resolve({ action: "cancel" });
     }
     stopStreaming(runtime);
     runtime.status = "waiting";
     runtime.interaction = {
-      fields: elicitationFields(request),
+      fields: request.fields,
       id: randomUUID(),
       kind: "elicitation",
       message: request.message,
     };
-    runtime.elicitationRequest = request;
     this.emit();
     // oxlint-disable-next-line promise/avoid-new
     return new Promise((resolve) => {
@@ -944,76 +965,22 @@ export class Threads {
     });
   }
 
-  private updateUsage(
-    record: StoredThread,
-    runtime: Runtime,
-    update: SessionUpdate
-  ): void {
-    const usage = usageUpdate(update);
-    if (!usage) {
-      return;
-    }
-    runtime.usage = usage;
-    record.usage = usage;
-    void this.persist();
-  }
-
-  private handleUpdate(record: StoredThread, update: SessionUpdate): void {
+  private handleUpdate(record: StoredThread, update: AgentUpdate): void {
     const runtime = this.runtimes.get(record.id);
     if (!runtime) {
       return;
     }
-    this.updateUsage(record, runtime, update);
-    if (
-      update.sessionUpdate === "user_message_chunk" &&
-      update.content.type === "text"
-    ) {
-      appendText(
-        runtime.items,
-        "user",
-        update.content.text,
-        update.messageId ?? undefined
-      );
-    } else if (
-      update.sessionUpdate === "agent_message_chunk" &&
-      update.content.type === "text"
-    ) {
-      this.markStreaming(runtime, update.content.text);
-      appendText(
-        runtime.items,
-        "assistant",
-        update.content.text,
-        update.messageId ?? undefined
-      );
-    } else if (
-      update.sessionUpdate === "agent_thought_chunk" &&
-      update.content.type === "text"
-    ) {
-      this.markStreaming(runtime, update.content.text);
-      appendText(
-        runtime.items,
-        "thought",
-        update.content.text,
-        update.messageId ?? undefined
-      );
-    } else if (
-      update.sessionUpdate === "tool_call" ||
-      update.sessionUpdate === "tool_call_update"
-    ) {
-      upsertTool(runtime.items, update);
-    } else if (update.sessionUpdate === "plan") {
-      upsertPlan(
-        runtime.items,
-        update.entries
-          .map(
-            (entry) =>
-              `${entry.status === "completed" ? "✓" : "•"} ${entry.content}`
-          )
-          .join("\n")
-      );
-    } else if (update.sessionUpdate === "config_option_update") {
-      runtime.configOptions = update.configOptions;
-    } else if (update.sessionUpdate === "session_info_update") {
+    if (update.type === "message" && update.kind !== "user") {
+      this.markStreaming(runtime, update.text);
+    }
+    reduceTranscript(runtime.items, update);
+    if (update.type === "usage") {
+      runtime.usage = update.usage;
+      record.usage = update.usage;
+      void this.persist();
+    } else if (update.type === "config") {
+      runtime.configOptions = update.options;
+    } else if (update.type === "sessionInfo") {
       if (!record.manualName && update.title?.trim()) {
         record.name = update.title.trim();
       }
@@ -1064,113 +1031,6 @@ updateQueue = (runtime: Runtime): void => {
   }
 };
 
-appendText = (
-  items: TranscriptItem[],
-  kind: "user" | "assistant" | "thought",
-  text: string,
-  messageId?: string
-): void => {
-  if (!text) {
-    return;
-  }
-  const id = messageId ? `${kind}:${messageId}` : undefined;
-  const existing = id ? items.find((item) => item.id === id) : items.at(-1);
-  if (existing?.kind === kind) {
-    existing.text = (existing.text ?? "") + text;
-  } else {
-    items.push({ id: id ?? randomUUID(), kind, text });
-  }
-};
-
-upsertTool = (
-  items: TranscriptItem[],
-  update: Extract<
-    SessionUpdate,
-    { sessionUpdate: "tool_call" | "tool_call_update" }
-  >
-): void => {
-  const id = `tool:${update.toolCallId}`;
-  let item = items.find((candidate) => candidate.id === id);
-  if (!item) {
-    item = { id, kind: "tool" };
-    items.push(item);
-  }
-  if (update.title !== undefined && update.title !== null) {
-    item.title = update.title;
-  }
-  if (update.status !== undefined && update.status !== null) {
-    item.status = update.status;
-  }
-  if (update.rawInput !== undefined) {
-    item.input = stringify(update.rawInput);
-  }
-  if (update.rawOutput !== undefined) {
-    item.output = stringify(update.rawOutput);
-  }
-  if (update.locations) {
-    item.locations = update.locations.map((location) => ({
-      path: location.path,
-      ...(location.line !== undefined && location.line !== null
-        ? { line: location.line }
-        : {}),
-    }));
-  }
-  if (update.content) {
-    const diffs = update.content
-      .filter((content) => content.type === "diff")
-      .map((content) => ({
-        path: content.path,
-        ...(content.oldText !== undefined && content.oldText !== null
-          ? { oldText: content.oldText }
-          : {}),
-        newText: content.newText,
-      }));
-    if (diffs.length) {
-      item.diffs = diffs;
-    }
-    const text = update.content
-      .filter(
-        (content) =>
-          content.type === "content" && content.content.type === "text"
-      )
-      .map((content) =>
-        content.type === "content" && content.content.type === "text"
-          ? content.content.text
-          : ""
-      )
-      .join("");
-    if (text) {
-      item.output = text;
-    }
-  }
-  const terminalOutput = (
-    update._meta as { terminal_output?: { data?: unknown } } | null | undefined
-  )?.terminal_output?.data;
-  if (typeof terminalOutput === "string") {
-    item.output = (item.output ?? "") + terminalOutput;
-  }
-};
-
-upsertPlan = (items: TranscriptItem[], text: string): void => {
-  const existing = items.find((item) => item.id === "plan");
-  if (existing) {
-    existing.text = text;
-  } else {
-    items.push({ id: "plan", kind: "plan", text, title: "Plan" });
-  }
-};
-
-stringify = (value: unknown): string => {
-  if (typeof value === "string") {
-    return value;
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-};
-
 readStored = (storage: ThreadsStorage): StoredThreads => {
   const value = storage.get<Partial<StoredThreads>>(STORAGE_KEY, {});
   return {
@@ -1180,251 +1040,6 @@ readStored = (storage: ThreadsStorage): StoredThreads => {
         : {},
     threads: Array.isArray(value.threads) ? value.threads : [],
   };
-};
-
-elicitationFields = (
-  request: Extract<CreateElicitationRequest, { mode: "form" }>
-): ElicitationField[] => {
-  const required = new Set(request.requestedSchema.required);
-  return Object.entries(request.requestedSchema.properties ?? {}).map(
-    ([name, schema]) => {
-      const options = elicitationOptions(schema);
-      let type: ElicitationField["type"];
-      if (schema.type === "boolean") {
-        type = "boolean";
-      } else if (schema.type === "number" || schema.type === "integer") {
-        type = "number";
-      } else if (schema.type === "array") {
-        type = "multiselect";
-      } else {
-        type = options ? "select" : "text";
-      }
-      return {
-        ...(schema.default !== undefined && schema.default !== null
-          ? { defaultValue: schema.default }
-          : {}),
-        ...(schema.description ? { description: schema.description } : {}),
-        ...(options ? { options } : {}),
-        label: schema.title ?? name,
-        name,
-        required: required.has(name),
-        type,
-      };
-    }
-  );
-};
-
-elicitationOptions = (
-  schema: ElicitationPropertySchema
-): { value: string; name: string }[] | undefined => {
-  if (schema.type === "string") {
-    if (schema.oneOf) {
-      return schema.oneOf.map((option) => ({
-        name: option.title,
-        value: option.const,
-      }));
-    }
-    if (schema.enum) {
-      return schema.enum.map((value) => ({ name: value, value }));
-    }
-  }
-  if (schema.type === "array") {
-    if ("anyOf" in schema.items) {
-      return schema.items.anyOf.map((option) => ({
-        name: option.title,
-        value: option.const,
-      }));
-    }
-    return schema.items.enum.map((value) => ({ name: value, value }));
-  }
-  return undefined;
-};
-
-elicitationContent = (
-  request: Extract<CreateElicitationRequest, { mode: "form" }>,
-  values: Record<string, unknown>
-): Record<string, ElicitationContentValue> => {
-  const content: Record<string, ElicitationContentValue> = {};
-  const required = new Set(request.requestedSchema.required);
-  for (const [name, schema] of Object.entries(
-    request.requestedSchema.properties ?? {}
-  )) {
-    if (!Object.hasOwn(values, name)) {
-      if (required.has(name)) {
-        throw new Error(`Missing required field: ${name}`);
-      }
-      continue;
-    }
-    content[name] = elicitationValue(name, schema, values[name]);
-  }
-  return content;
-};
-
-const stringValue = (
-  name: string,
-  schema: Extract<ElicitationPropertySchema, { type: "string" }>,
-  value: unknown
-): string => {
-  if (typeof value !== "string") {
-    throw new TypeError(`Invalid value for ${name}`);
-  }
-  const allowed = schema.oneOf?.map((option) => option.const) ?? schema.enum;
-  if (allowed && !allowed.includes(value)) {
-    throw new Error(`Invalid option for ${name}`);
-  }
-  if (
-    schema.minLength !== undefined &&
-    schema.minLength !== null &&
-    value.length < schema.minLength
-  ) {
-    throw new Error(`${name} is too short`);
-  }
-  if (
-    schema.maxLength !== undefined &&
-    schema.maxLength !== null &&
-    value.length > schema.maxLength
-  ) {
-    throw new Error(`${name} is too long`);
-  }
-  if (schema.pattern && !new RegExp(schema.pattern, "u").test(value)) {
-    throw new Error(`${name} has an invalid format`);
-  }
-  return value;
-};
-
-const numberValue = (
-  name: string,
-  schema: Extract<ElicitationPropertySchema, { type: "number" | "integer" }>,
-  value: unknown
-): number => {
-  const number = typeof value === "number" ? value : Number(value);
-  if (
-    !Number.isFinite(number) ||
-    (schema.type === "integer" && !Number.isInteger(number))
-  ) {
-    throw new Error(`Invalid number for ${name}`);
-  }
-  if (
-    schema.minimum !== undefined &&
-    schema.minimum !== null &&
-    number < schema.minimum
-  ) {
-    throw new Error(`${name} is too small`);
-  }
-  if (
-    schema.maximum !== undefined &&
-    schema.maximum !== null &&
-    number > schema.maximum
-  ) {
-    throw new Error(`${name} is too large`);
-  }
-  return number;
-};
-
-const choicesValue = (
-  name: string,
-  schema: Extract<ElicitationPropertySchema, { type: "array" }>,
-  value: unknown
-): string[] => {
-  if (
-    !Array.isArray(value) ||
-    !value.every((item) => typeof item === "string")
-  ) {
-    throw new Error(`Invalid choices for ${name}`);
-  }
-  const allowed =
-    elicitationOptions(schema)?.map((option) => option.value) ?? [];
-  if (value.some((item) => !allowed.includes(item))) {
-    throw new Error(`Invalid choices for ${name}`);
-  }
-  if (
-    schema.minItems !== undefined &&
-    schema.minItems !== null &&
-    value.length < schema.minItems
-  ) {
-    throw new Error(`Select more choices for ${name}`);
-  }
-  if (
-    schema.maxItems !== undefined &&
-    schema.maxItems !== null &&
-    value.length > schema.maxItems
-  ) {
-    throw new Error(`Select fewer choices for ${name}`);
-  }
-  return value;
-};
-
-elicitationValue = (
-  name: string,
-  schema: ElicitationPropertySchema,
-  value: unknown
-): ElicitationContentValue => {
-  if (schema.type === "string") {
-    return stringValue(name, schema, value);
-  }
-  if (schema.type === "boolean") {
-    if (typeof value !== "boolean") {
-      throw new TypeError(`Invalid value for ${name}`);
-    }
-    return value;
-  }
-  if (schema.type === "number" || schema.type === "integer") {
-    return numberValue(name, schema, value);
-  }
-  return choicesValue(name, schema, value);
-};
-
-terminalAuthentication = (
-  error: unknown
-): TerminalAuthentication | undefined => {
-  const data = (error as { data?: unknown } | null)?.data as
-    | { authMethods?: unknown }
-    | null
-    | undefined;
-  if (!Array.isArray(data?.authMethods)) {
-    return undefined;
-  }
-  for (const method of data.authMethods) {
-    if (!method || typeof method !== "object") {
-      continue;
-    }
-    const record = method as Record<string, unknown>;
-    const meta = record._meta as Record<string, unknown> | null | undefined;
-    const launch = meta?.["terminal-auth"] as
-      | Record<string, unknown>
-      | null
-      | undefined;
-    if (typeof launch?.command !== "string" || !Array.isArray(launch.args)) {
-      continue;
-    }
-    if (!launch.args.every((argument) => typeof argument === "string")) {
-      continue;
-    }
-    const rawEnv = launch.env;
-    const env =
-      rawEnv && typeof rawEnv === "object"
-        ? Object.fromEntries(
-            Object.entries(rawEnv).filter(
-              (entry): entry is [string, string] => typeof entry[1] === "string"
-            )
-          )
-        : undefined;
-    let label = "Authenticate";
-    if (typeof record.name === "string") {
-      label = record.name;
-    }
-    const { label: launchLabel } = launch;
-    if (typeof launchLabel === "string") {
-      label = launchLabel;
-    }
-    return {
-      args: launch.args as string[],
-      command: launch.command,
-      ...(env && Object.keys(env).length ? { env } : {}),
-      label,
-    };
-  }
-  return undefined;
 };
 
 errorMessage = (error: unknown): string =>
