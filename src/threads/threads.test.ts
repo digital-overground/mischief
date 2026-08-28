@@ -1,5 +1,3 @@
-import { RequestError } from "@agentclientprotocol/sdk";
-import type { SessionConfigOption } from "@agentclientprotocol/sdk";
 import { describe, expect, test } from "vitest";
 
 import { Threads } from "./threads";
@@ -7,6 +5,8 @@ import type {
   AgentConnection,
   AgentConnectionFactory,
   AgentHandlers,
+  AgentPromptResult,
+  ThreadConfigOption,
   ThreadsStorage,
 } from "./threads";
 
@@ -41,7 +41,7 @@ const memoryStorage = (): ThreadsStorage => {
 
 class FakeAgent {
   createCalls = 0;
-  initialConfigOptions: SessionConfigOption[] = [];
+  initialConfigOptions: ThreadConfigOption[] = [];
   failCreate = false;
   createError?: Error;
   replayOnLoad = false;
@@ -61,9 +61,7 @@ class FakeAgent {
   private readonly elicitationStartedDeferred = deferred();
   private readonly firstPromptStartedDeferred = deferred();
   private readonly secondPromptStartedDeferred = deferred();
-  readonly promptResolvers: ((response: {
-    stopReason: "cancelled";
-  }) => void)[] = [];
+  readonly promptResolvers: ((response: AgentPromptResult) => void)[] = [];
   readonly permissionStarted = this.permissionStartedDeferred.promise;
   readonly elicitationStarted = this.elicitationStartedDeferred.promise;
   readonly firstPromptStarted = this.firstPromptStartedDeferred.promise;
@@ -115,27 +113,30 @@ class FakeAgent {
       load: () => {
         if (this.replayOnLoad) {
           handlers.update({
-            content: { text: "Restore me", type: "text" },
-            sessionUpdate: "user_message_chunk",
+            kind: "user",
+            text: "Restore me",
+            type: "message",
           });
           handlers.update({
-            content: { text: "Restored.", type: "text" },
-            sessionUpdate: "agent_message_chunk",
+            kind: "assistant",
+            text: "Restored.",
+            type: "message",
           });
         }
-        return Promise.resolve({});
+        return Promise.resolve({ configOptions: [], sessionId: "session-1" });
       },
       prompt: async () => {
         if (this.holdPrompts) {
           const count = this.promptResolvers.length + 1;
           if (count === 1) {
             handlers.update({
-              content: { text: "Partial", type: "text" },
-              sessionUpdate: "agent_message_chunk",
+              kind: "assistant",
+              text: "Partial",
+              type: "message",
             });
           }
           // oxlint-disable-next-line promise/avoid-new
-          const result = new Promise<{ stopReason: "cancelled" }>((resolve) => {
+          const result = new Promise<AgentPromptResult>((resolve) => {
             this.promptResolvers.push(resolve);
           });
           this.markPromptStarted(count);
@@ -143,41 +144,38 @@ class FakeAgent {
         }
         if (this.richUpdates) {
           handlers.update({
-            content: { text: "Checking…", type: "text" },
-            sessionUpdate: "agent_thought_chunk",
+            kind: "thought",
+            text: "Checking…",
+            type: "message",
           });
           handlers.update({
-            content: [
+            diffs: [
               {
                 newText: "new",
                 oldText: "old",
                 path: "/workspace/src/a.ts",
-                type: "diff",
               },
             ],
-            kind: "read",
+            input: '{\n  "path": "src/a.ts"\n}',
             locations: [{ line: 2, path: "/workspace/src/a.ts" }],
-            rawInput: { path: "src/a.ts" },
-            sessionUpdate: "tool_call",
             status: "in_progress",
             title: "Read file",
             toolCallId: "tool-1",
+            type: "tool",
           });
           handlers.update({
-            rawOutput: "contents",
-            sessionUpdate: "tool_call_update",
+            output: "contents",
             status: "completed",
             toolCallId: "tool-1",
+            type: "tool",
+          });
+          handlers.update({ text: "✓ Inspect\n• Fix", type: "plan" });
+          handlers.update({
+            type: "usage",
+            usage: { size: 245_000, used: 125_000 },
           });
           handlers.update({
-            entries: [
-              { content: "Inspect", priority: "high", status: "completed" },
-              { content: "Fix", priority: "medium", status: "pending" },
-            ],
-            sessionUpdate: "plan",
-          });
-          handlers.update({
-            configOptions: [
+            options: [
               {
                 currentValue: "high",
                 id: "thinking",
@@ -186,51 +184,36 @@ class FakeAgent {
                 type: "select",
               },
             ],
-            sessionUpdate: "config_option_update",
+            type: "config",
           });
         }
         if (this.askElicitation) {
           const response = handlers.elicitation({
-            message: "Pick one",
-            mode: "form",
-            requestedSchema: {
-              properties: {
-                choice: {
-                  oneOf: [{ const: "a", title: "Option A" }],
-                  title: "Choice",
-                  type: "string",
-                },
+            fields: [
+              {
+                label: "Choice",
+                name: "choice",
+                options: [{ name: "Option A", value: "a" }],
+                required: true,
+                type: "select",
               },
-              required: ["choice"],
-              type: "object",
-            },
-            sessionId: "session-1",
+            ],
+            message: "Pick one",
           });
           this.markElicitationStarted();
           this.elicitationResponse = await response;
         }
         if (this.askPermission) {
           const response = handlers.permission({
-            options: [{ kind: "allow_once", name: "Yes", optionId: "yes" }],
-            sessionId: "session-1",
-            toolCall: {
-              status: "pending",
-              title: "Run tests?",
-              toolCallId: "tool-1",
-            },
+            message: "Run tests?",
+            options: [{ id: "yes", kind: "allow_once", name: "Yes" }],
           });
           this.markPermissionStarted();
           this.permissionResponse = await response;
         }
-        handlers.update({
-          content: { text: "Done.", type: "text" },
-          sessionUpdate: "agent_message_chunk",
-        });
-        handlers.update({
-          sessionUpdate: "session_info_update",
-          title: "Fix tests",
-        });
-        return { stopReason: "end_turn" };
+        handlers.update({ kind: "assistant", text: "Done.", type: "message" });
+        handlers.update({ title: "Fix tests", type: "sessionInfo" });
+        return { stopReason: "completed" };
       },
       setConfig: (sessionId, configId, value) => {
         this.configChange = { configId, sessionId, value };
@@ -264,7 +247,10 @@ describe("threads module", () => {
     await threads.closeWorkspace();
     await prompting;
 
-    expect(threads.snapshot()).toStrictEqual({ threads: [] });
+    expect(threads.snapshot()).toStrictEqual({
+      attentionCount: 0,
+      threads: [],
+    });
   });
 
   test("Threads stay newest-first and restore the last selection", async () => {
@@ -295,24 +281,12 @@ describe("threads module", () => {
 
   test("authentication failures expose the Agent terminal login", async () => {
     const agent = new FakeAgent();
-    agent.createError = RequestError.authRequired({
-      authMethods: [
-        {
-          _meta: {
-            "terminal-auth": {
-              args: ["/magpi/index.js", "--terminal-login"],
-              command: "node",
-              label: "Launch Pi",
-            },
-          },
-          args: ["--terminal-login"],
-          description: "Configure Pi",
-          env: {},
-          id: "pi",
-          name: "Launch Pi",
-          type: "terminal",
-        },
-      ],
+    agent.createError = Object.assign(new Error("Authentication required"), {
+      authentication: {
+        args: ["/magpi/index.js", "--terminal-login"],
+        command: "node",
+        label: "Launch Pi",
+      },
     });
     const threads = new Threads(memoryStorage(), agent.factory);
     await threads.openWorkspace("/workspace");
@@ -449,6 +423,24 @@ describe("threads module", () => {
         { kind: "plan", text: "✓ Inspect\n• Fix" },
         { kind: "assistant", text: "Done." },
       ],
+      usage: { size: 245_000, used: 125_000 },
+    });
+  });
+
+  test("context usage survives a Thread reload", async () => {
+    const storage = memoryStorage();
+    const agent = new FakeAgent();
+    agent.richUpdates = true;
+    const threads = new Threads(storage, agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Inspect it");
+
+    const restored = new Threads(storage, new FakeAgent().factory);
+    await restored.openWorkspace("/workspace");
+
+    expect(restored.snapshot().selected?.usage).toStrictEqual({
+      size: 245_000,
+      used: 125_000,
     });
   });
 
@@ -482,7 +474,7 @@ describe("threads module", () => {
 
     expect(agent.elicitationResponse).toStrictEqual({
       action: "accept",
-      content: { choice: "a" },
+      values: { choice: "a" },
     });
   });
 
@@ -496,13 +488,23 @@ describe("threads module", () => {
     await agent.permissionStarted;
 
     const interaction = threads.snapshot().selected?.interaction;
-    expect(threads.snapshot().selected).toMatchObject({
-      interaction: {
-        kind: "permission",
-        message: "Run tests?",
-        options: [{ id: "yes", name: "Yes" }],
+    expect(threads.snapshot()).toMatchObject({
+      attentionCount: 1,
+      selected: {
+        interaction: {
+          kind: "permission",
+          message: "Run tests?",
+          options: [{ id: "yes", name: "Yes" }],
+        },
+        status: "waiting",
       },
-      status: "waiting",
+      threads: [
+        {
+          indicator: "waiting",
+          needsAttention: true,
+          status: "waiting",
+        },
+      ],
     });
     threads.respond(interaction?.id ?? "", {
       action: "select",
@@ -510,10 +512,44 @@ describe("threads module", () => {
     });
     await prompting;
 
-    expect(agent.permissionResponse).toStrictEqual({
-      outcome: { optionId: "yes", outcome: "selected" },
+    expect(agent.permissionResponse).toStrictEqual({ optionId: "yes" });
+    expect(threads.snapshot()).toMatchObject({
+      attentionCount: 0,
+      selected: { status: "idle" },
+      threads: [{ indicator: "idle", needsAttention: false, status: "idle" }],
     });
-    expect(threads.snapshot().selected?.status).toBe("idle");
+  });
+
+  test("completed background Threads stay green until viewed", async () => {
+    const agent = new FakeAgent();
+    agent.holdPrompts = true;
+    const threads = new Threads(memoryStorage(), agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    const firstPrompt = threads.prompt("First");
+    await agent.firstPromptStarted;
+    const firstId = threads.snapshot().selected?.id;
+    await threads.newThread();
+    agent.promptResolvers[0]?.({ stopReason: "completed" });
+    await firstPrompt;
+
+    expect(threads.snapshot()).toMatchObject({
+      attentionCount: 1,
+      threads: [
+        { indicator: "idle", needsAttention: false },
+        { id: firstId, indicator: "completed", needsAttention: true },
+      ],
+    });
+
+    await threads.select(firstId ?? "");
+
+    expect(threads.snapshot()).toMatchObject({
+      attentionCount: 0,
+      threads: [
+        { indicator: "idle", needsAttention: false },
+        { id: firstId, indicator: "idle", needsAttention: false },
+      ],
+    });
   });
 
   test("opening a durable Thread restores its transcript from ACP", async () => {

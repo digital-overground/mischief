@@ -3,12 +3,33 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
 
 import { ClientSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
-import type { Client } from "@agentclientprotocol/sdk";
+import type {
+  Client,
+  CreateElicitationRequest,
+  CreateElicitationResponse,
+  ElicitationContentValue,
+  ElicitationPropertySchema,
+  RequestPermissionRequest,
+  RequestPermissionResponse,
+  SessionConfigOption,
+  SessionUpdate,
+} from "@agentclientprotocol/sdk";
 
 import type {
   AgentConnection,
   AgentConnectionFactory,
+  AgentError,
+  AgentElicitationRequest,
+  AgentElicitationResponse,
   AgentHandlers,
+  AgentPermissionRequest,
+  AgentPermissionResponse,
+  AgentToolUpdate,
+  AgentUpdate,
+  ElicitationField,
+  TerminalAuthentication,
+  ThreadConfigChoice,
+  ThreadConfigOption,
 } from "./threads";
 
 export interface AgentLaunch {
@@ -16,6 +37,465 @@ export interface AgentLaunch {
   args: string[];
   env?: Record<string, string>;
 }
+
+const stringify = (value: unknown): string => {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+};
+
+const configChoice = (option: {
+  value: string;
+  name: string;
+  description?: string | null;
+}): ThreadConfigChoice => ({
+  ...(option.description !== undefined && option.description !== null
+    ? { description: option.description }
+    : {}),
+  name: option.name,
+  value: option.value,
+});
+
+const configOptions = (
+  options: SessionConfigOption[] | null | undefined
+): ThreadConfigOption[] =>
+  (options ?? []).map((option) => {
+    const common = {
+      ...(option.description !== undefined && option.description !== null
+        ? { description: option.description }
+        : {}),
+      ...(option.category !== undefined && option.category !== null
+        ? { category: option.category }
+        : {}),
+      id: option.id,
+      name: option.name,
+    };
+    if (option.type === "boolean") {
+      return { ...common, currentValue: option.currentValue, type: "boolean" };
+    }
+    return {
+      ...common,
+      currentValue: option.currentValue,
+      options: option.options.map((candidate) =>
+        "value" in candidate
+          ? configChoice(candidate)
+          : {
+              name: candidate.name,
+              options: candidate.options.map(configChoice),
+            }
+      ),
+      type: "select",
+    };
+  });
+
+const permissionRequest = (
+  request: RequestPermissionRequest
+): AgentPermissionRequest => ({
+  message: request.toolCall.title ?? "Permission required",
+  options: request.options.map((option) => ({
+    id: option.optionId,
+    kind: option.kind,
+    name: option.name,
+  })),
+});
+
+const permissionResponse = (
+  response: AgentPermissionResponse
+): RequestPermissionResponse =>
+  "optionId" in response
+    ? { outcome: { optionId: response.optionId, outcome: "selected" } }
+    : { outcome: { outcome: "cancelled" } };
+
+const elicitationOptions = (
+  schema: ElicitationPropertySchema
+): { value: string; name: string }[] | undefined => {
+  if (schema.type === "string") {
+    if (schema.oneOf) {
+      return schema.oneOf.map((option) => ({
+        name: option.title,
+        value: option.const,
+      }));
+    }
+    if (schema.enum) {
+      return schema.enum.map((value) => ({ name: value, value }));
+    }
+  }
+  if (schema.type === "array") {
+    if ("anyOf" in schema.items) {
+      return schema.items.anyOf.map((option) => ({
+        name: option.title,
+        value: option.const,
+      }));
+    }
+    return schema.items.enum.map((value) => ({ name: value, value }));
+  }
+  return undefined;
+};
+
+const elicitationRequest = (
+  request: Extract<CreateElicitationRequest, { mode: "form" }>
+): AgentElicitationRequest => {
+  const required = new Set(request.requestedSchema.required);
+  const fields = Object.entries(request.requestedSchema.properties ?? {}).map(
+    ([name, schema]) => {
+      const options = elicitationOptions(schema);
+      let type: ElicitationField["type"];
+      if (schema.type === "boolean") {
+        type = "boolean";
+      } else if (schema.type === "number" || schema.type === "integer") {
+        type = "number";
+      } else if (schema.type === "array") {
+        type = "multiselect";
+      } else {
+        type = options ? "select" : "text";
+      }
+      return {
+        ...(schema.default !== undefined && schema.default !== null
+          ? { defaultValue: schema.default }
+          : {}),
+        ...(schema.description ? { description: schema.description } : {}),
+        ...(options ? { options } : {}),
+        label: schema.title ?? name,
+        name,
+        required: required.has(name),
+        type,
+      };
+    }
+  );
+  return { fields, message: request.message };
+};
+
+const stringValue = (
+  name: string,
+  schema: Extract<ElicitationPropertySchema, { type: "string" }>,
+  value: unknown
+): string => {
+  if (typeof value !== "string") {
+    throw new TypeError(`Invalid value for ${name}`);
+  }
+  const allowed = schema.oneOf?.map((option) => option.const) ?? schema.enum;
+  if (allowed && !allowed.includes(value)) {
+    throw new Error(`Invalid option for ${name}`);
+  }
+  if (
+    schema.minLength !== undefined &&
+    schema.minLength !== null &&
+    value.length < schema.minLength
+  ) {
+    throw new Error(`${name} is too short`);
+  }
+  if (
+    schema.maxLength !== undefined &&
+    schema.maxLength !== null &&
+    value.length > schema.maxLength
+  ) {
+    throw new Error(`${name} is too long`);
+  }
+  if (schema.pattern && !new RegExp(schema.pattern, "u").test(value)) {
+    throw new Error(`${name} has an invalid format`);
+  }
+  return value;
+};
+
+const numberValue = (
+  name: string,
+  schema: Extract<ElicitationPropertySchema, { type: "number" | "integer" }>,
+  value: unknown
+): number => {
+  const number = typeof value === "number" ? value : Number(value);
+  if (
+    !Number.isFinite(number) ||
+    (schema.type === "integer" && !Number.isInteger(number))
+  ) {
+    throw new Error(`Invalid number for ${name}`);
+  }
+  if (
+    schema.minimum !== undefined &&
+    schema.minimum !== null &&
+    number < schema.minimum
+  ) {
+    throw new Error(`${name} is too small`);
+  }
+  if (
+    schema.maximum !== undefined &&
+    schema.maximum !== null &&
+    number > schema.maximum
+  ) {
+    throw new Error(`${name} is too large`);
+  }
+  return number;
+};
+
+const choicesValue = (
+  name: string,
+  schema: Extract<ElicitationPropertySchema, { type: "array" }>,
+  value: unknown
+): string[] => {
+  if (
+    !Array.isArray(value) ||
+    !value.every((item) => typeof item === "string")
+  ) {
+    throw new Error(`Invalid choices for ${name}`);
+  }
+  const allowed =
+    elicitationOptions(schema)?.map((option) => option.value) ?? [];
+  if (value.some((item) => !allowed.includes(item))) {
+    throw new Error(`Invalid choices for ${name}`);
+  }
+  if (
+    schema.minItems !== undefined &&
+    schema.minItems !== null &&
+    value.length < schema.minItems
+  ) {
+    throw new Error(`Select more choices for ${name}`);
+  }
+  if (
+    schema.maxItems !== undefined &&
+    schema.maxItems !== null &&
+    value.length > schema.maxItems
+  ) {
+    throw new Error(`Select fewer choices for ${name}`);
+  }
+  return value;
+};
+
+const elicitationValue = (
+  name: string,
+  schema: ElicitationPropertySchema,
+  value: unknown
+): ElicitationContentValue => {
+  if (schema.type === "string") {
+    return stringValue(name, schema, value);
+  }
+  if (schema.type === "boolean") {
+    if (typeof value !== "boolean") {
+      throw new TypeError(`Invalid value for ${name}`);
+    }
+    return value;
+  }
+  if (schema.type === "number" || schema.type === "integer") {
+    return numberValue(name, schema, value);
+  }
+  return choicesValue(name, schema, value);
+};
+
+const elicitationContent = (
+  request: Extract<CreateElicitationRequest, { mode: "form" }>,
+  values: Record<string, unknown>
+): Record<string, ElicitationContentValue> => {
+  const content: Record<string, ElicitationContentValue> = {};
+  const required = new Set(request.requestedSchema.required);
+  for (const [name, schema] of Object.entries(
+    request.requestedSchema.properties ?? {}
+  )) {
+    if (!Object.hasOwn(values, name)) {
+      if (required.has(name)) {
+        throw new Error(`Missing required field: ${name}`);
+      }
+      continue;
+    }
+    content[name] = elicitationValue(name, schema, values[name]);
+  }
+  return content;
+};
+
+const elicitationResponse = (
+  request: Extract<CreateElicitationRequest, { mode: "form" }>,
+  response: AgentElicitationResponse
+): CreateElicitationResponse =>
+  response.action === "accept"
+    ? {
+        action: "accept",
+        content: elicitationContent(request, response.values),
+      }
+    : { action: "cancel" };
+
+const toolUpdate = (
+  update: Extract<
+    SessionUpdate,
+    { sessionUpdate: "tool_call" | "tool_call_update" }
+  >
+): AgentToolUpdate => {
+  const diffs = (update.content ?? [])
+    .filter((content) => content.type === "diff")
+    .map((content) => ({
+      path: content.path,
+      ...(content.oldText !== undefined && content.oldText !== null
+        ? { oldText: content.oldText }
+        : {}),
+      newText: content.newText,
+    }));
+  const text = (update.content ?? [])
+    .filter(
+      (content) => content.type === "content" && content.content.type === "text"
+    )
+    .map((content) =>
+      content.type === "content" && content.content.type === "text"
+        ? content.content.text
+        : ""
+    )
+    .join("");
+  const terminalOutput = (
+    update._meta as { terminal_output?: { data?: unknown } } | null | undefined
+  )?.terminal_output?.data;
+  return {
+    ...(update.title !== undefined && update.title !== null
+      ? { title: update.title }
+      : {}),
+    ...(update.status !== undefined && update.status !== null
+      ? { status: update.status }
+      : {}),
+    ...(update.rawInput === undefined
+      ? {}
+      : { input: stringify(update.rawInput) }),
+    ...(update.rawOutput === undefined
+      ? {}
+      : { output: stringify(update.rawOutput) }),
+    ...(update.locations
+      ? {
+          locations: update.locations.map((location) => ({
+            path: location.path,
+            ...(location.line !== undefined && location.line !== null
+              ? { line: location.line }
+              : {}),
+          })),
+        }
+      : {}),
+    ...(diffs.length ? { diffs } : {}),
+    ...(text ? { output: text } : {}),
+    ...(typeof terminalOutput === "string" ? { terminalOutput } : {}),
+    toolCallId: update.toolCallId,
+  };
+};
+
+export const translateSessionUpdate = (
+  update: SessionUpdate
+): AgentUpdate | undefined => {
+  switch (update.sessionUpdate) {
+    case "user_message_chunk":
+    case "agent_message_chunk":
+    case "agent_thought_chunk": {
+      if (update.content.type !== "text") {
+        return undefined;
+      }
+      let kind: "user" | "assistant" | "thought" = "thought";
+      if (update.sessionUpdate === "user_message_chunk") {
+        kind = "user";
+      } else if (update.sessionUpdate === "agent_message_chunk") {
+        kind = "assistant";
+      }
+      return {
+        ...(update.messageId ? { messageId: update.messageId } : {}),
+        kind,
+        text: update.content.text,
+        type: "message",
+      };
+    }
+    case "tool_call":
+    case "tool_call_update": {
+      return { ...toolUpdate(update), type: "tool" };
+    }
+    case "plan": {
+      return {
+        text: update.entries
+          .map(
+            (entry) =>
+              `${entry.status === "completed" ? "✓" : "•"} ${entry.content}`
+          )
+          .join("\n"),
+        type: "plan",
+      };
+    }
+    case "usage_update": {
+      return { type: "usage", usage: { size: update.size, used: update.used } };
+    }
+    case "config_option_update": {
+      return { options: configOptions(update.configOptions), type: "config" };
+    }
+    case "session_info_update": {
+      return {
+        ...(update.title !== undefined && update.title !== null
+          ? { title: update.title }
+          : {}),
+        ...(update.updatedAt !== undefined && update.updatedAt !== null
+          ? { updatedAt: update.updatedAt }
+          : {}),
+        type: "sessionInfo",
+      };
+    }
+    default: {
+      return undefined;
+    }
+  }
+};
+
+const terminalAuthentication = (
+  error: unknown
+): TerminalAuthentication | undefined => {
+  const data = (error as { data?: unknown } | null)?.data as
+    | { authMethods?: unknown }
+    | null
+    | undefined;
+  if (!Array.isArray(data?.authMethods)) {
+    return undefined;
+  }
+  for (const method of data.authMethods) {
+    if (!method || typeof method !== "object") {
+      continue;
+    }
+    const record = method as Record<string, unknown>;
+    const meta = record._meta as Record<string, unknown> | null | undefined;
+    const launch = meta?.["terminal-auth"] as
+      | Record<string, unknown>
+      | null
+      | undefined;
+    if (typeof launch?.command !== "string" || !Array.isArray(launch.args)) {
+      continue;
+    }
+    if (!launch.args.every((argument) => typeof argument === "string")) {
+      continue;
+    }
+    const rawEnv = launch.env;
+    const env =
+      rawEnv && typeof rawEnv === "object"
+        ? Object.fromEntries(
+            Object.entries(rawEnv).filter(
+              (entry): entry is [string, string] => typeof entry[1] === "string"
+            )
+          )
+        : undefined;
+    let label = "Authenticate";
+    if (typeof record.name === "string") {
+      label = record.name;
+    }
+    const { label: launchLabel } = launch;
+    if (typeof launchLabel === "string") {
+      label = launchLabel;
+    }
+    return {
+      args: launch.args as string[],
+      command: launch.command,
+      ...(env && Object.keys(env).length ? { env } : {}),
+      label,
+    };
+  }
+  return undefined;
+};
+
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+const toAgentError = (error: unknown): AgentError =>
+  error instanceof Error && "authentication" in error
+    ? (error as AgentError)
+    : Object.assign(new Error(errorMessage(error)), {
+        authentication: terminalAuthentication(error),
+      });
 
 class AcpConnection implements AgentConnection {
   private child?: ChildProcessWithoutNullStreams;
@@ -36,45 +516,67 @@ class AcpConnection implements AgentConnection {
     this.log = log;
   }
 
-  async create(cwd: string) {
-    await this.start();
-    return this.requireConnection().newSession({ cwd, mcpServers: [] });
-  }
-
-  async load(sessionId: string, cwd: string) {
-    await this.start();
-    return this.requireConnection().loadSession({
-      cwd,
-      mcpServers: [],
-      sessionId,
+  create(cwd: string) {
+    return AcpConnection.call(async () => {
+      await this.start();
+      const session = await this.requireConnection().newSession({
+        cwd,
+        mcpServers: [],
+      });
+      return {
+        configOptions: configOptions(session.configOptions),
+        sessionId: session.sessionId,
+      };
     });
   }
 
-  async prompt(sessionId: string, text: string, messageId: string) {
-    await this.start();
-    return this.requireConnection().prompt({
-      _meta: { "magpi-acp/client-message-id": messageId },
-      prompt: [{ text, type: "text" }],
-      sessionId,
+  load(sessionId: string, cwd: string) {
+    return AcpConnection.call(async () => {
+      await this.start();
+      const session = await this.requireConnection().loadSession({
+        cwd,
+        mcpServers: [],
+        sessionId,
+      });
+      return { configOptions: configOptions(session.configOptions), sessionId };
     });
   }
 
-  async cancel(sessionId: string): Promise<void> {
-    await this.start();
-    await this.requireConnection().cancel({ sessionId });
+  prompt(sessionId: string, text: string, messageId: string) {
+    return AcpConnection.call(async () => {
+      await this.start();
+      const response = await this.requireConnection().prompt({
+        _meta: { "magpi-acp/client-message-id": messageId },
+        prompt: [{ text, type: "text" }],
+        sessionId,
+      });
+      return {
+        stopReason:
+          response.stopReason === "cancelled" ? "cancelled" : "completed",
+      } as const;
+    });
   }
 
-  async setConfig(
+  cancel(sessionId: string): Promise<void> {
+    return AcpConnection.call(async () => {
+      await this.start();
+      await this.requireConnection().cancel({ sessionId });
+    });
+  }
+
+  setConfig(
     sessionId: string,
     configId: string,
     value: string | boolean
   ): Promise<void> {
-    await this.start();
-    await this.requireConnection().setSessionConfigOption(
-      typeof value === "boolean"
-        ? { configId, sessionId, type: "boolean", value }
-        : { configId, sessionId, value }
-    );
+    return AcpConnection.call(async () => {
+      await this.start();
+      await this.requireConnection().setSessionConfigOption(
+        typeof value === "boolean"
+          ? { configId, sessionId, type: "boolean", value }
+          : { configId, sessionId, value }
+      );
+    });
   }
 
   dispose(): void {
@@ -85,6 +587,14 @@ class AcpConnection implements AgentConnection {
       this.child.kill();
     }
     this.child = undefined;
+  }
+
+  private static async call<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      throw toAgentError(error);
+    }
   }
 
   private async start(): Promise<void> {
@@ -125,8 +635,10 @@ class AcpConnection implements AgentConnection {
       this.starting = undefined;
       if (!this.disposed) {
         this.handlers.error(
-          new Error(
-            `MagPi ACP exited${code === null ? ` (${signal ?? "unknown"})` : ` (${code})`}`
+          toAgentError(
+            new Error(
+              `MagPi ACP exited${code === null ? ` (${signal ?? "unknown"})` : ` (${code})`}`
+            )
           )
         );
       }
@@ -152,12 +664,28 @@ class AcpConnection implements AgentConnection {
       },
     });
     const client: Client = {
-      requestPermission: (request) => this.handlers.permission(request),
-      sessionUpdate: async ({ update }) => {
-        await this.handlers.update(update);
+      requestPermission: async (request) => {
+        const response = await this.handlers.permission(
+          permissionRequest(request)
+        );
+        return permissionResponse(response);
       },
-      unstable_createElicitation: (request) =>
-        this.handlers.elicitation(request),
+      sessionUpdate: ({ update }) => {
+        const translated = translateSessionUpdate(update);
+        if (translated) {
+          this.handlers.update(translated);
+        }
+        return Promise.resolve();
+      },
+      unstable_createElicitation: async (request) => {
+        if (request.mode !== "form") {
+          return { action: "decline" };
+        }
+        const response = await this.handlers.elicitation(
+          elicitationRequest(request)
+        );
+        return elicitationResponse(request, response);
+      },
     };
     const connection = new ClientSideConnection(
       () => client,
