@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 
+import MarkdownIt from "markdown-it";
 import * as vscode from "vscode";
 
 import type {
@@ -13,6 +14,7 @@ import type { ThreadInteractionResponse, Threads } from "./threads/threads";
 const VIEW_ID = "mischief.view";
 const DEFAULT_MONO_FONT_FAMILY =
   '"Lilex", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+const markdown = new MarkdownIt({ breaks: true, html: false, linkify: true });
 // These helpers are assigned after the class declaration.
 // oxlint-disable prefer-const
 let html: () => string;
@@ -348,11 +350,22 @@ export class MischiefView implements vscode.WebviewViewProvider {
       .getConfiguration("mischief")
       .get<string>("fontFamily")
       ?.trim();
+    const threads = this.threads.snapshot();
+    if (threads.selected) {
+      threads.selected = {
+        ...threads.selected,
+        items: threads.selected.items.map((item) =>
+          item.text && item.kind !== "plan" && item.kind !== "tool"
+            ? { ...item, html: markdown.render(item.text) }
+            : item
+        ),
+      };
+    }
     const postMessage = this.view.webview.postMessage.bind(this.view.webview);
     void postMessage({
       font: font || DEFAULT_MONO_FONT_FAMILY,
       projects: this.projectsSnapshot,
-      threads: this.threads.snapshot(),
+      threads,
       type: "state",
     });
   }
@@ -413,12 +426,22 @@ html = (): string => {
 * { box-sizing: border-box; }
 body { margin: 0; height: 100vh; overflow: hidden; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font-family: var(--mischief-ui-font); font-size: 13px; }
 main { height: 100%; display: flex; flex-direction: column; }
-section { min-height: 0; display: flex; flex-direction: column; border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border)); }
-#projects { flex: 0 0 30%; }
-#threads { flex: 0 0 20%; }
-#thread { flex: 1; border-bottom: 0; }
+main > section { min-height: 72px; display: flex; flex-direction: column; flex-shrink: 1; overflow: hidden; border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border)); }
+#projects { flex: 0 1 30%; }
+#threads { flex: 0 1 20%; }
+#thread { flex: 1 1 50%; border-bottom: 0; }
+main > section.collapsed { min-height: 26px; flex-basis: 26px !important; flex-grow: 0 !important; flex-shrink: 0; }
+main > section.collapsed > :not(header) { display: none !important; }
+.resizer { position: relative; z-index: 1; flex: 0 0 5px; cursor: row-resize; touch-action: none; }
+.resizer::after { position: absolute; top: 2px; right: 0; left: 0; height: 1px; content: ""; background: var(--vscode-panel-border); }
+.resizer:hover::after, .resizer:focus-visible::after, .resizer.active::after { background: var(--vscode-focusBorder); }
+.resizer:focus-visible { outline: none; }
 header { min-height: 26px; padding: 4px 8px; display: flex; align-items: center; gap: 4px; background: var(--vscode-sideBarSectionHeader-background); font-size: 11px; font-weight: 600; text-transform: uppercase; }
+main > section > header { cursor: pointer; user-select: none; }
+main > section > header::before { width: 10px; flex: none; content: "▾"; color: var(--vscode-descriptionForeground); }
+main > section.collapsed > header::before { content: "▸"; }
 header > .heading { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+header > .heading:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
 button, textarea, input, select { color: inherit; font: inherit; }
 button:disabled, textarea:disabled, select:disabled { opacity: .5; cursor: default; }
 .icon { border: 0; padding: 1px 5px; background: transparent; cursor: pointer; border-radius: 3px; }
@@ -432,7 +455,7 @@ button:disabled, textarea:disabled, select:disabled { opacity: .5; cursor: defau
 .row-open { min-width: 0; flex: 1; display: flex; align-items: center; gap: 6px; border: 0; padding: 3px 5px 3px 0; text-align: left; background: transparent; cursor: pointer; }
 .meta { color: var(--vscode-descriptionForeground); font-size: 11px; white-space: nowrap; }
 .selected .meta { color: inherit; opacity: .8; }
-.empty { margin: auto; padding: 14px; color: var(--vscode-descriptionForeground); text-align: center; line-height: 1.5; }
+.empty { margin: 0; padding: 14px; color: var(--vscode-descriptionForeground); text-align: left; line-height: 1.5; }
 #thread-header { text-transform: none; }
 #thread-title { font-size: 12px; }
 #configs { min-width: 0; flex: 1; display: flex; align-items: center; gap: 3px; overflow-x: auto; }
@@ -442,16 +465,44 @@ button:disabled, textarea:disabled, select:disabled { opacity: .5; cursor: defau
 .config-icon { display: inline-flex; flex: none; width: 14px; height: 14px; color: var(--vscode-descriptionForeground); }
 #configs select { min-width: 0; max-width: 180px; height: 22px; border: 0; border-radius: 3px; padding: 1px 5px; background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); font-size: 11px; }
 .lucide { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-#transcript { flex: 1; min-height: 0; overflow: auto; padding: 8px; font-family: var(--mischief-mono-font); font-size: 13px; }
-.entry { margin: 0 0 10px; border-left: 2px solid transparent; padding-left: 8px; overflow-wrap: anywhere; }
-.entry.user { border-color: var(--vscode-charts-purple); }
-.entry.assistant { border-color: var(--vscode-textLink-foreground); }
-.entry.thought { border-color: var(--vscode-charts-yellow); color: var(--vscode-descriptionForeground); }
-.entry.plan { border-color: var(--vscode-charts-green); }
-.role { margin-bottom: 3px; color: var(--vscode-descriptionForeground); font-family: var(--mischief-ui-font); font-size: 10px; text-transform: uppercase; }
+#chat { flex: 1; min-height: 0; overflow: auto; padding: 8px; font-family: var(--mischief-mono-font); font-size: 13px; }
+#transcript { min-height: 0; }
+.entry { --entry-accent: var(--vscode-descriptionForeground); margin: 0 0 8px; border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-left: 2px solid var(--entry-accent); border-radius: 4px; padding: 8px 9px; overflow-wrap: anywhere; background: var(--vscode-editorWidget-background); background: color-mix(in srgb, var(--entry-accent) 7%, var(--vscode-editor-background, var(--vscode-sideBar-background))); }
+article.entry { display: flex; align-items: flex-start; gap: 8px; }
+.entry.user { --entry-accent: var(--vscode-charts-purple); }
+.entry.assistant { --entry-accent: var(--vscode-textLink-foreground); }
+.entry.thought { --entry-accent: var(--vscode-charts-yellow); color: var(--vscode-descriptionForeground); }
+.entry.tool { --entry-accent: var(--vscode-charts-orange, var(--vscode-charts-yellow)); }
+.entry.system { --entry-accent: var(--vscode-descriptionForeground); }
+.entry-icon { flex: none; display: inline-flex; width: 14px; height: 14px; margin-top: 1px; color: var(--entry-accent); }
+.entry-content { flex: 1; min-width: 0; }
 .body, pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mischief-mono-font); line-height: 1.35; }
-details.entry > summary { cursor: pointer; color: var(--vscode-descriptionForeground); font-family: var(--mischief-ui-font); }
-.tool-body { margin-top: 6px; }
+.thinking-group { display: block; }
+.thinking-heading { display: flex; align-items: center; gap: 8px; font-family: var(--mischief-ui-font); font-weight: 500; }
+.thinking-content { margin: 8px 0 0 6px; border-left: 1px solid color-mix(in srgb, var(--entry-accent) 45%, transparent); padding-left: 15px; }
+.thinking-item { font-weight: 600; }
+.thinking-item + .thinking-item { margin-top: 9px; }
+.markdown { white-space: normal; }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown p, .markdown ul, .markdown ol, .markdown blockquote, .markdown pre, .markdown table { margin: 0 0 8px; }
+.markdown ul, .markdown ol { padding-left: 20px; }
+.markdown li + li { margin-top: 3px; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 { margin: 12px 0 6px; font-family: var(--mischief-ui-font); line-height: 1.2; }
+.markdown h1 { font-size: 1.3em; }
+.markdown h2 { font-size: 1.2em; }
+.markdown h3, .markdown h4 { font-size: 1.1em; }
+.markdown code { border-radius: 3px; padding: 1px 3px; background: var(--vscode-textCodeBlock-background); font-family: var(--mischief-mono-font); }
+.markdown pre { overflow-x: auto; padding: 8px; background: var(--vscode-textCodeBlock-background); white-space: pre; }
+.markdown pre code { padding: 0; background: transparent; }
+.markdown blockquote { border-left: 2px solid var(--vscode-textBlockQuote-border); padding-left: 9px; color: var(--vscode-descriptionForeground); }
+.markdown a { color: var(--vscode-textLink-foreground); }
+.markdown table { width: 100%; border-collapse: collapse; }
+.markdown th, .markdown td { border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); padding: 4px 6px; text-align: left; }
+.markdown hr { border: 0; border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); }
+details.entry > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--vscode-descriptionForeground); font-family: var(--mischief-ui-font); list-style: none; }
+details.entry > summary::-webkit-details-marker { display: none; }
+.tool-body { margin: 7px 0 0 22px; }
 .tool-body pre { margin: 4px 0; padding: 6px; background: var(--vscode-textCodeBlock-background); max-height: 180px; overflow: auto; }
 .link { border: 0; padding: 2px 0; display: block; background: transparent; color: var(--vscode-textLink-foreground); cursor: pointer; font-family: var(--mischief-ui-font); text-align: left; }
 #notice { padding: 0 8px; color: var(--vscode-errorForeground); white-space: pre-wrap; }
@@ -461,11 +512,16 @@ details.entry > summary { cursor: pointer; color: var(--vscode-descriptionForegr
 #interaction .message { margin-bottom: 7px; }
 #interaction label { display: block; margin: 6px 0; }
 #interaction input:not([type=checkbox]), #interaction select, #interaction textarea { display: block; width: 100%; margin-top: 3px; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-input-foreground); padding: 4px; }
+#plan { flex: none; border-top: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background, var(--vscode-sideBar-background)); }
+#plan[hidden] { display: none; }
+#plan-title { display: flex; align-items: center; gap: 6px; padding: 6px 10px 3px; color: var(--vscode-descriptionForeground); font-size: 10px; font-weight: 600; text-transform: uppercase; }
+.plan-icon { display: inline-flex; width: 13px; height: 13px; color: var(--vscode-charts-green); }
+#plan-body { max-height: 110px; overflow-y: auto; padding: 0 10px 7px 29px; font-size: 12px; }
 .interaction-buttons { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
 .action { border: 1px solid var(--vscode-button-border, transparent); border-radius: 2px; padding: 3px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); cursor: pointer; }
 .action.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
 footer { border-top: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background, var(--vscode-sideBar-background)); }
-#processing { flex: none; padding: 0 10px 6px; color: var(--vscode-textLink-foreground); font-family: var(--mischief-mono-font); font-size: 18px; line-height: 1; }
+#processing { padding: 2px 10px 10px 12px; color: var(--vscode-textLink-foreground); font-family: var(--mischief-mono-font); font-size: 18px; line-height: 1; }
 #processing[hidden] { display: none; }
 #composer { display: block; width: 100%; min-height: 86px; max-height: 220px; resize: vertical; border: 0; background: transparent; color: var(--vscode-input-foreground); padding: 12px 14px 6px; outline: none; font-family: var(--mischief-mono-font); font-size: 13px; line-height: 1.35; }
 #composer:focus { outline: none; }
@@ -482,8 +538,10 @@ footer { border-top: 1px solid var(--vscode-panel-border); background: var(--vsc
 <body>
 <main>
   <section id="projects"><header><span class="heading">Projects / Workspaces</span><button class="icon" id="add" title="Add Workspace" aria-label="Add Workspace">＋</button><button class="icon" id="refresh" title="Refresh" aria-label="Refresh">↻</button></header><div class="content" id="project-list"></div></section>
+  <div class="resizer" data-before="projects" data-after="threads" role="separator" aria-label="Resize Projects and Threads" aria-orientation="horizontal" tabindex="0"></div>
   <section id="threads"><header><span class="heading" id="threads-title">Threads</span><button class="icon" id="new-thread" title="New Thread" aria-label="New Thread">＋</button></header><div class="content" id="thread-list"></div></section>
-  <section id="thread"><header id="thread-header"><span class="heading" id="thread-title">Thread</span><button class="icon" id="rename-thread" title="Rename Thread" aria-label="Rename Thread">✎</button></header><div id="transcript"></div><div id="notice"></div><div id="actions"></div><div id="interaction"></div><div id="processing" role="status" aria-label="Agent is working" hidden><span id="braille" aria-hidden="true">⠋</span></div><footer><textarea id="composer" placeholder="Message magpi-acp — @ to include context, / for commands"></textarea><div class="footer-row"><div id="configs"></div><button class="action" id="send" title="Send" aria-label="Send"><svg class="lucide send-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></svg><svg class="lucide stop-icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect></svg></button></div></footer></section>
+  <div class="resizer" data-before="threads" data-after="thread" role="separator" aria-label="Resize Threads and Thread" aria-orientation="horizontal" tabindex="0"></div>
+  <section id="thread"><header id="thread-header"><span class="heading" id="thread-title">Thread</span><button class="icon" id="rename-thread" title="Rename Thread" aria-label="Rename Thread">✎</button></header><div id="chat"><div id="transcript"></div><div id="processing" role="status" aria-label="Agent is working" hidden><span id="braille" aria-hidden="true">⠋</span></div><div id="notice"></div><div id="actions"></div><div id="interaction"></div></div><div id="plan" hidden><div id="plan-title"></div><pre id="plan-body"></pre></div><footer><textarea id="composer" placeholder="Message magpi-acp — @ to include context, / for commands"></textarea><div class="footer-row"><div id="configs"></div><button class="action" id="send" title="Send" aria-label="Send"><svg class="lucide send-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></svg><svg class="lucide stop-icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect></svg></button></div></footer></section>
 </main>
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
@@ -494,6 +552,9 @@ let consumedDrafts = '';
 let brailleFrame = 0;
 const brailleFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const openTools = new Set();
+const panes = [...document.querySelectorAll('main > section')];
+const MIN_PANE_HEIGHT = 72;
+const COLLAPSED_PANE_HEIGHT = 26;
 
 $('add').addEventListener('click', () => vscode.postMessage({ type: 'add' }));
 $('refresh').addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
@@ -509,6 +570,88 @@ $('send').addEventListener('click', () => {
 $('composer').addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send(); }
 });
+setupPanes();
+
+function setupPanes() {
+  for (const pane of panes) {
+    const header = pane.querySelector(':scope > header');
+    const toggle = header.querySelector(':scope > .heading');
+    toggle.tabIndex = 0;
+    toggle.setAttribute('role', 'button');
+    toggle.setAttribute('aria-expanded', 'true');
+    header.addEventListener('click', (event) => {
+      if (event.target.closest('button')) return;
+      togglePane(pane);
+    });
+    toggle.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      togglePane(pane);
+    });
+  }
+  for (const resizer of document.querySelectorAll('.resizer')) setupResizer(resizer);
+  rebalancePanes();
+}
+
+function togglePane(pane) {
+  const collapsed = !pane.classList.contains('collapsed');
+  const toggle = pane.querySelector(':scope > header > .heading');
+  if (collapsed) pane.dataset.expandedHeight = pane.getBoundingClientRect().height;
+  pane.classList.toggle('collapsed', collapsed);
+  pane.style.flexBasis = (collapsed ? COLLAPSED_PANE_HEIGHT : Number(pane.dataset.expandedHeight) || MIN_PANE_HEIGHT) + 'px';
+  toggle.setAttribute('aria-expanded', String(!collapsed));
+  rebalancePanes();
+}
+
+function rebalancePanes() {
+  const expanded = panes.filter((pane) => !pane.classList.contains('collapsed'));
+  for (const pane of panes) pane.style.flexGrow = '0';
+  if (expanded.length) expanded.at(-1).style.flexGrow = '1';
+}
+
+function setupResizer(resizer) {
+  let previousY;
+  resizer.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || !resizePanes(resizer, 0)) return;
+    event.preventDefault();
+    previousY = event.clientY;
+    resizer.classList.add('active');
+    resizer.setPointerCapture(event.pointerId);
+  });
+  resizer.addEventListener('pointermove', (event) => {
+    if (previousY === undefined) return;
+    resizePanes(resizer, event.clientY - previousY);
+    previousY = event.clientY;
+  });
+  const stop = () => {
+    previousY = undefined;
+    resizer.classList.remove('active');
+  };
+  resizer.addEventListener('pointerup', stop);
+  resizer.addEventListener('pointercancel', stop);
+  resizer.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    event.preventDefault();
+    resizePanes(resizer, event.key === 'ArrowUp' ? -12 : 12);
+  });
+}
+
+function resizePanes(resizer, delta) {
+  const before = $(resizer.dataset.before);
+  const after = $(resizer.dataset.after);
+  if (before.classList.contains('collapsed') || after.classList.contains('collapsed')) return false;
+  const beforeHeight = before.getBoundingClientRect().height;
+  const afterHeight = after.getBoundingClientRect().height;
+  const total = beforeHeight + afterHeight;
+  if (total < MIN_PANE_HEIGHT * 2) return false;
+  const nextBefore = Math.max(MIN_PANE_HEIGHT, Math.min(total - MIN_PANE_HEIGHT, beforeHeight + delta));
+  before.style.flexBasis = nextBefore + 'px';
+  after.style.flexBasis = total - nextBefore + 'px';
+  before.dataset.expandedHeight = nextBefore;
+  after.dataset.expandedHeight = total - nextBefore;
+  rebalancePanes();
+  return true;
+}
 
 function send() {
   const box = $('composer');
@@ -611,8 +754,19 @@ function renderThreads() {
 }
 
 const icons = {
+  alert: '<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 8v4"></path><path d="M12 16h.01"></path></svg>',
   brain: '<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 18V5"></path><path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"></path><path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"></path><path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"></path><path d="M18 18a4 4 0 0 0 2-7.464"></path><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"></path><path d="M6 18a4 4 0 0 1-2-7.464"></path><path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"></path></svg>',
   bot: '<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2"></path><path d="M20 14h2"></path><path d="M15 13v2"></path><path d="M9 13v2"></path></svg>',
+  plan: '<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 6h8"></path><path d="M13 12h8"></path><path d="M13 18h8"></path><path d="m3 17 2 2 4-4"></path><rect width="6" height="6" x="3" y="4" rx="1"></rect></svg>',
+  tool: '<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-8 8l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 8-8z"></path></svg>',
+  user: '<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>',
+};
+
+const entryMeta = {
+  assistant: { icon: 'bot', label: 'Pi' },
+  system: { icon: 'alert', label: 'Mischief' },
+  thought: { icon: 'brain', label: 'Thinking' },
+  user: { icon: 'user', label: 'You' },
 };
 
 function configKind(config) {
@@ -669,12 +823,18 @@ function appendOptions(select, config, kind) {
   }
 }
 
-function configIcon(kind, title) {
+function inlineIcon(kind, className, title) {
   const icon = document.createElement('span');
-  icon.className = 'config-icon';
+  icon.className = className;
   icon.title = title;
+  icon.setAttribute('role', 'img');
+  icon.setAttribute('aria-label', title);
   icon.innerHTML = icons[kind];
   return icon;
+}
+
+function configIcon(kind, title) {
+  return inlineIcon(kind, 'config-icon', title);
 }
 
 function renderConfig(selected) {
@@ -720,9 +880,10 @@ function option(value, name) {
 
 function renderTranscript() {
   const selected = state.threads.selected;
+  const chat = $('chat');
   const transcript = $('transcript');
   const changed = renderedThread !== selected?.id;
-  const stick = changed || transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 48;
+  const stick = changed || chat.scrollHeight - chat.scrollTop - chat.clientHeight < 48;
   renderedThread = selected?.id;
   if (changed) openTools.clear();
   transcript.replaceChildren();
@@ -732,6 +893,7 @@ function renderTranscript() {
   $('notice').textContent = selected?.error || '';
   renderActions(selected);
   renderInteraction(selected?.interaction);
+  renderPlan(selected);
   $('composer').disabled = !selected;
   $('processing').hidden = !selected || selected.status !== 'running' || selected.streaming;
   const running = selected && ['running', 'waiting'].includes(selected.status);
@@ -741,9 +903,10 @@ function renderTranscript() {
   sendButton.setAttribute('aria-label', running ? 'Stop' : 'Send');
   sendButton.classList.toggle('stop', Boolean(running));
 
+  const transcriptItems = selected?.items.filter((item) => item.kind !== 'plan') || [];
   if (!selected) empty(transcript, 'Select a managed Workspace.');
-  else if (!selected.items.length) empty(transcript, 'Send a prompt to start this Thread.');
-  else for (const item of selected.items) transcript.append(transcriptItem(item));
+  else if (!transcriptItems.length) empty(transcript, 'Send a prompt to start this Thread.');
+  else transcript.append(...transcriptNodes(transcriptItems));
 
   const draftKey = selected?.id + ':' + (selected?.drafts || []).join('\\u0000');
   if (!selected?.drafts?.length) consumedDrafts = '';
@@ -753,7 +916,7 @@ function renderTranscript() {
     consumedDrafts = draftKey;
     vscode.postMessage({ type: 'draftsConsumed' });
   }
-  if (stick) transcript.scrollTop = transcript.scrollHeight;
+  if (stick) chat.scrollTop = chat.scrollHeight;
   if (changed && selected) $('composer').focus();
 }
 
@@ -768,6 +931,54 @@ function renderActions(selected) {
   if (selected.authentication) actions.append(actionButton(selected.authentication.label, () => vscode.postMessage({ type: 'authenticate' }), true));
 }
 
+function renderPlan(selected) {
+  const plan = selected?.items.find((item) => item.kind === 'plan' && item.text);
+  const title = $('plan-title');
+  $('plan').hidden = !plan;
+  title.replaceChildren();
+  if (plan) title.append(inlineIcon('plan', 'plan-icon', 'Plan'), plan.title || 'Plan');
+  $('plan-body').textContent = plan?.text || '';
+}
+
+function transcriptNodes(items) {
+  const nodes = [];
+  for (let index = 0; index < items.length;) {
+    if (items[index].kind !== 'thought') {
+      nodes.push(transcriptItem(items[index]));
+      index += 1;
+      continue;
+    }
+    const thoughts = [];
+    while (items[index]?.kind === 'thought') {
+      thoughts.push(items[index]);
+      index += 1;
+    }
+    nodes.push(thinkingGroup(thoughts));
+  }
+  return nodes;
+}
+
+function thinkingGroup(items) {
+  const group = document.createElement('section');
+  const heading = document.createElement('div');
+  const content = document.createElement('div');
+  group.className = 'entry thought thinking-group';
+  heading.className = 'thinking-heading';
+  content.className = 'thinking-content';
+  heading.append(inlineIcon('brain', 'entry-icon', 'Thinking'), 'Thinking');
+  for (const item of items) content.append(markdownBody(item, 'thinking-item markdown'));
+  group.append(heading, content);
+  return group;
+}
+
+function markdownBody(item, className = 'body markdown') {
+  const body = document.createElement('div');
+  body.className = className;
+  if (item.html) body.innerHTML = item.html;
+  else body.textContent = item.text || '';
+  return body;
+}
+
 function transcriptItem(item) {
   if (item.kind === 'tool') {
     const details = document.createElement('details');
@@ -775,7 +986,9 @@ function transcriptItem(item) {
     details.open = openTools.has(item.id);
     details.addEventListener('toggle', () => details.open ? openTools.add(item.id) : openTools.delete(item.id));
     const summary = document.createElement('summary');
-    summary.textContent = '⚙ ' + (item.title || 'Tool call') + (item.status ? ' · ' + item.status : '');
+    const label = document.createElement('span');
+    label.textContent = (item.title || 'Tool call') + (item.status ? ' · ' + item.status : '');
+    summary.append(inlineIcon('tool', 'entry-icon', 'Tool'), label);
     const body = document.createElement('div');
     body.className = 'tool-body';
     if (item.input) body.append(labelledPre('Input', item.input));
@@ -785,38 +998,24 @@ function transcriptItem(item) {
     details.append(summary, body);
     return details;
   }
-  if (item.kind === 'plan') {
-    const details = document.createElement('details');
-    details.className = 'entry plan';
-    details.open = true;
-    const summary = document.createElement('summary');
-    summary.textContent = item.title || 'Plan';
-    const body = document.createElement('pre');
-    body.className = 'body';
-    body.textContent = item.text || '';
-    details.append(summary, body);
-    return details;
-  }
   const article = document.createElement('article');
+  const meta = entryMeta[item.kind] || entryMeta.system;
+  const content = document.createElement('div');
   article.className = 'entry ' + item.kind;
-  const role = document.createElement('div');
-  role.className = 'role';
-  role.textContent = item.kind === 'user' ? 'You' : item.kind === 'assistant' ? 'Pi' : item.kind === 'thought' ? 'Thinking' : 'Mischief';
-  const body = document.createElement('pre');
-  body.className = 'body';
-  body.textContent = item.text || '';
-  article.append(role, body);
+  content.className = 'entry-content';
+  content.append(markdownBody(item));
+  article.append(inlineIcon(meta.icon, 'entry-icon', meta.label), content);
   if (item.queued) {
     const queued = document.createElement('div');
     queued.className = 'cancelled';
     queued.textContent = 'Queued · position ' + item.queued;
-    article.append(queued);
+    content.append(queued);
   }
   if (item.cancelled) {
     const cancelled = document.createElement('div');
     cancelled.className = 'cancelled';
     cancelled.textContent = 'Cancelled';
-    article.append(cancelled);
+    content.append(cancelled);
   }
   return article;
 }
@@ -941,7 +1140,7 @@ setInterval(() => {
   if ($('processing').hidden) return;
   brailleFrame = (brailleFrame + 1) % brailleFrames.length;
   $('braille').textContent = brailleFrames[brailleFrame];
-}, 40);
+}, 60);
 vscode.postMessage({ type: 'ready' });
 </script>
 </body>
