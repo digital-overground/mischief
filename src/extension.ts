@@ -11,14 +11,15 @@ import { Threads } from "./threads/threads";
 import { MischiefView, registerMischiefView } from "./view";
 
 const agentLaunch = (context: vscode.ExtensionContext): AgentLaunch => {
+  const env = { MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT: "true" };
   const configured = vscode.workspace
     .getConfiguration("mischief")
     .get<string>("magpiAcpPath")
     ?.trim();
   if (configured) {
     return configured.endsWith(".js")
-      ? { args: [configured], command: "node" }
-      : { args: [], command: configured };
+      ? { args: [configured], command: "node", env }
+      : { args: [], command: configured, env };
   }
 
   const local = [
@@ -26,8 +27,8 @@ const agentLaunch = (context: vscode.ExtensionContext): AgentLaunch => {
     path.join(homedir(), "Projects/_tools/magpi-acp/dist/index.js"),
   ].find(existsSync);
   return local
-    ? { args: [local], command: "node" }
-    : { args: [], command: "magpi-acp" };
+    ? { args: [local], command: "node", env }
+    : { args: [], command: "magpi-acp", env };
 };
 
 export const activate = async (

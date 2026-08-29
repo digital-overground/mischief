@@ -206,6 +206,10 @@ export class MischiefView implements vscode.WebviewViewProvider {
       await this.refresh();
       return true;
     }
+    if (data.type === "contextItems") {
+      await this.sendContextItems();
+      return true;
+    }
     if (data.type === "newThread") {
       await this.threads.newThread();
       return true;
@@ -413,6 +417,32 @@ export class MischiefView implements vscode.WebviewViewProvider {
       ),
       ...this.projectsSnapshot.ungrouped,
     ];
+  }
+
+  private async sendContextItems(): Promise<void> {
+    const workspace = this.workspaces().find((item) => item.current);
+    if (!workspace || !this.view) {
+      return;
+    }
+    const files = await vscode.workspace.findFiles(
+      new vscode.RelativePattern(workspace.path, "**/*"),
+      "**/{.git,node_modules,dist,build}/**",
+      5000
+    );
+    const items = new Set<string>();
+    for (const file of files) {
+      const relative = path.relative(workspace.path, file.fsPath);
+      const parts = relative.split(path.sep);
+      for (let index = 1; index < parts.length; index += 1) {
+        items.add(`${parts.slice(0, index).join("/")}/`);
+      }
+      items.add(parts.join("/"));
+    }
+    const postMessage = this.view.webview.postMessage.bind(this.view.webview);
+    void postMessage({
+      items: [...items].toSorted((a, b) => a.localeCompare(b)),
+      type: "contextItems",
+    });
   }
 
   private render(): void {

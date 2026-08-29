@@ -168,6 +168,11 @@ const empty = (container, text) => {
   let consumedDrafts = "";
   let brailleFrame = 0;
   let images = [];
+  let contextItems = [];
+  let contextMatches = [];
+  let contextIndex = 0;
+  let contextStart = -1;
+  let contextWorkspace;
   const brailleFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
   const openTools = new Set();
   const panes = [...document.querySelectorAll("main > section")];
@@ -194,7 +199,101 @@ const empty = (container, text) => {
       send();
     }
   });
+  const contextSuggestions = $("context-suggestions");
+  const composerContext = () => {
+    const box = $("composer");
+    const before = box.value.slice(0, box.selectionStart);
+    const match = before.match(/(?:^|\s)@(?<query>[^\s]*)$/u);
+    if (!match) {
+      return;
+    }
+    return {
+      query: match.groups.query.toLowerCase().replaceAll("\\", "/"),
+      start: before.length - match.groups.query.length - 1,
+    };
+  };
+
+  const renderContextSuggestions = () => {
+    contextSuggestions.replaceChildren();
+    contextSuggestions.hidden = !contextMatches.length;
+    for (const [index, item] of contextMatches.entries()) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = index === contextIndex ? "selected" : "";
+      button.setAttribute("role", "option");
+      button.setAttribute("aria-selected", String(index === contextIndex));
+      button.textContent = `@${item}`;
+      button.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        selectContext(item);
+      });
+      contextSuggestions.append(button);
+    }
+  };
+
+  const updateContextSuggestions = () => {
+    const context = composerContext();
+    if (!context) {
+      contextMatches = [];
+      contextStart = -1;
+      renderContextSuggestions();
+      return;
+    }
+    contextStart = context.start;
+    const directory = context.query.endsWith("/")
+      ? context.query
+      : context.query.slice(0, context.query.lastIndexOf("/") + 1);
+    contextMatches = contextItems
+      .filter((item) => {
+        const candidate = item.toLowerCase();
+        if (!directory) {
+          return candidate.includes(context.query);
+        }
+        const remainder = candidate.slice(directory.length);
+        return (
+          candidate.startsWith(directory) &&
+          remainder.split("/").filter(Boolean).length === 1
+        );
+      })
+      .slice(0, 50);
+    contextIndex = 0;
+    renderContextSuggestions();
+  };
+
+  const selectContext = (item) => {
+    const box = $("composer");
+    const end = box.selectionStart;
+    const directory = item.endsWith("/");
+    const value = directory ? item : `${item} `;
+    box.value = `${box.value.slice(0, contextStart)}@${value}${box.value.slice(end)}`;
+    const cursor = contextStart + value.length + 1;
+    box.setSelectionRange(cursor, cursor);
+    contextMatches = [];
+    renderContextSuggestions();
+    box.focus();
+  };
+
+  $("composer").addEventListener("input", updateContextSuggestions);
   $("composer").addEventListener("keydown", (event) => {
+    if (
+      contextMatches.length &&
+      ["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(event.key)
+    ) {
+      event.preventDefault();
+      if (event.key === "Escape") {
+        contextMatches = [];
+      } else if (event.key === "ArrowDown") {
+        contextIndex = (contextIndex + 1) % contextMatches.length;
+      } else if (event.key === "ArrowUp") {
+        contextIndex =
+          (contextIndex + contextMatches.length - 1) % contextMatches.length;
+      } else {
+        selectContext(contextMatches[contextIndex]);
+        return;
+      }
+      renderContextSuggestions();
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       send();
@@ -1053,10 +1152,28 @@ const empty = (container, text) => {
   setupPanes();
 
   window.addEventListener("message", (event) => {
+    if (event.data?.type === "contextItems") {
+      contextItems = Array.isArray(event.data.items) ? event.data.items : [];
+      updateContextSuggestions();
+      return;
+    }
     if (event.data?.type !== "state") {
       return;
     }
     state = event.data;
+    const workspaces = [
+      ...(state.projects?.projects?.flatMap((project) => project.workspaces) ||
+        []),
+      ...(state.projects?.ungrouped || []),
+    ];
+    const currentWorkspace = workspaces.find(
+      (workspace) => workspace.current
+    )?.path;
+    if (currentWorkspace !== contextWorkspace) {
+      contextWorkspace = currentWorkspace;
+      contextItems = [];
+      postMessage({ type: "contextItems" });
+    }
     document.documentElement.style.setProperty(
       "--mischief-mono-font",
       state.font
@@ -1074,4 +1191,5 @@ const empty = (container, text) => {
     updateThreadIndicators();
   }, 60);
   postMessage({ type: "ready" });
+  postMessage({ type: "contextItems" });
 })();

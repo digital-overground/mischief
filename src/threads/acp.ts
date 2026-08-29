@@ -1,10 +1,14 @@
 import { spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
+import { readFile, realpath, stat } from "node:fs/promises";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { ClientSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
 import type {
   Client,
+  ContentBlock,
   CreateElicitationRequest,
   CreateElicitationResponse,
   ElicitationContentValue,
@@ -38,6 +42,83 @@ export interface AgentLaunch {
   args: string[];
   env?: Record<string, string>;
 }
+
+const MAX_CONTEXT_BYTES = 1_000_000;
+const MAX_CONTEXT_FILES = 20;
+
+const referencedPaths = (text: string): string[] => [
+  ...new Set(
+    [...text.matchAll(/(?:^|\s)@(?<path>[^\s]+)/gu)]
+      .map((match) => match.groups?.path)
+      .filter(
+        (candidate): candidate is string =>
+          Boolean(candidate) && !candidate?.endsWith("/")
+      )
+  ),
+];
+
+export const promptContent = async (
+  cwd: string | undefined,
+  text: string,
+  images: PromptImage[]
+): Promise<ContentBlock[]> => {
+  const blocks: ContentBlock[] = [
+    ...(text ? [{ text, type: "text" as const }] : []),
+    ...images.map((image) => ({ ...image, type: "image" as const })),
+  ];
+  const references = referencedPaths(text);
+  if (!cwd || !references.length) {
+    return blocks;
+  }
+  if (references.length > MAX_CONTEXT_FILES) {
+    throw new Error(`Attach at most ${MAX_CONTEXT_FILES} context files`);
+  }
+
+  const root = await realpath(cwd);
+  const resolved = await Promise.all(
+    references.map(async (reference) => {
+      let file: string;
+      try {
+        file = await realpath(path.resolve(root, reference));
+      } catch {
+        return;
+      }
+      const relative = path.relative(root, file);
+      if (
+        relative === ".." ||
+        relative.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(relative)
+      ) {
+        return;
+      }
+      const details = await stat(file);
+      return details.isFile() ? { file, size: details.size } : undefined;
+    })
+  );
+  const files = [
+    ...new Map(
+      resolved
+        .filter((item): item is { file: string; size: number } => Boolean(item))
+        .map((item) => [item.file, item])
+    ).values(),
+  ];
+  if (files.reduce((total, file) => total + file.size, 0) > MAX_CONTEXT_BYTES) {
+    throw new Error("Attached context exceeds 1 MB");
+  }
+  blocks.push(
+    ...(await Promise.all(
+      files.map(async ({ file }) => ({
+        resource: {
+          mimeType: "text/plain",
+          text: await readFile(file, "utf-8"),
+          uri: pathToFileURL(file).href,
+        },
+        type: "resource" as const,
+      }))
+    ))
+  );
+  return blocks;
+};
 
 const stringify = (value: unknown): string => {
   if (typeof value === "string") {
@@ -374,6 +455,14 @@ const toolUpdate = (
   };
 };
 
+const visibleMessageText = (
+  update: SessionUpdate["sessionUpdate"],
+  text: string
+): string =>
+  update === "user_message_chunk"
+    ? text.split("\n[Embedded Context] ", 1)[0]
+    : text;
+
 export const translateSessionUpdate = (
   update: SessionUpdate
 ): AgentUpdate | undefined => {
@@ -394,7 +483,12 @@ export const translateSessionUpdate = (
         ...(update.messageId ? { messageId: update.messageId } : {}),
         kind,
         ...(update.content.type === "text"
-          ? { text: update.content.text }
+          ? {
+              text: visibleMessageText(
+                update.sessionUpdate,
+                update.content.text
+              ),
+            }
           : {
               images: [
                 {
@@ -510,6 +604,7 @@ const toAgentError = (error: unknown): AgentError =>
 class AcpConnection implements AgentConnection {
   private child?: ChildProcessWithoutNullStreams;
   private connection?: ClientSideConnection;
+  private cwd?: string;
   private starting?: Promise<void>;
   private disposed = false;
   private readonly launch: AgentLaunch;
@@ -527,6 +622,7 @@ class AcpConnection implements AgentConnection {
   }
 
   create(cwd: string) {
+    this.cwd = cwd;
     return AcpConnection.call(async () => {
       await this.start();
       const session = await this.requireConnection().newSession({
@@ -541,6 +637,7 @@ class AcpConnection implements AgentConnection {
   }
 
   load(sessionId: string, cwd: string) {
+    this.cwd = cwd;
     return AcpConnection.call(async () => {
       await this.start();
       const session = await this.requireConnection().loadSession({
@@ -562,10 +659,7 @@ class AcpConnection implements AgentConnection {
       await this.start();
       const response = await this.requireConnection().prompt({
         _meta: { "magpi-acp/client-message-id": messageId },
-        prompt: [
-          ...(text ? [{ text, type: "text" as const }] : []),
-          ...images.map((image) => ({ ...image, type: "image" as const })),
-        ],
+        prompt: await promptContent(this.cwd, text, images),
         sessionId,
       });
       return {

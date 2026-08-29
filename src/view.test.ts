@@ -71,6 +71,10 @@ describe("view provider", () => {
         /\.config-control \{[^}]*gap: 8px;[^}]*\}[\s\S]*\.config-control select \{ appearance: none; \}[\s\S]*control\.append\(\s*select, configIcon/u.test(
           document
         ),
+      contextAutocomplete:
+        /#context-suggestions \{[^}]*bottom: calc\(100% \+ 4px\);[\s\S]*const value = directory \? item : `\$\{item\} `;[\s\S]*contextMatches = \[\];[\s\S]*renderContextSuggestions\(\);/u.test(
+          document
+        ),
       contextTooltip:
         /#usage:hover::after, #usage:focus-visible::after[^}]*opacity: 1;[\s\S]*usage\.dataset\.tooltip = usage\.title/u.test(
           document
@@ -123,6 +127,7 @@ describe("view provider", () => {
       chatFlow: true,
       configAlignment: true,
       configIcons: true,
+      contextAutocomplete: true,
       contextTooltip: true,
       customProfile: true,
       dropdowns: true,

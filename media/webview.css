@@ -677,6 +677,7 @@ details.entry > summary::-webkit-details-marker {
   color: var(--vscode-button-foreground);
 }
 footer {
+  position: relative;
   border-top: 1px solid var(--vscode-panel-border);
   background: var(--vscode-editor-background, var(--vscode-sideBar-background));
 }
@@ -707,6 +708,39 @@ footer {
 }
 #composer:focus {
   outline: none;
+}
+#context-suggestions {
+  position: absolute;
+  right: 8px;
+  bottom: calc(100% + 4px);
+  left: 8px;
+  z-index: 2;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--vscode-widget-border);
+  background: var(--vscode-editorWidget-background);
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+}
+#context-suggestions[hidden] {
+  display: none;
+}
+#context-suggestions button {
+  width: 100%;
+  display: block;
+  border: 0;
+  padding: 5px 8px;
+  overflow: hidden;
+  color: var(--vscode-editorWidget-foreground);
+  background: transparent;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#context-suggestions button:hover,
+#context-suggestions button.selected {
+  color: var(--vscode-list-activeSelectionForeground);
+  background: var(--vscode-list-activeSelectionBackground);
 }
 #attachments {
   display: flex;
