@@ -68,6 +68,9 @@ const configKind = (config) => {
   if (id === "model" || name === "model") {
     return "model";
   }
+  if (isProfileConfig(config)) {
+    return "profile";
+  }
   if (
     id === "thought_level" ||
     id === "thinking" ||
@@ -728,7 +731,9 @@ const empty = (container, text) => {
     return icon;
   };
 
-  const configIcon = (kind, title) => inlineIcon(kind, "config-icon", title);
+  const configIcons = { model: "bot", profile: "user", thinking: "brain" };
+  const configIcon = (kind, title) =>
+    inlineIcon(configIcons[kind], "config-icon", title);
 
   const renderUsage = (selected) => {
     const usage = $("usage");
@@ -797,10 +802,7 @@ const empty = (container, text) => {
       if (kind) {
         const control = document.createElement("div");
         control.className = "config-control";
-        control.append(
-          select,
-          configIcon(kind === "model" ? "bot" : "brain", config.name)
-        );
+        control.append(configIcon(kind, config.name), select);
         configs.append(control);
       } else {
         configs.append(select);

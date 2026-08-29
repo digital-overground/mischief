@@ -250,7 +250,7 @@ select:disabled {
   display: flex;
   align-items: center;
   min-width: 48px;
-  max-width: 200px;
+  max-width: 100px;
   height: 18px;
   cursor: help;
   outline: 0;
@@ -309,7 +309,7 @@ select:disabled {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 3px;
+  gap: 12px;
   overflow-x: auto;
 }
 #configs:empty {
@@ -330,7 +330,19 @@ select:disabled {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
+}
+.config-control::after {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  color: var(--vscode-descriptionForeground);
+  content: "";
+  pointer-events: none;
+  transform: translateY(-2px) rotate(45deg);
 }
 .config-icon {
   flex: none;
@@ -346,17 +358,19 @@ select:disabled {
   height: 22px;
   border: 0;
   border-radius: 3px;
-  padding: 1px 5px;
+  padding: 1px 3px 1px 0;
   background: transparent;
   color: var(--vscode-foreground);
   font-size: 11px;
-  text-align: right;
+  text-align: left;
 }
 #configs option {
-  text-align: right;
+  text-align: left;
 }
 .config-control select {
   appearance: none;
+  field-sizing: content;
+  padding-right: 0;
 }
 #configs select:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
@@ -781,9 +795,10 @@ footer {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 6px 4px;
+  padding: 2px 12px 4px;
 }
 #send {
+  margin-left: 8px;
   width: 22px;
   min-width: 22px;
   height: 22px;

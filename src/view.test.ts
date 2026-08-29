@@ -67,8 +67,12 @@ describe("view provider", () => {
         /#configs \{[^}]*margin-left: auto;[^}]*justify-content: flex-end;[\s\S]*#send \{(?![^}]*margin-left: auto;)[^}]*\}/u.test(
           document
         ),
+      configCarets:
+        /\.config-control::after \{[^}]*flex: none;[^}]*margin-left: 6px;[^}]*border-right: 1px solid currentColor;[^}]*border-bottom: 1px solid currentColor;[^}]*rotate\(45deg\)[^}]*\}[\s\S]*\.config-control select \{[^}]*appearance: none;[^}]*field-sizing: content;[^}]*padding-right: 0;/u.test(
+          document
+        ),
       configIcons:
-        /\.config-control \{[^}]*gap: 8px;[^}]*\}[\s\S]*\.config-control select \{ appearance: none; \}[\s\S]*control\.append\(\s*select, configIcon/u.test(
+        /#configs \{[^}]*gap: 12px;[^}]*\}[\s\S]*\.config-control \{[^}]*gap: 2px;[^}]*\}[\s\S]*control\.append\(configIcon\(kind, config\.name\), select\)/u.test(
           document
         ),
       contextAutocomplete:
@@ -91,9 +95,7 @@ describe("view provider", () => {
         /\.markdown pre[\s\S]*const markdownBody[\s\S]*body\.innerHTML = item\.html/u.test(
           document
         ),
-      modelAlignment: /#configs option \{ text-align: right; \}/u.test(
-        document
-      ),
+      modelAlignment: /#configs option \{ text-align: left; \}/u.test(document),
       pastedImage:
         /id="attachments"[\s\S]*readAsDataURL[\s\S]*addEventListener\('paste'[\s\S]*type: 'prompt'/u.test(
           document
@@ -109,7 +111,7 @@ describe("view provider", () => {
         /id="braille"[\s\S]*selected\.status !== 'running' \|\| selected\.streaming/u.test(
           document
         ),
-      progressWidth: /#usage \{[^}]*max-width: 200px;/u.test(document),
+      progressWidth: /#usage \{[^}]*max-width: 100px;/u.test(document),
       resizable:
         /class="resizer" data-before="projects" data-after="threads"[\s\S]*class="resizer" data-before="threads" data-after="thread"[\s\S]*const resizePanes/u.test(
           document
@@ -126,6 +128,7 @@ describe("view provider", () => {
       accordion: true,
       chatFlow: true,
       configAlignment: true,
+      configCarets: true,
       configIcons: true,
       contextAutocomplete: true,
       contextTooltip: true,
