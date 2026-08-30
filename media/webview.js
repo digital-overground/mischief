@@ -186,12 +186,40 @@ const empty = (container, text) => {
   $("refresh").addEventListener("click", () =>
     postMessage({ type: "refresh" })
   );
-  $("new-thread").addEventListener("click", () =>
-    postMessage({ type: "newThread" })
-  );
+  $("new-thread").addEventListener("click", () => newThread());
+  $("footer-new-thread").addEventListener("click", () => newThread());
   $("rename-thread").addEventListener("click", () =>
     postMessage({ type: "renameThread" })
   );
+  $("usage").addEventListener("click", (event) => {
+    event.stopPropagation();
+    const menu = $("usage-menu");
+    menu.hidden = !menu.hidden;
+    $("usage").setAttribute("aria-expanded", String(!menu.hidden));
+  });
+  $("compact").addEventListener("click", () => {
+    if (state.threads.selected) {
+      postMessage({ images: [], text: "/compact", type: "prompt" });
+      $("usage-menu").hidden = true;
+      $("usage").setAttribute("aria-expanded", "false");
+    }
+  });
+  $("clear-plan").addEventListener("click", (event) => {
+    event.preventDefault();
+    if (state.threads.selected) {
+      postMessage({ type: "clearPlan" });
+    }
+  });
+  document.addEventListener("click", () => {
+    $("usage-menu").hidden = true;
+    $("usage").setAttribute("aria-expanded", "false");
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      $("usage-menu").hidden = true;
+      $("usage").setAttribute("aria-expanded", "false");
+    }
+  });
   $("send").addEventListener("click", () => {
     if (
       state.threads.selected &&
@@ -465,9 +493,24 @@ const empty = (container, text) => {
     }
   });
 
+  const newThread = () => {
+    if (!state.threads.workspace) {
+      return;
+    }
+    postMessage({ type: "newThread" });
+    $("composer").focus();
+  };
+
   const send = () => {
     const box = $("composer");
     const text = box.value;
+    if (text.trim() === "/new" && !images.length) {
+      box.value = "";
+      contextMatches = [];
+      renderContextSuggestions();
+      newThread();
+      return;
+    }
     if ((!text.trim() && !images.length) || !state.threads.selected) {
       return;
     }
@@ -736,24 +779,29 @@ const empty = (container, text) => {
     inlineIcon(configIcons[kind], "config-icon", title);
 
   const renderUsage = (selected) => {
+    const control = $("usage-control");
     const usage = $("usage");
     const fill = $("usage-fill");
     if (!selected?.usage || selected.usage.size <= 0) {
-      usage.hidden = true;
+      control.hidden = true;
+      $("usage-menu").hidden = true;
+      usage.setAttribute("aria-expanded", "false");
       return;
     }
     const { used, size } = selected.usage;
-    usage.hidden = false;
-    fill.style.width = `${Math.min(100, (used / size) * 100)}%`;
+    const percent = Math.round((used / size) * 100);
+    control.hidden = false;
+    fill.style.setProperty("--usage-percent", `${Math.min(100, percent)}%`);
     fill.className = "";
-    if (used > 150_000) {
+    if (percent >= 90) {
       fill.className = "danger";
-    } else if (used >= 100_000) {
+    } else if (percent >= 70) {
       fill.className = "warning";
     }
-    usage.title = `${formatUsage(used)}/${formatUsage(size)}`;
-    usage.dataset.tooltip = usage.title;
-    usage.setAttribute("aria-label", `Context usage ${usage.title}`);
+    $("usage-summary").textContent =
+      `${percent}%  ·  ${formatUsage(used)} / ${formatUsage(size)}`;
+    usage.title = "Show context usage";
+    usage.setAttribute("aria-label", `Context usage ${percent}%`);
   };
 
   const renderConfig = (selected) => {
@@ -824,6 +872,7 @@ const empty = (container, text) => {
       !selected || selected.status !== "running" || selected.streaming;
     const running =
       selected && ["running", "waiting"].includes(selected.status);
+    $("footer-new-thread").disabled = !state.threads.workspace;
     const sendButton = $("send");
     sendButton.disabled = !selected;
     sendButton.title = running ? "Stop" : "Send";
@@ -909,11 +958,11 @@ const empty = (container, text) => {
     const plan = selected?.items.find(
       (item) => item.kind === "plan" && item.text
     );
-    const title = $("plan-title");
+    const label = $("plan-label");
     $("plan").hidden = !plan;
-    title.replaceChildren();
+    label.replaceChildren();
     if (plan) {
-      title.append(
+      label.append(
         inlineIcon("plan", "plan-icon", "Plan"),
         plan.title || "Plan"
       );
@@ -955,6 +1004,21 @@ const empty = (container, text) => {
   };
 
   const transcriptItem = (item) => {
+    if (item.kind === "completedPlan") {
+      const card = document.createElement("section");
+      const title = document.createElement("div");
+      const body = document.createElement("pre");
+      card.className = "entry completed-plan";
+      title.className = "completed-plan-title";
+      body.className = "completed-plan-body";
+      title.append(
+        inlineIcon("plan", "entry-icon", "Completed Plan"),
+        "Completed Plan"
+      );
+      body.textContent = item.text || "";
+      card.append(title, body);
+      return card;
+    }
     if (item.kind === "tool") {
       const details = document.createElement("details");
       details.className = "entry tool";

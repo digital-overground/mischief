@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import type { TranscriptItem } from "./threads";
-import { reduceTranscript } from "./transcript";
+import { archiveCompletedPlan, reduceTranscript } from "./transcript";
 
 describe("transcript reducer", () => {
   test("merges streamed messages, tool updates, and plans", () => {
@@ -42,8 +42,16 @@ describe("transcript reducer", () => {
       toolCallId: "tool-1",
       type: "tool",
     });
-    reduceTranscript(items, { text: "• Inspect", type: "plan" });
-    reduceTranscript(items, { text: "✓ Inspect", type: "plan" });
+    reduceTranscript(items, {
+      allCompleted: false,
+      text: "• Inspect",
+      type: "plan",
+    });
+    reduceTranscript(items, {
+      allCompleted: false,
+      text: "✓ Inspect",
+      type: "plan",
+    });
 
     expect(items).toStrictEqual([
       {
@@ -59,7 +67,31 @@ describe("transcript reducer", () => {
         status: "completed",
         title: "Run command",
       },
-      { id: "plan", kind: "plan", text: "✓ Inspect", title: "Plan" },
+      {
+        allCompleted: false,
+        id: "plan",
+        kind: "plan",
+        text: "✓ Inspect",
+        title: "Plan",
+      },
     ]);
+  });
+
+  test("archives an all-completed plan into the transcript", () => {
+    const items: TranscriptItem[] = [];
+    reduceTranscript(items, {
+      allCompleted: true,
+      text: "✓ Inspect\n✓ Test",
+      type: "plan",
+    });
+
+    archiveCompletedPlan(items);
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      kind: "completedPlan",
+      text: "✓ Inspect\n✓ Test",
+      title: "Completed Plan",
+    });
   });
 });

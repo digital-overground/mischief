@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { reduceTranscript } from "./transcript";
+import { archiveCompletedPlan, reduceTranscript } from "./transcript";
 
 const STORAGE_KEY = "mischief.threads";
 const STREAMING_IDLE_MS = 300;
@@ -92,7 +92,7 @@ export type AgentUpdate =
       messageId?: string;
     }
   | ({ type: "tool" } & AgentToolUpdate)
-  | { type: "plan"; text: string }
+  | { type: "plan"; text: string; allCompleted: boolean }
   | { type: "usage"; usage: ThreadUsage }
   | { type: "config"; options: ThreadConfigOption[] }
   | { type: "sessionInfo"; title?: string; updatedAt?: string };
@@ -163,8 +163,16 @@ export type ThreadIndicator =
 
 export interface TranscriptItem {
   id: string;
-  kind: "user" | "assistant" | "thought" | "tool" | "plan" | "system";
+  kind:
+    | "user"
+    | "assistant"
+    | "thought"
+    | "tool"
+    | "plan"
+    | "completedPlan"
+    | "system";
   text?: string;
+  allCompleted?: boolean;
   images?: PromptImage[];
   title?: string;
   status?: string;
@@ -446,6 +454,17 @@ export class Threads {
     this.emit();
   }
 
+  clearPlan(): void {
+    const runtime = this.selectedId
+      ? this.runtimes.get(this.selectedId)
+      : undefined;
+    if (!runtime?.items.some((item) => item.kind === "plan")) {
+      return;
+    }
+    runtime.items = runtime.items.filter((item) => item.kind !== "plan");
+    this.emit();
+  }
+
   // oxlint-disable-next-line complexity -- prompt owns the existing turn lifecycle
   async prompt(text: string, images: PromptImage[] = []): Promise<void> {
     const message = text;
@@ -516,6 +535,7 @@ export class Threads {
       if (result.stopReason === "cancelled") {
         item.cancelled = true;
       } else {
+        archiveCompletedPlan(runtime.items);
         completed = true;
       }
       record.retryText = undefined;
@@ -989,6 +1009,13 @@ export class Threads {
       this.markStreaming(runtime, update.text ?? "");
     }
     reduceTranscript(runtime.items, update);
+    if (
+      update.type === "plan" &&
+      update.allCompleted &&
+      runtime.status === "idle"
+    ) {
+      archiveCompletedPlan(runtime.items);
+    }
     if (update.type === "usage") {
       runtime.usage = update.usage;
       record.usage = update.usage;

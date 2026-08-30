@@ -252,6 +252,10 @@ export class MischiefView implements vscode.WebviewViewProvider {
       await this.threads.cancel();
       return true;
     }
+    if (data.type === "clearPlan") {
+      this.threads.clearPlan();
+      return true;
+    }
     if (data.type === "retry") {
       void MischiefView.run(this.threads.retry());
       return true;

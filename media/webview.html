@@ -96,10 +96,20 @@
           <div id="actions"></div>
           <div id="interaction"></div>
         </div>
-        <div id="plan" hidden>
-          <div id="plan-title"></div>
+        <details id="plan" open hidden>
+          <summary id="plan-title">
+            <span id="plan-label"></span>
+            <button
+              class="icon"
+              id="clear-plan"
+              title="Clear Plan (instruct Agent)"
+              aria-label="Clear Plan"
+            >
+              Clear
+            </button>
+          </summary>
           <pre id="plan-body"></pre>
-        </div>
+        </details>
         <footer>
           <textarea
             id="composer"
@@ -109,8 +119,42 @@
           <div id="context-suggestions" role="listbox" hidden></div>
           <div id="attachments" aria-live="polite"></div>
           <div class="footer-row">
-            <div id="usage" hidden tabindex="0">
-              <div id="usage-fill"></div>
+            <button
+              class="action"
+              id="footer-new-thread"
+              title="New Thread (/new)"
+              aria-label="New Thread"
+            >
+              <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"
+                ></path>
+                <path d="M8 10h8"></path>
+                <path d="M12 6v8"></path>
+              </svg>
+            </button>
+            <div id="usage-control" hidden>
+              <button
+                class="action"
+                id="usage"
+                title="Context usage"
+                aria-label="Context usage"
+                aria-expanded="false"
+                aria-haspopup="true"
+              >
+                <span id="usage-fill" aria-hidden="true"></span>
+              </button>
+              <div
+                id="usage-menu"
+                role="dialog"
+                aria-label="Context usage details"
+                hidden
+              >
+                <div id="usage-summary"></div>
+                <button class="action primary" id="compact" type="button">
+                  Compact context
+                </button>
+              </div>
             </div>
             <div id="configs"></div>
             <button class="action" id="send" title="Send" aria-label="Send">

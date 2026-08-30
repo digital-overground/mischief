@@ -60,7 +60,11 @@ describe("view provider", () => {
           document
         ),
       chatFlow:
-        /id="chat"><div id="transcript"><\/div><div id="processing"[\s\S]*<\/div><div id="plan"/u.test(
+        /id="chat"><div id="transcript"><\/div><div id="processing"[\s\S]*<\/div><details id="plan"/u.test(
+          document
+        ),
+      completedPlan:
+        /item\.kind === 'completedPlan'[\s\S]*completed-plan-body[\s\S]*Completed Plan/u.test(
           document
         ),
       configAlignment:
@@ -79,8 +83,8 @@ describe("view provider", () => {
         /#context-suggestions \{[^}]*bottom: calc\(100% \+ 4px\);[\s\S]*const value = directory \? item : `\$\{item\} `;[\s\S]*contextMatches = \[\];[\s\S]*renderContextSuggestions\(\);/u.test(
           document
         ),
-      contextTooltip:
-        /#usage:hover::after, #usage:focus-visible::after[^}]*opacity: 1;[\s\S]*usage\.dataset\.tooltip = usage\.title/u.test(
+      contextMenu:
+        /#usage-control \{[^}]*position: relative;[\s\S]*#usage-menu \{[^}]*position: absolute;[^}]*bottom: calc\(100% \+ 8px\);[^}]*left: 0;[\s\S]*id="usage-summary"[\s\S]*id="compact"[\s\S]*text: '\/compact'/u.test(
           document
         ),
       customProfile:
@@ -96,12 +100,20 @@ describe("view provider", () => {
           document
         ),
       modelAlignment: /#configs option \{ text-align: left; \}/u.test(document),
+      newThreadControl:
+        /id="footer-new-thread" title="New Thread \(\/new\)"[\s\S]*id="usage"[\s\S]*const newThread = \(\) => \{[\s\S]*text\.trim\(\) === '\/new'[^}]*box\.value = '';[^}]*newThread\(\);/u.test(
+          document
+        ),
       pastedImage:
         /id="attachments"[\s\S]*readAsDataURL[\s\S]*addEventListener\('paste'[\s\S]*type: 'prompt'/u.test(
           document
         ),
+      planControls:
+        /#plan\[open\] #plan-title::before[\s\S]*details id="plan" open hidden>[\s\S]*summary id="plan-title"[\s\S]*id="clear-plan"[\s\S]*type: 'clearPlan'/u.test(
+          document
+        ),
       planLayout:
-        /#plan-body \{ max-height: 110px; overflow-y: auto;[\s\S]*id="processing"[\s\S]*id="plan"[\s\S]*<\/div><footer>/u.test(
+        /#plan-body \{ max-height: 110px; overflow-y: auto;[\s\S]*id="processing"[\s\S]*id="plan"[\s\S]*<\/details><footer>/u.test(
           document
         ),
       planRendering: /renderPlan\(selected\)[\s\S]*item\.kind !== 'plan'/u.test(
@@ -111,7 +123,10 @@ describe("view provider", () => {
         /id="braille"[\s\S]*selected\.status !== 'running' \|\| selected\.streaming/u.test(
           document
         ),
-      progressWidth: /#usage \{[^}]*max-width: 100px;/u.test(document),
+      progressCircle:
+        /#usage-fill \{[^}]*border-radius: 50%;[^}]*conic-gradient[\s\S]*--usage-percent/u.test(
+          document
+        ),
       resizable:
         /class="resizer" data-before="projects" data-after="threads"[\s\S]*class="resizer" data-before="threads" data-after="thread"[\s\S]*const resizePanes/u.test(
           document
@@ -127,20 +142,23 @@ describe("view provider", () => {
     }).toStrictEqual({
       accordion: true,
       chatFlow: true,
+      completedPlan: true,
       configAlignment: true,
       configCarets: true,
       configIcons: true,
       contextAutocomplete: true,
-      contextTooltip: true,
+      contextMenu: true,
       customProfile: true,
       dropdowns: true,
       markdown: true,
       modelAlignment: true,
+      newThreadControl: true,
       pastedImage: true,
+      planControls: true,
       planLayout: true,
       planRendering: true,
       processing: true,
-      progressWidth: true,
+      progressCircle: true,
       resizable: true,
       thinking: true,
       transcriptImages: true,

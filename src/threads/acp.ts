@@ -463,6 +463,9 @@ const visibleMessageText = (
     ? text.split("\n[Embedded Context] ", 1)[0]
     : text;
 
+const allPlanEntriesCompleted = (entries: { status: string }[]): boolean =>
+  entries.length > 0 && entries.every((entry) => entry.status === "completed");
+
 export const translateSessionUpdate = (
   update: SessionUpdate
 ): AgentUpdate | undefined => {
@@ -506,6 +509,7 @@ export const translateSessionUpdate = (
     }
     case "plan": {
       return {
+        allCompleted: allPlanEntriesCompleted(update.entries),
         text: update.entries
           .map(
             (entry) =>

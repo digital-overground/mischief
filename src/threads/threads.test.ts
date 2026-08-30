@@ -49,6 +49,7 @@ class FakeAgent {
   askPermission = false;
   askElicitation = false;
   richUpdates = false;
+  completePlan = false;
   holdPrompts = false;
   permissionResponse?: unknown;
   elicitationResponse?: unknown;
@@ -172,7 +173,11 @@ class FakeAgent {
             toolCallId: "tool-1",
             type: "tool",
           });
-          handlers.update({ text: "✓ Inspect\n• Fix", type: "plan" });
+          handlers.update({
+            allCompleted: this.completePlan,
+            text: this.completePlan ? "✓ Inspect\n✓ Fix" : "✓ Inspect\n• Fix",
+            type: "plan",
+          });
           handlers.update({
             type: "usage",
             usage: { size: 245_000, used: 125_000 },
@@ -448,6 +453,34 @@ describe("threads module", () => {
       ],
       usage: { size: 245_000, used: 125_000 },
     });
+
+    threads.clearPlan();
+
+    expect(
+      threads.snapshot().selected?.items.some((item) => item.kind === "plan")
+    ).toBeFalsy();
+  });
+
+  test("moves an all-completed plan into the transcript", async () => {
+    const agent = new FakeAgent();
+    agent.richUpdates = true;
+    agent.completePlan = true;
+    const threads = new Threads(memoryStorage(), agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    await threads.prompt("Inspect it");
+
+    expect(threads.snapshot().selected?.items).toStrictEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "completedPlan",
+          text: "✓ Inspect\n✓ Fix",
+        }),
+      ])
+    );
+    expect(
+      threads.snapshot().selected?.items.some((item) => item.kind === "plan")
+    ).toBeFalsy();
   });
 
   test("context usage survives a Thread reload", async () => {

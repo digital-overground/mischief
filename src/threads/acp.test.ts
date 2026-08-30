@@ -75,6 +75,30 @@ describe("ACP adapter", () => {
     });
   });
 
+  test("translates completed plans into Thread events", () => {
+    expect(
+      translateSessionUpdate({
+        entries: [
+          {
+            content: "Inspect",
+            priority: "medium",
+            status: "completed",
+          },
+          {
+            content: "Test",
+            priority: "medium",
+            status: "completed",
+          },
+        ],
+        sessionUpdate: "plan",
+      })
+    ).toStrictEqual({
+      allCompleted: true,
+      text: "✓ Inspect\n✓ Test",
+      type: "plan",
+    });
+  });
+
   test("translates protocol updates into Thread events", () => {
     expect(
       translateSessionUpdate({

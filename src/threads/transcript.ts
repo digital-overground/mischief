@@ -59,13 +59,39 @@ const upsertTool = (items: TranscriptItem[], update: AgentToolUpdate): void => {
   }
 };
 
-const upsertPlan = (items: TranscriptItem[], text: string): void => {
+const upsertPlan = (
+  items: TranscriptItem[],
+  update: Extract<AgentUpdate, { type: "plan" }>
+): void => {
   const existing = items.find((item) => item.id === "plan");
   if (existing) {
-    existing.text = text;
+    existing.text = update.text;
+    existing.allCompleted = update.allCompleted;
   } else {
-    items.push({ id: "plan", kind: "plan", text, title: "Plan" });
+    items.push({
+      allCompleted: update.allCompleted,
+      id: "plan",
+      kind: "plan",
+      text: update.text,
+      title: "Plan",
+    });
   }
+};
+
+export const archiveCompletedPlan = (items: TranscriptItem[]): void => {
+  const index = items.findIndex(
+    (item) => item.kind === "plan" && item.allCompleted
+  );
+  if (index === -1) {
+    return;
+  }
+  const [plan] = items.splice(index, 1);
+  items.push({
+    id: randomUUID(),
+    kind: "completedPlan",
+    text: plan.text,
+    title: "Completed Plan",
+  });
 };
 
 export const reduceTranscript = (
@@ -83,6 +109,6 @@ export const reduceTranscript = (
   } else if (update.type === "tool") {
     upsertTool(items, update);
   } else if (update.type === "plan") {
-    upsertPlan(items, update.text);
+    upsertPlan(items, update);
   }
 };
