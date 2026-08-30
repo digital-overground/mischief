@@ -34,10 +34,7 @@ const WorkspaceRow = ({
         postMessage({ path: workspace.path, type: "openWorkspace" })
       }
     >
-      <span className="name">
-        {workspace.current ? "● " : ""}
-        {workspace.name}
-      </span>
+      <span className="name">{workspace.name}</span>
       <span className="meta">
         {[
           workspace.branch,
