@@ -293,31 +293,4 @@ const ComposerView = ({
   );
 };
 
-const sameSelectedControls = (
-  previous?: RenderedThreadDetail,
-  next?: RenderedThreadDetail
-): boolean => {
-  if (previous === next) {
-    return true;
-  }
-  if (!previous || !next) {
-    return false;
-  }
-  return (
-    previous.id === next.id &&
-    previous.status === next.status &&
-    previous.usage?.used === next.usage?.used &&
-    previous.usage?.size === next.usage?.size &&
-    JSON.stringify(previous.drafts) === JSON.stringify(next.drafts) &&
-    JSON.stringify(previous.configOptions) ===
-      JSON.stringify(next.configOptions)
-  );
-};
-
-export const Composer = memo(
-  ComposerView,
-  (previous, next) =>
-    previous.contextItems === next.contextItems &&
-    previous.workspace === next.workspace &&
-    sameSelectedControls(previous.selected, next.selected)
-);
+export const Composer = memo(ComposerView);

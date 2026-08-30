@@ -48,24 +48,18 @@ export const ThreadView = ({
 }): React.JSX.Element => {
   const chat = useRef<HTMLDivElement>(null);
   const previousThread = useRef<string | null>(null);
+  const shouldStick = useRef(true);
   const { selected } = snapshot;
   const transcriptItems =
     transcript.threadId === selected?.id ? transcript.items : noTranscriptItems;
   const changed = previousThread.current !== selected?.id;
-  const shouldStick =
-    changed ||
-    !chat.current ||
-    chat.current.scrollHeight -
-      chat.current.scrollTop -
-      chat.current.clientHeight <
-      48;
   useLayoutEffect(() => {
     const container = chat.current;
-    if (container && shouldStick) {
+    if (container && (changed || shouldStick.current)) {
       container.scrollTop = container.scrollHeight;
     }
     previousThread.current = selected?.id ?? null;
-  }, [selected, shouldStick, transcriptItems]);
+  }, [changed, selected, transcriptItems]);
   const streaming =
     transcript.threadId === selected?.id
       ? transcript.streaming
@@ -90,7 +84,18 @@ export const ThreadView = ({
           ✎
         </button>
       </header>
-      <div id="chat" ref={chat}>
+      <div
+        id="chat"
+        ref={chat}
+        onScroll={(event) => {
+          const container = event.currentTarget;
+          shouldStick.current =
+            container.scrollHeight -
+              container.scrollTop -
+              container.clientHeight <
+            48;
+        }}
+      >
         <Transcript
           selected={selected}
           streamedItems={transcriptItems}

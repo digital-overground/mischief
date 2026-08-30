@@ -1,5 +1,3 @@
-import { memo } from "react";
-
 import type {
   Project,
   ProjectsSnapshot,
@@ -139,8 +137,4 @@ const ProjectsPaneView = ({
   </section>
 );
 
-export const ProjectsPane = memo(
-  ProjectsPaneView,
-  (previous, next) =>
-    JSON.stringify(previous.snapshot) === JSON.stringify(next.snapshot)
-);
+export const ProjectsPane = ProjectsPaneView;

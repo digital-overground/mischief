@@ -130,7 +130,7 @@ const ConfigControlView = ({
     <select
       title={config.description || config.name}
       aria-label={config.name}
-      value={customProfile ? "" : config.currentValue}
+      defaultValue={customProfile ? "" : config.currentValue}
       onChange={(event) =>
         postMessage({
           id: config.id,
@@ -162,11 +162,7 @@ const ConfigControlView = ({
   );
 };
 
-const ConfigControl = memo(
-  ConfigControlView,
-  (previous, next) =>
-    JSON.stringify(previous.config) === JSON.stringify(next.config)
-);
+const ConfigControl = memo(ConfigControlView);
 
 const formatUsage = (value: number): string =>
   value < 1000 ? String(value) : `${Math.round(value / 1000)}k`;
@@ -283,7 +279,10 @@ export const FooterControls = ({
       ) : null}
       <div id="configs">
         {selected?.configOptions.map((config) => (
-          <ConfigControl config={config} key={config.id} />
+          <ConfigControl
+            config={config}
+            key={`${config.id}:${config.currentValue}`}
+          />
         ))}
       </div>
       <button

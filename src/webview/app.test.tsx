@@ -87,6 +87,26 @@ describe("React webview", () => {
       throw new Error("Missing composer");
     }
     composer.value = "unfinished draft";
+    const chat = document.querySelector<HTMLDivElement>("#chat");
+    if (!chat) {
+      throw new Error("Missing chat");
+    }
+    const scrollHeight = vi.fn<() => number>(() => 1000);
+    const scrollTop = vi.fn<() => number>(() => 0);
+    const clientHeight = vi.fn<() => number>(() => 100);
+    Object.defineProperties(chat, {
+      clientHeight: { configurable: true, get: clientHeight },
+      scrollHeight: { configurable: true, get: scrollHeight },
+      scrollTop: {
+        configurable: true,
+        get: scrollTop,
+        set: vi.fn<(value: number) => void>(),
+      },
+    });
+    chat.dispatchEvent(new Event("scroll", { bubbles: true }));
+    scrollHeight.mockClear();
+    scrollTop.mockClear();
+    clientHeight.mockClear();
 
     await act(() => {
       window.dispatchEvent(
@@ -111,6 +131,11 @@ describe("React webview", () => {
       )
     ).toStrictEqual(["First", "Second streamed update"]);
     expect(composer.value).toBe("unfinished draft");
+    expect({
+      clientHeight: clientHeight.mock.calls.length,
+      scrollHeight: scrollHeight.mock.calls.length,
+      scrollTop: scrollTop.mock.calls.length,
+    }).toStrictEqual({ clientHeight: 0, scrollHeight: 0, scrollTop: 0 });
     await act(() => {
       root.unmount();
     });

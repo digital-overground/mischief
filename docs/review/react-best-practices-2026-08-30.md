@@ -41,11 +41,15 @@ Both requests can run the 5,000-file scan. The initial unconditional request is 
 
 **Locations:** `src/webview/thread-view.tsx:42-56`
 
+**Status:** Resolved. A scroll handler now tracks bottom-stickiness in a ref; streamed renders only consume that ref.
+
 Reading `scrollHeight`, `scrollTop`, and `clientHeight` during every streamed render can force synchronous layout. Bottom-stickiness should instead be tracked in a scroll-handler ref.
 
 ### P3 — Deep memo comparisons allocate on the streaming path
 
 **Locations:** `src/webview/projects-pane.tsx:142-146`, `src/webview/composer.tsx:294-320`, `src/webview/footer-controls.tsx:165-169`
+
+**Status:** Resolved. Deep comparators were removed; cheap panes render directly and stable controls use shallow memoization.
 
 `JSON.stringify` comparators move work out of rendering rather than stabilizing snapshot references.
 
