@@ -36,6 +36,68 @@ describe("view provider", () => {
     expect(style).toMatch(/footer \{[^}]*flex: none;/u);
   });
 
+  test("sends only the changed transcript item while streaming", async () => {
+    const postMessage = vi.fn<(message: unknown) => void>();
+    let emit: ((change: unknown) => void) | undefined;
+    const threads = {
+      onChange: (listener: (change: unknown) => void) => {
+        emit = listener;
+      },
+      snapshot: () => ({
+        attentionCount: 0,
+        selected: {
+          configOptions: [],
+          drafts: [],
+          id: "thread-1",
+          items: [{ id: "old", kind: "assistant", text: "Old history" }],
+          name: "Thread",
+          status: "running",
+          steering: [],
+          streaming: true,
+        },
+        threads: [],
+      }),
+    };
+    const provider = new MischiefView(
+      {} as never,
+      threads as never,
+      { fsPath: process.cwd() } as never
+    );
+    await provider.resolveWebviewView({
+      onDidDispose: vi.fn<() => void>(),
+      webview: {
+        asWebviewUri: (uri: { fsPath: string }) => ({
+          toString: () => `webview:${uri.fsPath}`,
+        }),
+        cspSource: "webview-csp",
+        html: "",
+        onDidReceiveMessage: vi.fn<() => void>(),
+        options: {},
+        postMessage,
+      },
+    } as never);
+    postMessage.mockClear();
+
+    emit?.({
+      item: { id: "current", kind: "assistant", text: "**New**" },
+      streaming: true,
+      threadId: "thread-1",
+      type: "transcript",
+    });
+
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({
+      item: {
+        html: "<p><strong>New</strong></p>\n",
+        id: "current",
+        kind: "assistant",
+        text: "**New**",
+      },
+      streaming: true,
+      threadId: "thread-1",
+      type: "transcript",
+    });
+  });
+
   test("loads static assets and bubbles Thread attention to the native view badge", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     const webview = {

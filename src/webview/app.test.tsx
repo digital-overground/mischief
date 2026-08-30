@@ -25,7 +25,7 @@ describe("React webview", () => {
     vi.useRealTimers();
   });
 
-  test("preserves in-progress composer text across streaming snapshots", async () => {
+  test("applies streaming transcript items without replacing history or composer text", async () => {
     const container = document.querySelector("#root");
     if (!(container instanceof HTMLElement)) {
       throw new Error("Missing test root");
@@ -43,7 +43,14 @@ describe("React webview", () => {
           configOptions: [],
           drafts: [],
           id: "selected",
-          items: [{ id: "assistant", kind: "assistant", text: "First" }],
+          items: [
+            { id: "assistant", kind: "assistant", text: "First" },
+            {
+              id: "streamed",
+              kind: "assistant",
+              text: "Second partial",
+            },
+          ],
           name: "Selected Thread",
           status: "idle",
           steering: [],
@@ -67,30 +74,24 @@ describe("React webview", () => {
       window.dispatchEvent(
         new MessageEvent("message", {
           data: {
-            ...state,
-            threads: {
-              ...state.threads,
-              selected: state.threads.selected
-                ? {
-                    ...state.threads.selected,
-                    configOptions: [...state.threads.selected.configOptions],
-                    drafts: [...state.threads.selected.drafts],
-                    items: [
-                      {
-                        id: "assistant",
-                        kind: "assistant",
-                        text: "First streamed update",
-                      },
-                    ],
-                    usage: { size: 100, used: 10 },
-                  }
-                : undefined,
+            item: {
+              id: "streamed",
+              kind: "assistant",
+              text: "Second streamed update",
             },
+            streaming: true,
+            threadId: "selected",
+            type: "transcript",
           } satisfies HostToWebviewMessage,
         })
       );
     });
 
+    expect(
+      [...document.querySelectorAll("#transcript .entry")].map(
+        (entry) => entry.textContent
+      )
+    ).toStrictEqual(["First", "Second streamed update"]);
     expect(composer.value).toBe("unfinished draft");
     await act(() => {
       root.unmount();

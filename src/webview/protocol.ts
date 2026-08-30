@@ -29,6 +29,12 @@ export type HostToWebviewMessage =
       projects: ProjectsSnapshot;
       threads: RenderedThreadsSnapshot;
     }
+  | {
+      type: "transcript";
+      threadId: string;
+      item: RenderedTranscriptItem;
+      streaming: boolean;
+    }
   | { type: "contextItems"; items: string[] };
 
 export type WebviewToHostMessage =

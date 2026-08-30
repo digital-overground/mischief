@@ -267,6 +267,13 @@ export interface ThreadsSnapshot {
   selected?: ThreadDetail;
 }
 
+export interface ThreadsChange {
+  type: "transcript";
+  threadId: string;
+  item: TranscriptItem;
+  streaming: boolean;
+}
+
 interface StoredThread {
   id: string;
   workspace: string;
@@ -336,7 +343,7 @@ export class Threads {
   private readonly storage: ThreadsStorage;
   private readonly stored: StoredThreads;
   private readonly runtimes = new Map<string, Runtime>();
-  private readonly listeners = new Set<() => void>();
+  private readonly listeners = new Set<(change?: ThreadsChange) => void>();
   private workspace?: string;
   private selectedId?: string;
   private viewedId?: string;
@@ -367,7 +374,7 @@ export class Threads {
     return this.snapshot();
   }
 
-  onChange(listener: () => void): () => void {
+  onChange(listener: (change?: ThreadsChange) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
@@ -1075,12 +1082,12 @@ export class Threads {
     if (update.type === "message" && update.kind !== "user") {
       this.markStreaming(runtime, update.text ?? "");
     }
-    reduceTranscript(runtime.items, update);
-    if (
+    const item = reduceTranscript(runtime.items, update);
+    const archivedPlan =
       update.type === "plan" &&
       update.allCompleted &&
-      runtime.status === "idle"
-    ) {
+      runtime.status === "idle";
+    if (archivedPlan) {
       archiveCompletedPlan(runtime.items);
     }
     if (update.type === "usage") {
@@ -1098,7 +1105,16 @@ export class Threads {
       }
       void this.persist();
     }
-    this.emit();
+    this.emit(
+      item && !archivedPlan
+        ? {
+            item: { ...item },
+            streaming: runtime.streaming,
+            threadId: record.id,
+            type: "transcript",
+          }
+        : undefined
+    );
   }
 
   private records(): StoredThread[] {
@@ -1127,9 +1143,9 @@ export class Threads {
     return this.storage.update(STORAGE_KEY, this.stored);
   }
 
-  private emit(): void {
+  private emit(change?: ThreadsChange): void {
     for (const listener of this.listeners) {
-      listener();
+      listener(change);
     }
   }
 }

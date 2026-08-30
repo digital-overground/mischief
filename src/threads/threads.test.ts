@@ -8,6 +8,7 @@ import type {
   AgentPromptResult,
   PromptImage,
   ThreadConfigOption,
+  ThreadsChange,
   ThreadsStorage,
 } from "./threads";
 
@@ -385,6 +386,8 @@ describe("threads module", () => {
     agent.holdPrompts = true;
     const threads = new Threads(memoryStorage(), agent.factory);
     await threads.openWorkspace("/workspace");
+    const changes: (ThreadsChange | undefined)[] = [];
+    threads.onChange((change) => changes.push(change));
 
     const first = threads.prompt("First");
     expect(threads.snapshot().selected).toMatchObject({
@@ -393,6 +396,13 @@ describe("threads module", () => {
     });
     await agent.firstPromptStarted;
     expect(threads.snapshot().selected?.streaming).toBeTruthy();
+    expect(changes).toContainEqual(
+      expect.objectContaining({
+        item: expect.objectContaining({ kind: "assistant", text: "Partial" }),
+        streaming: true,
+        type: "transcript",
+      })
+    );
     const second = threads.prompt("Second");
 
     expect(threads.snapshot().selected).toMatchObject({

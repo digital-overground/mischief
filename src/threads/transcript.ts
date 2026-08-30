@@ -8,9 +8,9 @@ const appendMessage = (
   text?: string,
   images?: TranscriptItem["images"],
   messageId?: string
-): void => {
+): TranscriptItem | undefined => {
   if (!text && !images?.length) {
-    return;
+    return undefined;
   }
   const id = messageId ? `${kind}:${messageId}` : undefined;
   const existing = id ? items.find((item) => item.id === id) : items.at(-1);
@@ -27,9 +27,13 @@ const appendMessage = (
       ...(images?.length ? { images } : {}),
     });
   }
+  return existing?.kind === kind ? existing : items.at(-1);
 };
 
-const upsertTool = (items: TranscriptItem[], update: AgentToolUpdate): void => {
+const upsertTool = (
+  items: TranscriptItem[],
+  update: AgentToolUpdate
+): TranscriptItem => {
   const id = `tool:${update.toolCallId}`;
   let item = items.find((candidate) => candidate.id === id);
   if (!item) {
@@ -57,25 +61,28 @@ const upsertTool = (items: TranscriptItem[], update: AgentToolUpdate): void => {
   if (update.terminalOutput !== undefined) {
     item.output = (item.output ?? "") + update.terminalOutput;
   }
+  return item;
 };
 
 const upsertPlan = (
   items: TranscriptItem[],
   update: Extract<AgentUpdate, { type: "plan" }>
-): void => {
+): TranscriptItem => {
   const existing = items.find((item) => item.id === "plan");
   if (existing) {
     existing.text = update.text;
     existing.allCompleted = update.allCompleted;
-  } else {
-    items.push({
-      allCompleted: update.allCompleted,
-      id: "plan",
-      kind: "plan",
-      text: update.text,
-      title: "Plan",
-    });
+    return existing;
   }
+  const plan: TranscriptItem = {
+    allCompleted: update.allCompleted,
+    id: "plan",
+    kind: "plan",
+    text: update.text,
+    title: "Plan",
+  };
+  items.push(plan);
+  return plan;
 };
 
 export const archiveCompletedPlan = (items: TranscriptItem[]): void => {
@@ -97,18 +104,21 @@ export const archiveCompletedPlan = (items: TranscriptItem[]): void => {
 export const reduceTranscript = (
   items: TranscriptItem[],
   update: AgentUpdate
-): void => {
+): TranscriptItem | undefined => {
   if (update.type === "message") {
-    appendMessage(
+    return appendMessage(
       items,
       update.kind,
       update.text,
       update.images,
       update.messageId
     );
-  } else if (update.type === "tool") {
-    upsertTool(items, update);
-  } else if (update.type === "plan") {
-    upsertPlan(items, update);
   }
+  if (update.type === "tool") {
+    return upsertTool(items, update);
+  }
+  if (update.type === "plan") {
+    return upsertPlan(items, update);
+  }
+  return undefined;
 };

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useMemo } from "react";
 import type { ReactNode } from "react";
 
 import { postMessage } from "./bridge";
@@ -74,18 +74,10 @@ const ThinkingGroup = ({
 
 const ToolItem = ({
   item,
-  open,
-  setOpen,
 }: {
   item: RenderedTranscriptItem;
-  open: boolean;
-  setOpen: (open: boolean) => void;
 }): React.JSX.Element => (
-  <details
-    className="entry tool"
-    open={open}
-    onToggle={(event) => setOpen(event.currentTarget.open)}
-  >
+  <details className="entry tool">
     <summary>
       <Icon className="entry-icon" kind="tool" title="Tool" />
       <span>
@@ -139,12 +131,8 @@ const entryMeta: Partial<
 
 const TranscriptEntry = ({
   item,
-  openTools,
-  setToolOpen,
 }: {
   item: RenderedTranscriptItem;
-  openTools: Set<string>;
-  setToolOpen: (id: string, open: boolean) => void;
 }): React.JSX.Element => {
   if (item.kind === "completedPlan") {
     return (
@@ -158,13 +146,7 @@ const TranscriptEntry = ({
     );
   }
   if (item.kind === "tool") {
-    return (
-      <ToolItem
-        item={item}
-        open={openTools.has(item.id)}
-        setOpen={(open) => setToolOpen(item.id, open)}
-      />
-    );
+    return <ToolItem item={item} />;
   }
   const meta = entryMeta[item.kind] ?? {
     icon: "alert",
@@ -190,71 +172,56 @@ const TranscriptEntry = ({
   );
 };
 
-const TranscriptNodes = ({
-  items,
-  openTools,
-  setToolOpen,
-}: {
-  items: RenderedTranscriptItem[];
-  openTools: Set<string>;
-  setToolOpen: (id: string, open: boolean) => void;
-}): ReactNode[] => {
-  const nodes: ReactNode[] = [];
-  for (let index = 0; index < items.length;) {
-    const item = items[index];
-    if (!item) {
-      break;
+const TranscriptNodes = memo(
+  ({ items }: { items: RenderedTranscriptItem[] }): React.JSX.Element => {
+    const nodes: ReactNode[] = [];
+    for (let index = 0; index < items.length;) {
+      const item = items[index];
+      if (!item) {
+        break;
+      }
+      if (item.kind !== "thought") {
+        nodes.push(<TranscriptEntry item={item} key={item.id} />);
+        index += 1;
+        continue;
+      }
+      const thoughts: RenderedTranscriptItem[] = [];
+      while (items[index]?.kind === "thought") {
+        thoughts.push(items[index] as RenderedTranscriptItem);
+        index += 1;
+      }
+      nodes.push(<ThinkingGroup items={thoughts} key={`thought:${item.id}`} />);
     }
-    if (item.kind !== "thought") {
-      nodes.push(
-        <TranscriptEntry
-          item={item}
-          key={item.id}
-          openTools={openTools}
-          setToolOpen={setToolOpen}
-        />
-      );
-      index += 1;
-      continue;
-    }
-    const thoughts: RenderedTranscriptItem[] = [];
-    while (items[index]?.kind === "thought") {
-      thoughts.push(items[index] as RenderedTranscriptItem);
-      index += 1;
-    }
-    nodes.push(<ThinkingGroup items={thoughts} key={`thought:${item.id}`} />);
+    return <>{nodes}</>;
   }
-  return nodes;
-};
+);
 
 export const Transcript = ({
   selected,
+  streamedItems,
 }: {
   selected?: RenderedThreadDetail;
+  streamedItems: RenderedTranscriptItem[];
 }): React.JSX.Element => {
-  const [openTools, setOpenTools] = useState<Set<string>>(() => new Set());
-  const items = selected?.items.filter((item) => item.kind !== "plan") ?? [];
-  const setToolOpen = (id: string, open: boolean): void => {
-    setOpenTools((current) => {
-      const next = new Set(current);
-      if (open) {
-        next.add(id);
-      } else {
-        next.delete(id);
-      }
-      return next;
-    });
-  };
+  const { history, tail } = useMemo(() => {
+    const items = selected?.items.filter((item) => item.kind !== "plan") ?? [];
+    return { history: items.slice(0, -1), tail: items.at(-1) };
+  }, [selected?.items]);
+  const streamed = useMemo(
+    () => streamedItems.filter((item) => item.kind !== "plan"),
+    [streamedItems]
+  );
+  const tailWasUpdated = streamed.some((item) => item.id === tail?.id);
   let content: ReactNode;
   if (!selected) {
     content = <div className="empty">Select a managed Workspace.</div>;
-  } else if (items.length) {
+  } else if (history.length || tail || streamed.length) {
     content = (
-      <TranscriptNodes
-        items={items}
-        openTools={openTools}
-        setToolOpen={setToolOpen}
-      />
+      <>
+        <TranscriptNodes items={history} />
+        {tail && !tailWasUpdated ? <TranscriptEntry item={tail} /> : null}
+        <TranscriptNodes items={streamed} />
+      </>
     );
   } else {
     content = <div className="empty">Send a prompt to start this Thread.</div>;

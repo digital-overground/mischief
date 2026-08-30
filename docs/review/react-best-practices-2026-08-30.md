@@ -9,11 +9,15 @@
 
 **Locations:** `media/webview.css:29-46`, `media/webview.css:425-428`, `media/webview.css:699-703`, `media/webview.css:759-763`, `media/webview.css:823-844`
 
+**Status:** Resolved. Steering and plan now shrink and scroll before displacing the composer.
+
 Steering, plan, and footer are non-shrinking siblings. A headless Chromium reproduction at 320×500 placed the composer at `434–520px` while the Thread ended at `413px`. Removing plan and steering kept the composer visible. This confirms the reported layout regression.
 
 ### P1 — Streaming still performs O(history) work per ACP chunk
 
 **Locations:** `src/threads/threads.ts:1070-1101`, `src/view.ts:475-498`, `src/webview/transcript.tsx:230-262`
+
+**Status:** Resolved. Transcript changes now send and render only the changed item while stable history remains memoized.
 
 Every chunk rebuilds the snapshot, renders Markdown for all text items, structured-clones the full state, and reconstructs the complete transcript. Memoization protects peripheral panes but not the primary streaming path.
 
@@ -59,7 +63,7 @@ Previously identified model ordering, usage-popup reset, composer stability, and
 
 - Lint
 - Type checking
-- 42 tests
+- 43 tests
 - Production build
 
 The current jsdom tests do not calculate browser layout and therefore do not detect the composer containment regression.

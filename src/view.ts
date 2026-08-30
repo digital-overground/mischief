@@ -12,6 +12,8 @@ import type {
   PromptImage,
   ThreadInteractionResponse,
   Threads,
+  ThreadsChange,
+  TranscriptItem,
 } from "./threads/threads";
 import { webviewHtml } from "./webview";
 import type { HostToWebviewMessage } from "./webview/protocol";
@@ -20,6 +22,15 @@ const VIEW_ID = "mischief.view";
 const DEFAULT_MONO_FONT_FAMILY =
   '"Lilex", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
 const markdown = new MarkdownIt({ breaks: true, html: false, linkify: true });
+
+const renderTranscriptItem = (
+  item: TranscriptItem
+): TranscriptItem & {
+  html?: string;
+} =>
+  item.text && item.kind !== "plan" && item.kind !== "tool"
+    ? { ...item, html: markdown.render(item.text) }
+    : item;
 
 const promptImages = (value: unknown): PromptImage[] => {
   if (value === undefined) {
@@ -89,7 +100,13 @@ export class MischiefView implements vscode.WebviewViewProvider {
     this.projects = projects;
     this.threads = threads;
     this.extensionUri = extensionUri;
-    threads.onChange(() => this.render());
+    threads.onChange((change) => {
+      if (change?.type === "transcript") {
+        this.renderTranscript(change);
+      } else {
+        this.render();
+      }
+    });
   }
 
   async initialize(folder?: string): Promise<void> {
@@ -464,6 +481,17 @@ export class MischiefView implements vscode.WebviewViewProvider {
     } satisfies HostToWebviewMessage);
   }
 
+  private renderTranscript(change: ThreadsChange): void {
+    if (!this.view) {
+      return;
+    }
+    const postMessage = this.view.webview.postMessage.bind(this.view.webview);
+    void postMessage({
+      ...change,
+      item: renderTranscriptItem(change.item),
+    } satisfies HostToWebviewMessage);
+  }
+
   private render(): void {
     if (!this.view) {
       return;
@@ -482,11 +510,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     if (threads.selected) {
       threads.selected = {
         ...threads.selected,
-        items: threads.selected.items.map((item) =>
-          item.text && item.kind !== "plan" && item.kind !== "tool"
-            ? { ...item, html: markdown.render(item.text) }
-            : item
-        ),
+        items: threads.selected.items.map(renderTranscriptItem),
       };
     }
     const postMessage = this.view.webview.postMessage.bind(this.view.webview);

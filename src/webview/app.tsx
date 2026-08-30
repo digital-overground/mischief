@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { postMessage } from "./bridge";
 import { PaneLayout } from "./pane-layout";
 import { ProjectsPane } from "./projects-pane";
-import type { HostToWebviewMessage } from "./protocol";
+import type { HostToWebviewMessage, RenderedTranscriptItem } from "./protocol";
 import { ThreadView } from "./thread-view";
 import { ThreadsPane } from "./threads-pane";
 
@@ -17,6 +17,11 @@ const initialState: Extract<HostToWebviewMessage, { type: "state" }> = {
 export const App = (): React.JSX.Element => {
   const [snapshot, setSnapshot] = useState(initialState);
   const [contextItems, setContextItems] = useState<string[]>([]);
+  const [transcript, setTranscript] = useState<{
+    items: RenderedTranscriptItem[];
+    streaming: boolean;
+    threadId?: string;
+  }>({ items: [], streaming: false });
   const previousWorkspace = useRef<string | null>(null);
 
   useEffect(() => {
@@ -25,6 +30,22 @@ export const App = (): React.JSX.Element => {
         setContextItems(event.data.items);
       } else if (event.data.type === "state") {
         setSnapshot(event.data);
+        setTranscript({ items: [], streaming: false });
+      } else if (event.data.type === "transcript") {
+        const update = event.data;
+        setTranscript((current) => {
+          const items =
+            current.threadId === update.threadId ? current.items : [];
+          const index = items.findIndex((item) => item.id === update.item.id);
+          return {
+            items:
+              index === -1
+                ? [...items, update.item]
+                : items.with(index, update.item),
+            streaming: update.streaming,
+            threadId: update.threadId,
+          };
+        });
       }
     };
     window.addEventListener("message", receive);
@@ -62,7 +83,11 @@ export const App = (): React.JSX.Element => {
       projects={<ProjectsPane snapshot={snapshot.projects} />}
       threads={<ThreadsPane snapshot={snapshot.threads} />}
       thread={
-        <ThreadView contextItems={contextItems} snapshot={snapshot.threads} />
+        <ThreadView
+          contextItems={contextItems}
+          snapshot={snapshot.threads}
+          transcript={transcript}
+        />
       }
     />
   );
