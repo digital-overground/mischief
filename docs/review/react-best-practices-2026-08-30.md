@@ -33,6 +33,8 @@ Matching stops after 50 results, but selective or no-result queries still scan e
 
 **Locations:** `src/webview/app.tsx:31-32`, `src/webview/app.tsx:51-58`, `src/view.ts:441-464`
 
+**Status:** Resolved. Initialization now relies on the Workspace-change request; opening `@` still requests an on-demand refresh.
+
 Both requests can run the 5,000-file scan. The initial unconditional request is redundant because the Workspace-change request covers initialization.
 
 ### P2 — Streaming reads layout during React render

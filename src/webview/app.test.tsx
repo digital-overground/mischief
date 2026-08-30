@@ -36,7 +36,20 @@ describe("React webview", () => {
     });
     const state: HostToWebviewMessage = {
       font: "Test Mono",
-      projects: { projects: [], ungrouped: [] },
+      projects: {
+        projects: [],
+        ungrouped: [
+          {
+            ahead: 0,
+            behind: 0,
+            changes: 0,
+            current: true,
+            linked: false,
+            name: "workspace",
+            path: "/workspace",
+          },
+        ],
+      },
       threads: {
         attentionCount: 0,
         selected: {
@@ -64,6 +77,11 @@ describe("React webview", () => {
     await act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
     });
+    expect(
+      postMessage.mock.calls.filter(
+        ([message]) => (message as { type?: string }).type === "contextItems"
+      )
+    ).toHaveLength(1);
     const composer = document.querySelector<HTMLTextAreaElement>("#composer");
     if (!composer) {
       throw new Error("Missing composer");

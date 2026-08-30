@@ -50,7 +50,6 @@ export const App = (): React.JSX.Element => {
     };
     window.addEventListener("message", receive);
     postMessage({ type: "ready" });
-    postMessage({ type: "contextItems" });
     return () => window.removeEventListener("message", receive);
   }, []);
 
