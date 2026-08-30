@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, useEffect } from "react";
+import { useLayoutEffect, useRef } from "react";
 
 import { postMessage } from "./bridge";
 import { Composer } from "./composer";
@@ -11,26 +11,11 @@ import type {
 import { SteeringControl } from "./steering-control";
 import { Transcript } from "./transcript";
 
-const brailleFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const noTranscriptItems: RenderedTranscriptItem[] = [];
 
-const Processing = (): React.JSX.Element => {
-  const [frame, setFrame] = useState(0);
-  useEffect(() => {
-    const timer = window.setInterval(
-      () => setFrame((value) => (value + 1) % brailleFrames.length),
-      60
-    );
-    return () => window.clearInterval(timer);
-  }, []);
-  return (
-    <div id="processing" role="status" aria-label="Agent is working">
-      <span id="braille" aria-hidden="true">
-        {brailleFrames[frame]}
-      </span>
-    </div>
-  );
-};
+const Processing = (): React.JSX.Element => (
+  <div id="processing" role="status" aria-label="Agent is working" />
+);
 
 // oxlint-disable-next-line complexity -- the component renders Thread state branches
 export const ThreadView = ({

@@ -57,6 +57,8 @@ Reading `scrollHeight`, `scrollTop`, and `clientHeight` during every streamed re
 
 **Locations:** `src/webview/thread-view.tsx:11-29`
 
+**Status:** Resolved. Processing now reuses the CSS braille keyframes without React state or timers.
+
 The animation is isolated, but it can reuse the existing CSS braille animation and avoid React commits.
 
 ## Previous-review status

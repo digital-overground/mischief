@@ -33,7 +33,9 @@ describe("view provider", () => {
     expect(style).toMatch(
       /#steering,\s*#plan \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*overflow-y: auto;/u
     );
-    expect(style).toMatch(/footer \{[^}]*flex: none;/u);
+    expect(style).toMatch(
+      /footer \{[^}]*flex: none;[\s\S]*#processing::before \{[^}]*animation: thread-status-frame/u
+    );
   });
 
   test("sends only the changed transcript item while streaming", async () => {

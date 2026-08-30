@@ -835,6 +835,10 @@ footer {
   font-size: 18px;
   line-height: 1;
 }
+#processing::before {
+  content: "⠋";
+  animation: thread-status-frame 600ms step-end infinite;
+}
 #processing[hidden] {
   display: none;
 }
