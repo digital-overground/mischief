@@ -8,8 +8,10 @@ export const webviewHtml = async (
   extensionUri: vscode.Uri
 ): Promise<string> => {
   const media = vscode.Uri.joinPath(extensionUri, "media");
-  const assetUri = (name: string): string =>
-    webview.asWebviewUri(vscode.Uri.joinPath(media, name)).toString();
+  const assetUri = (directory: string, name: string): string =>
+    webview
+      .asWebviewUri(vscode.Uri.joinPath(extensionUri, directory, name))
+      .toString();
   const document = await readFile(
     vscode.Uri.joinPath(media, "webview.html").fsPath,
     "utf-8"
@@ -18,6 +20,6 @@ export const webviewHtml = async (
   return document
     .replaceAll("{{cspSource}}", webview.cspSource)
     .replaceAll("{{nonce}}", randomBytes(16).toString("hex"))
-    .replaceAll("{{styleUri}}", assetUri("webview.css"))
-    .replaceAll("{{scriptUri}}", assetUri("webview.js"));
+    .replaceAll("{{styleUri}}", assetUri("media", "webview.css"))
+    .replaceAll("{{scriptUri}}", assetUri("dist", "webview.js"));
 };

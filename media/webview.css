@@ -206,6 +206,39 @@ select:disabled {
   font-family: var(--mischief-mono-font);
   font-size: 11px;
 }
+.thread-status.active::before {
+  content: "⠋";
+  animation: thread-status-frame 600ms step-end infinite;
+}
+@keyframes thread-status-frame {
+  10% {
+    content: "⠙";
+  }
+  20% {
+    content: "⠹";
+  }
+  30% {
+    content: "⠸";
+  }
+  40% {
+    content: "⠼";
+  }
+  50% {
+    content: "⠴";
+  }
+  60% {
+    content: "⠦";
+  }
+  70% {
+    content: "⠧";
+  }
+  80% {
+    content: "⠇";
+  }
+  90% {
+    content: "⠏";
+  }
+}
 .thread-status.waiting,
 .thread-status.error {
   color: var(--vscode-errorForeground);
@@ -399,6 +432,8 @@ select:disabled {
 }
 .entry {
   --entry-accent: var(--vscode-descriptionForeground);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 80px;
   margin: 0 0 8px;
   border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
   border-left: 2px solid var(--entry-accent);

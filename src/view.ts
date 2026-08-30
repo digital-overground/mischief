@@ -14,6 +14,7 @@ import type {
   Threads,
 } from "./threads/threads";
 import { webviewHtml } from "./webview";
+import type { HostToWebviewMessage } from "./webview/protocol";
 
 const VIEW_ID = "mischief.view";
 const DEFAULT_MONO_FONT_FAMILY =
@@ -133,9 +134,10 @@ export class MischiefView implements vscode.WebviewViewProvider {
   async resolveWebviewView(view: vscode.WebviewView): Promise<void> {
     this.view = view;
     const media = vscode.Uri.joinPath(this.extensionUri, "media");
+    const dist = vscode.Uri.joinPath(this.extensionUri, "dist");
     view.webview.options = {
       enableScripts: true,
-      localResourceRoots: [media],
+      localResourceRoots: [media, dist],
     };
     view.webview.html = await webviewHtml(view.webview, this.extensionUri);
     view.webview.onDidReceiveMessage((message: unknown) => {
@@ -459,7 +461,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     void postMessage({
       items: [...items].toSorted((a, b) => a.localeCompare(b)),
       type: "contextItems",
-    });
+    } satisfies HostToWebviewMessage);
   }
 
   private render(): void {
@@ -493,7 +495,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
       projects: this.projectsSnapshot,
       threads,
       type: "state",
-    });
+    } satisfies HostToWebviewMessage);
   }
 }
 
