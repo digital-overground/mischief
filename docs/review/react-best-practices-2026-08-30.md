@@ -25,6 +25,8 @@ Every chunk rebuilds the snapshot, renders Markdown for all text items, structur
 
 **Locations:** `src/webview/composer.tsx:29-52`, `src/webview/composer.tsx:232-237`
 
+**Status:** Resolved. Candidate matching now runs against a deferred context rather than inside the input event.
+
 Matching stops after 50 results, but selective or no-result queries still scan every candidate during input. Vercel recommends `useDeferredValue` for expensive input-driven rendering.
 
 ### P2 — Context inventory is requested twice on startup

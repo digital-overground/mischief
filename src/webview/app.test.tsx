@@ -98,7 +98,7 @@ describe("React webview", () => {
     });
   });
 
-  test("bounds context suggestions without blocking composer input", async () => {
+  test("defers worst-case context matching outside the input event", async () => {
     const container = document.querySelector("#root");
     if (!(container instanceof HTMLElement)) {
       throw new Error("Missing test root");
@@ -135,7 +135,7 @@ describe("React webview", () => {
     });
     let reads = 0;
     const candidates = new Proxy(
-      Array.from({ length: 200 }, (_, index) => `file-${index}.ts`),
+      Array.from({ length: 5000 }, (_, index) => `file-${index}.ts`),
       {
         get(target, property, receiver) {
           if (typeof property === "string" && /^\d+$/u.test(property)) {
@@ -160,17 +160,22 @@ describe("React webview", () => {
     if (!composer || !valueSetter) {
       throw new Error("Missing composer");
     }
+    postMessage.mockClear();
+    let synchronousReads = -1;
     await act(() => {
-      valueSetter.call(composer, "@file");
-      composer.setSelectionRange(5, 5);
+      valueSetter.call(composer, "@missing");
+      composer.setSelectionRange(8, 8);
       composer.dispatchEvent(new Event("input", { bubbles: true }));
+      synchronousReads = reads;
     });
 
+    expect(synchronousReads).toBe(0);
+    expect(postMessage).toHaveBeenCalledWith({ type: "contextItems" });
     expect({
       reads,
       suggestions: document.querySelectorAll("#context-suggestions button")
         .length,
-    }).toStrictEqual({ reads: 50, suggestions: 50 });
+    }).toStrictEqual({ reads: 5000, suggestions: 0 });
     await act(() => {
       root.unmount();
     });

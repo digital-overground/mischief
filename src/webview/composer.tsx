@@ -1,4 +1,11 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import {
+  memo,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ClipboardEvent, KeyboardEvent } from "react";
 
 import type { PromptImage } from "../threads/threads";
@@ -64,32 +71,27 @@ const ComposerView = ({
   const box = useRef<HTMLTextAreaElement>(null);
   const consumedDrafts = useRef("");
   const [images, setImages] = useState<PromptImage[]>([]);
-  const [contextMatches, setContextMatches] = useState<string[]>([]);
+  const [context, setContext] = useState<ComposerMatch>();
   const [contextIndex, setContextIndex] = useState(0);
-  const [contextStart, setContextStart] = useState(-1);
-
-  const updateContextSuggestions = useCallback(
-    (value: string, cursor: number): void => {
-      const context = composerContext(value, cursor);
-      if (!context) {
-        setContextMatches([]);
-        setContextStart(-1);
-        return;
-      }
-      setContextStart(context.start);
-      setContextMatches(matchingContextItems(contextItems, context));
-      setContextIndex(0);
-    },
-    [contextItems]
+  const deferredContext = useDeferredValue(context);
+  const deferredMatches = useMemo(
+    () =>
+      deferredContext
+        ? matchingContextItems(contextItems, deferredContext)
+        : [],
+    [contextItems, deferredContext]
   );
+  const contextMatches = context === deferredContext ? deferredMatches : [];
+  const contextStart = deferredContext?.start ?? -1;
 
-  useEffect(() => {
-    const value = box.current?.value ?? "";
-    updateContextSuggestions(
-      value,
-      box.current?.selectionStart ?? value.length
-    );
-  }, [updateContextSuggestions]);
+  const updateContextSuggestions = (value: string, cursor: number): void => {
+    const next = composerContext(value, cursor);
+    if (next && !context) {
+      postMessage({ type: "contextItems" });
+    }
+    setContext(next);
+    setContextIndex(0);
+  };
 
   useEffect(() => {
     const drafts = selected?.drafts ?? [];
@@ -130,7 +132,7 @@ const ComposerView = ({
       if (box.current) {
         box.current.value = "";
       }
-      setContextMatches([]);
+      setContext(undefined);
       newThread();
       return;
     }
@@ -142,7 +144,7 @@ const ComposerView = ({
       box.current.value = "";
     }
     setImages([]);
-    setContextMatches([]);
+    setContext(undefined);
   };
 
   const selectContext = (item: string): void => {
@@ -154,7 +156,7 @@ const ComposerView = ({
     if (box.current) {
       box.current.value = next;
     }
-    setContextMatches([]);
+    setContext(undefined);
     window.requestAnimationFrame(() => {
       box.current?.setSelectionRange(cursor, cursor);
       box.current?.focus();
@@ -168,7 +170,7 @@ const ComposerView = ({
     ) {
       event.preventDefault();
       if (event.key === "Escape") {
-        setContextMatches([]);
+        setContext(undefined);
       } else if (event.key === "ArrowDown") {
         setContextIndex((contextIndex + 1) % contextMatches.length);
       } else if (event.key === "ArrowUp") {
