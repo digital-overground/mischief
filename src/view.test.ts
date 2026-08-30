@@ -30,10 +30,10 @@ describe("view provider", () => {
     expect(html).toContain('id="root"');
     expect(html).toContain('src="{{scriptUri}}"');
     expect(html).toContain('href="{{styleUri}}"');
-    expect(style).toMatch(/#steering,\s*#plan/u);
     expect(style).toMatch(
-      /#root \{[^}]*height: 100%;[\s\S]*#steering-body,\s*#plan-body[\s\S]*footer \{[^}]*flex: none;/u
+      /#steering,\s*#plan \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*overflow-y: auto;/u
     );
+    expect(style).toMatch(/footer \{[^}]*flex: none;/u);
   });
 
   test("loads static assets and bubbles Thread attention to the native view badge", async () => {

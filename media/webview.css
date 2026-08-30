@@ -698,7 +698,9 @@ details.entry > summary::-webkit-details-marker {
 }
 #steering,
 #plan {
-  flex: none;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   border-top: 1px solid var(--vscode-panel-border);
   background: var(--vscode-editor-background, var(--vscode-sideBar-background));
 }
