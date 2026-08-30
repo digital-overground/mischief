@@ -466,6 +466,7 @@ const visibleMessageText = (
 const allPlanEntriesCompleted = (entries: { status: string }[]): boolean =>
   entries.length > 0 && entries.every((entry) => entry.status === "completed");
 
+// oxlint-disable-next-line complexity -- ACP session updates are a protocol union
 export const translateSessionUpdate = (
   update: SessionUpdate
 ): AgentUpdate | undefined => {
@@ -525,6 +526,18 @@ export const translateSessionUpdate = (
     }
     case "usage_update": {
       return { type: "usage", usage: { size: update.size, used: update.used } };
+    }
+    case "available_commands_update": {
+      return {
+        commands: update.availableCommands.map((command) => ({
+          description: command.description,
+          ...(typeof command.input?.hint === "string"
+            ? { inputHint: command.input.hint }
+            : {}),
+          name: command.name,
+        })),
+        type: "commands",
+      };
     }
     case "config_option_update": {
       return { options: configOptions(update.configOptions), type: "config" };

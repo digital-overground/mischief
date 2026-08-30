@@ -83,6 +83,12 @@ export interface AgentToolUpdate {
   diffs?: { path: string; oldText?: string; newText: string }[];
 }
 
+export interface ThreadCommand {
+  name: string;
+  description: string;
+  inputHint?: string;
+}
+
 export type AgentUpdate =
   | {
       type: "message";
@@ -99,6 +105,7 @@ export type AgentUpdate =
       entries: PlanEntry[];
     }
   | { type: "usage"; usage: ThreadUsage }
+  | { type: "commands"; commands: ThreadCommand[] }
   | { type: "config"; options: ThreadConfigOption[] }
   | { type: "sessionInfo"; title?: string; updatedAt?: string };
 
@@ -263,6 +270,7 @@ export interface ThreadDetail {
   streaming: boolean;
   usage?: ThreadUsage;
   items: TranscriptItem[];
+  commands: ThreadCommand[];
   configOptions: ThreadConfigOption[];
   interaction?: ThreadInteraction;
   authentication?: TerminalAuthentication;
@@ -312,6 +320,7 @@ interface Runtime {
   usage?: ThreadUsage;
   streamingTimer?: ReturnType<typeof setTimeout>;
   items: TranscriptItem[];
+  commands: ThreadCommand[];
   configOptions: ThreadConfigOption[];
   drafts: string[];
   pending: { id: string; text: string; images: PromptImage[] }[];
@@ -859,6 +868,7 @@ export class Threads {
       : undefined;
     if (this.draft || !record) {
       return {
+        commands: [],
         configOptions: [],
         drafts: [],
         id: null,
@@ -886,6 +896,7 @@ export class Threads {
         ? { authentication: record.authentication }
         : {}),
       ...threadUsage(record, runtime),
+      commands: runtime?.commands ?? [],
       configOptions: runtime?.configOptions ?? [],
       ...(record.error ? { error: record.error } : {}),
       drafts: runtime?.drafts ?? [],
@@ -1012,6 +1023,7 @@ export class Threads {
       return runtime;
     }
     runtime = {
+      commands: [],
       configOptions: [],
       connection: this.createConnection({
         elicitation: (request) => this.handleElicitation(record, request),
@@ -1105,6 +1117,8 @@ export class Threads {
       runtime.usage = update.usage;
       record.usage = update.usage;
       void this.persist();
+    } else if (update.type === "commands") {
+      runtime.commands = update.commands;
     } else if (update.type === "config") {
       runtime.configOptions = update.options;
     } else if (update.type === "sessionInfo") {

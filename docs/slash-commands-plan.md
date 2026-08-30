@@ -1,6 +1,6 @@
 # Slash command support plan
 
-**Status:** Planned
+**Status:** Implemented
 
 ## Decision
 

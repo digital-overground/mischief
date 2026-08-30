@@ -60,6 +60,7 @@ class FakeAgent {
     value: string | boolean;
   };
   disposed = false;
+  update?: AgentHandlers["update"];
   private readonly permissionStartedDeferred = deferred();
   private readonly elicitationStartedDeferred = deferred();
   private readonly firstPromptStartedDeferred = deferred();
@@ -92,6 +93,7 @@ class FakeAgent {
   }
 
   private connection(handlers: AgentHandlers): AgentConnection {
+    this.update = handlers.update;
     return {
       cancel: () => {
         for (const resolve of this.promptResolvers.splice(0)) {
@@ -530,6 +532,26 @@ describe("threads module", () => {
     expect(
       threads.snapshot().selected?.items.some((item) => item.kind === "plan")
     ).toBeFalsy();
+  });
+
+  test("replaces advertised commands, including with an empty list", async () => {
+    const agent = new FakeAgent();
+    const threads = new Threads(memoryStorage(), agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.newThread();
+
+    agent.update?.({
+      commands: [
+        { description: "Run checks", inputHint: "[files]", name: "check" },
+      ],
+      type: "commands",
+    });
+    expect(threads.snapshot().selected?.commands).toStrictEqual([
+      { description: "Run checks", inputHint: "[files]", name: "check" },
+    ]);
+
+    agent.update?.({ commands: [], type: "commands" });
+    expect(threads.snapshot().selected?.commands).toStrictEqual([]);
   });
 
   test("context usage survives a Thread reload", async () => {

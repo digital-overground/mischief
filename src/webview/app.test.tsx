@@ -58,6 +58,7 @@ describe("React webview", () => {
       threads: {
         attentionCount: 0,
         selected: {
+          commands: [],
           configOptions: [],
           drafts: [],
           id: "selected",
@@ -155,6 +156,7 @@ describe("React webview", () => {
             threads: {
               attentionCount: 0,
               selected: {
+                commands: [],
                 configOptions: [],
                 drafts: [],
                 id: "selected",
@@ -218,6 +220,119 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("autocompletes advertised slash commands and sends unknown slash text", async () => {
+    const unmount = await renderApp();
+    await act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            font: "Test Mono",
+            projects: { projects: [], ungrouped: [] },
+            threads: {
+              attentionCount: 0,
+              selected: {
+                commands: [
+                  {
+                    description: "Review changes",
+                    inputHint: "[branch]",
+                    name: "review",
+                  },
+                  { description: "Resume work", name: "resume" },
+                ],
+                configOptions: [],
+                drafts: [],
+                id: "selected",
+                items: [],
+                name: "Selected Thread",
+                status: "idle",
+                steering: [],
+                streaming: false,
+              },
+              threads: [],
+              workspace: "/workspace",
+            },
+            type: "state",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value"
+    )?.set;
+    if (!composer || !valueSetter) {
+      throw new Error("Missing composer");
+    }
+    const input = async (value: string): Promise<void> => {
+      await act(() => {
+        valueSetter.call(composer, value);
+        composer.setSelectionRange(value.length, value.length);
+        composer.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+
+    await input("/");
+    expect(
+      [...document.querySelectorAll("#context-suggestions button")].map(
+        (button) => button.textContent
+      )
+    ).toStrictEqual(["/review [branch]Review changes", "/resumeResume work"]);
+
+    const [, resume] = document.querySelectorAll<HTMLButtonElement>(
+      "#context-suggestions button"
+    );
+    const scrollIntoView = vi.fn<(options?: ScrollIntoViewOptions) => void>();
+    if (!resume) {
+      throw new Error("Missing second command suggestion");
+    }
+    resume.scrollIntoView = scrollIntoView;
+    await act(() => {
+      composer.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })
+      );
+    });
+    await act(() => {
+      composer.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" })
+      );
+    });
+    expect({
+      scroll: scrollIntoView.mock.calls,
+      value: composer.value,
+    }).toStrictEqual({
+      scroll: [[{ block: "nearest" }]],
+      value: "/resume",
+    });
+
+    await input("/rev");
+    const review = document.querySelector<HTMLButtonElement>(
+      "#context-suggestions button"
+    );
+    if (!review) {
+      throw new Error("Missing command suggestion");
+    }
+    await act(() => {
+      review.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    expect(composer.value).toBe("/review ");
+
+    postMessage.mockClear();
+    await input("/new");
+    await act(() => {
+      composer.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" })
+      );
+    });
+    expect(postMessage).toHaveBeenCalledWith({
+      images: [],
+      text: "/new",
+      type: "prompt",
+    });
+    expect(postMessage).not.toHaveBeenCalledWith({ type: "newThread" });
+    await unmount();
+  });
+
   test("keeps an in-progress model choice open across streaming snapshots", async () => {
     const unmount = await renderApp();
     const model = {
@@ -236,6 +351,7 @@ describe("React webview", () => {
       threads: {
         attentionCount: 0,
         selected: {
+          commands: [],
           configOptions: [model],
           drafts: [],
           id: "selected",
@@ -309,6 +425,7 @@ describe("React webview", () => {
       threads: {
         attentionCount: 0,
         selected: {
+          commands: [],
           configOptions: [],
           drafts: [],
           id: "thread-1",
