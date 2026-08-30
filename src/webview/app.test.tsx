@@ -14,6 +14,18 @@ vi.stubGlobal("acquireVsCodeApi", () => ({ postMessage }));
 
 const { App } = await import("./app");
 
+const renderApp = async (): Promise<() => Promise<void>> => {
+  const container = document.querySelector("#root");
+  if (!(container instanceof HTMLElement)) {
+    throw new Error("Missing test root");
+  }
+  const root = createRoot(container);
+  await act(() => root.render(<App />));
+  return async () => {
+    await act(() => root.unmount());
+  };
+};
+
 describe("React webview", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -26,14 +38,7 @@ describe("React webview", () => {
   });
 
   test("applies streaming transcript items without replacing history or composer text", async () => {
-    const container = document.querySelector("#root");
-    if (!(container instanceof HTMLElement)) {
-      throw new Error("Missing test root");
-    }
-    const root = createRoot(container);
-    await act(() => {
-      root.render(<App />);
-    });
+    const unmount = await renderApp();
     const state: HostToWebviewMessage = {
       font: "Test Mono",
       projects: {
@@ -136,20 +141,11 @@ describe("React webview", () => {
       scrollHeight: scrollHeight.mock.calls.length,
       scrollTop: scrollTop.mock.calls.length,
     }).toStrictEqual({ clientHeight: 0, scrollHeight: 0, scrollTop: 0 });
-    await act(() => {
-      root.unmount();
-    });
+    await unmount();
   });
 
   test("defers worst-case context matching outside the input event", async () => {
-    const container = document.querySelector("#root");
-    if (!(container instanceof HTMLElement)) {
-      throw new Error("Missing test root");
-    }
-    const root = createRoot(container);
-    await act(() => {
-      root.render(<App />);
-    });
+    const unmount = await renderApp();
     await act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
@@ -219,20 +215,11 @@ describe("React webview", () => {
       suggestions: document.querySelectorAll("#context-suggestions button")
         .length,
     }).toStrictEqual({ reads: 5000, suggestions: 0 });
-    await act(() => {
-      root.unmount();
-    });
+    await unmount();
   });
 
   test("keeps an in-progress model choice open across streaming snapshots", async () => {
-    const container = document.querySelector("#root");
-    if (!(container instanceof HTMLElement)) {
-      throw new Error("Missing test root");
-    }
-    const root = createRoot(container);
-    await act(() => {
-      root.render(<App />);
-    });
+    const unmount = await renderApp();
     const model = {
       currentValue: "provider/one",
       id: "model",
@@ -310,20 +297,11 @@ describe("React webview", () => {
       active: select,
       value: "provider/two",
     });
-    await act(() => {
-      root.unmount();
-    });
+    await unmount();
   });
 
   test("renders snapshots and routes steering and plan actions", async () => {
-    const container = document.querySelector("#root");
-    if (!(container instanceof HTMLElement)) {
-      throw new Error("Missing test root");
-    }
-    const root = createRoot(container);
-    await act(() => {
-      root.render(<App />);
-    });
+    const unmount = await renderApp();
 
     const state: HostToWebviewMessage = {
       font: "Test Mono",
@@ -392,8 +370,6 @@ describe("React webview", () => {
     });
     expect(postMessage).toHaveBeenCalledWith({ type: "clearPlan" });
 
-    await act(() => {
-      root.unmount();
-    });
+    await unmount();
   });
 });

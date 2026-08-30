@@ -1,9 +1,10 @@
-import { memo, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 import type {
   ThreadConfigChoice,
   ThreadConfigOption,
+  ThreadUsage,
 } from "../threads/threads";
 import { postMessage } from "./bridge";
 import { Icon, SvgIcon } from "./icon";
@@ -97,7 +98,7 @@ const selectOptions = (
   );
 };
 
-const ConfigControlView = ({
+const ConfigControl = ({
   config,
 }: {
   config: ThreadConfigOption;
@@ -162,8 +163,6 @@ const ConfigControlView = ({
   );
 };
 
-const ConfigControl = memo(ConfigControlView);
-
 const formatUsage = (value: number): string =>
   value < 1000 ? String(value) : `${Math.round(value / 1000)}k`;
 
@@ -175,10 +174,10 @@ const usageClass = (percent: number): string => {
 };
 
 const UsageControl = ({
-  selected,
+  usage: { size, used },
 }: {
-  selected?: RenderedThreadDetail;
-}): React.JSX.Element | null => {
+  usage: ThreadUsage;
+}): React.JSX.Element => {
   const [open, setOpen] = useState(false);
   useEffect(() => {
     const close = (): void => setOpen(false);
@@ -194,10 +193,6 @@ const UsageControl = ({
       document.removeEventListener("keydown", escape);
     };
   }, []);
-  if (!selected?.usage || selected.usage.size <= 0) {
-    return null;
-  }
-  const { size, used } = selected.usage;
   const percent = Math.round((used / size) * 100);
   const danger = usageClass(percent);
   return (
@@ -275,7 +270,7 @@ export const FooterControls = ({
         <SvgIcon kind="chat" />
       </button>
       {selected?.usage && selected.usage.size > 0 ? (
-        <UsageControl selected={selected} key={selected.id} />
+        <UsageControl usage={selected.usage} key={selected.id} />
       ) : null}
       <div id="configs">
         {selected?.configOptions.map((config) => (

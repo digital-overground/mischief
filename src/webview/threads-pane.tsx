@@ -4,26 +4,6 @@ import type { ThreadIndicator, ThreadSummary } from "../threads/threads";
 import { postMessage } from "./bridge";
 import type { RenderedThreadsSnapshot } from "./protocol";
 
-const indicatorKind = (thread: ThreadSummary): ThreadIndicator => {
-  if (
-    ["active", "waiting", "completed", "idle", "error"].includes(
-      thread.indicator
-    )
-  ) {
-    return thread.indicator;
-  }
-  if (thread.status === "running") {
-    return "active";
-  }
-  if (thread.status === "waiting") {
-    return "waiting";
-  }
-  if (thread.status === "error") {
-    return "error";
-  }
-  return "idle";
-};
-
 const indicatorLabel = (kind: ThreadIndicator): string => {
   if (kind === "active") {
     return "Agent active";
@@ -73,19 +53,15 @@ const Attention = ({
 }: {
   threads: ThreadSummary[];
 }): React.JSX.Element | null => {
-  const attention = threads.filter(
-    (thread) =>
-      thread.needsAttention ||
-      ["waiting", "completed", "error"].includes(indicatorKind(thread))
-  );
+  const attention = threads.filter((thread) => thread.needsAttention);
   if (!attention.length) {
     return null;
   }
   const waiting = attention.some((thread) =>
-    ["waiting", "error"].includes(indicatorKind(thread))
+    ["waiting", "error"].includes(thread.indicator)
   );
   const completed = attention.some(
-    (thread) => indicatorKind(thread) === "completed"
+    (thread) => thread.indicator === "completed"
   );
   const title = `${attention.length} Thread${attention.length === 1 ? " needs" : "s need"} attention`;
   return (
@@ -150,7 +126,7 @@ const ThreadsPaneView = ({
                 postMessage({ id: thread.id, type: "selectThread" })
               }
             >
-              <StatusIndicator kind={indicatorKind(thread)} />
+              <StatusIndicator kind={thread.indicator} />
               <span className="name">{thread.name}</span>
               <span className="meta">
                 {thread.status} {"  "}
@@ -180,24 +156,4 @@ const ThreadsPaneView = ({
   );
 };
 
-const sameThread = (previous: ThreadSummary, next: ThreadSummary): boolean =>
-  previous.id === next.id &&
-  previous.name === next.name &&
-  previous.status === next.status &&
-  previous.indicator === next.indicator &&
-  previous.needsAttention === next.needsAttention &&
-  previous.createdAt === next.createdAt &&
-  previous.updatedAt === next.updatedAt;
-
-export const ThreadsPane = memo(
-  ThreadsPaneView,
-  (previous, next) =>
-    previous.snapshot.workspace === next.snapshot.workspace &&
-    previous.snapshot.selected?.id === next.snapshot.selected?.id &&
-    previous.snapshot.attentionCount === next.snapshot.attentionCount &&
-    previous.snapshot.threads.length === next.snapshot.threads.length &&
-    previous.snapshot.threads.every((thread, index) => {
-      const nextThread = next.snapshot.threads[index];
-      return nextThread ? sameThread(thread, nextThread) : false;
-    })
-);
+export const ThreadsPane = memo(ThreadsPaneView);

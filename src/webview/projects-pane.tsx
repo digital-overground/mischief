@@ -93,7 +93,7 @@ const ProjectGroup = ({ project }: { project: Project }): React.JSX.Element => (
   </>
 );
 
-const ProjectsPaneView = ({
+export const ProjectsPane = ({
   snapshot,
 }: {
   snapshot: ProjectsSnapshot;
@@ -136,5 +136,3 @@ const ProjectsPaneView = ({
     </div>
   </section>
 );
-
-export const ProjectsPane = ProjectsPaneView;

@@ -20,7 +20,7 @@ export const PaneLayout = ({
     if (!main) {
       return;
     }
-    const cleanups: (() => void)[] = [];
+    const controller = new AbortController();
     const panes = [...main.querySelectorAll<HTMLElement>(":scope > section")];
     const rebalancePanes = (): void => {
       const expanded = panes.filter(
@@ -108,12 +108,10 @@ export const PaneLayout = ({
         event.preventDefault();
         togglePane(pane);
       };
-      header.addEventListener("click", click);
-      toggle.addEventListener("keydown", keydown);
-      cleanups.push(
-        () => header.removeEventListener("click", click),
-        () => toggle.removeEventListener("keydown", keydown)
-      );
+      header.addEventListener("click", click, { signal: controller.signal });
+      toggle.addEventListener("keydown", keydown, {
+        signal: controller.signal,
+      });
     }
 
     for (const resizer of main.querySelectorAll<HTMLElement>(".resizer")) {
@@ -145,25 +143,24 @@ export const PaneLayout = ({
         event.preventDefault();
         resizePanes(resizer, event.key === "ArrowUp" ? -12 : 12);
       };
-      resizer.addEventListener("pointerdown", pointerDown);
-      resizer.addEventListener("pointermove", pointerMove);
-      resizer.addEventListener("pointerup", stop);
-      resizer.addEventListener("pointercancel", stop);
-      resizer.addEventListener("keydown", keydown);
-      cleanups.push(() => {
-        resizer.removeEventListener("pointerdown", pointerDown);
-        resizer.removeEventListener("pointermove", pointerMove);
-        resizer.removeEventListener("pointerup", stop);
-        resizer.removeEventListener("pointercancel", stop);
-        resizer.removeEventListener("keydown", keydown);
+      resizer.addEventListener("pointerdown", pointerDown, {
+        signal: controller.signal,
+      });
+      resizer.addEventListener("pointermove", pointerMove, {
+        signal: controller.signal,
+      });
+      resizer.addEventListener("pointerup", stop, {
+        signal: controller.signal,
+      });
+      resizer.addEventListener("pointercancel", stop, {
+        signal: controller.signal,
+      });
+      resizer.addEventListener("keydown", keydown, {
+        signal: controller.signal,
       });
     }
     rebalancePanes();
-    return () => {
-      for (const cleanup of cleanups) {
-        cleanup();
-      }
-    };
+    return () => controller.abort();
   }, []);
 
   return (

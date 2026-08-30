@@ -2,6 +2,7 @@
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import type { RenderedThreadDetail } from "./protocol";
@@ -30,33 +31,34 @@ const selected = (
   ...overrides,
 });
 
+let root: Root;
+const renderFooter = (overrides: Partial<RenderedThreadDetail> = {}): void => {
+  root.render(
+    <FooterControls
+      onNewThread={action}
+      onSend={action}
+      selected={selected(overrides)}
+      workspace="/workspace"
+    />
+  );
+};
+
 describe("Footer controls", () => {
   beforeEach(() => {
     action.mockClear();
     document.body.innerHTML = '<div id="root"></div>';
+    root = createRoot(
+      document.querySelector<HTMLElement>("#root") as HTMLElement
+    );
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await act(() => root.unmount());
     document.body.innerHTML = "";
   });
 
   test("closes context usage when usage disappears", async () => {
-    const container = document.querySelector("#root");
-    if (!(container instanceof HTMLElement)) {
-      throw new Error("Missing test root");
-    }
-    const root = createRoot(container);
-    const render = (usage?: { used: number; size: number }): void => {
-      root.render(
-        <FooterControls
-          onNewThread={action}
-          onSend={action}
-          selected={selected(usage ? { usage } : {})}
-          workspace="/workspace"
-        />
-      );
-    };
-    await act(() => render({ size: 100, used: 50 }));
+    await act(() => renderFooter({ usage: { size: 100, used: 50 } }));
     const usageButton = document.querySelector<HTMLButtonElement>("#usage");
     if (!usageButton) {
       throw new Error("Missing usage control");
@@ -66,51 +68,36 @@ describe("Footer controls", () => {
       document.querySelector<HTMLElement>("#usage-menu")?.hidden
     ).toBeFalsy();
 
-    await act(() => render());
-    await act(() => render({ size: 100, used: 60 }));
+    await act(() => renderFooter());
+    await act(() => renderFooter({ usage: { size: 100, used: 60 } }));
 
     expect(
       document.querySelector<HTMLElement>("#usage-menu")?.hidden
     ).toBeTruthy();
-    await act(() => {
-      root.unmount();
-    });
   });
 
   test("preserves the Agent's model option order", async () => {
-    const container = document.querySelector("#root");
-    if (!(container instanceof HTMLElement)) {
-      throw new Error("Missing test root");
-    }
-    const root = createRoot(container);
-    await act(() => {
-      root.render(
-        <FooterControls
-          onNewThread={action}
-          onSend={action}
-          selected={selected({
-            configOptions: [
+    await act(() =>
+      renderFooter({
+        configOptions: [
+          {
+            currentValue: "provider/one",
+            id: "model",
+            name: "Model",
+            options: [
+              { name: "provider/one", value: "provider/one" },
               {
-                currentValue: "provider/one",
-                id: "model",
-                name: "Model",
-                options: [
-                  { name: "provider/one", value: "provider/one" },
-                  {
-                    name: "Recommended",
-                    options: [{ name: "Curated", value: "curated" }],
-                  },
-                  { name: "provider/two", value: "provider/two" },
-                  { name: "Standalone", value: "standalone" },
-                ],
-                type: "select",
+                name: "Recommended",
+                options: [{ name: "Curated", value: "curated" }],
               },
+              { name: "provider/two", value: "provider/two" },
+              { name: "Standalone", value: "standalone" },
             ],
-          })}
-          workspace="/workspace"
-        />
-      );
-    });
+            type: "select",
+          },
+        ],
+      })
+    );
     const model = document.querySelector<HTMLSelectElement>(
       'select[aria-label="Model"]'
     );
@@ -123,8 +110,5 @@ describe("Footer controls", () => {
         (item) => item.getAttribute("label") ?? item.textContent
       )
     ).toStrictEqual(["provider", "Recommended", "Standalone"]);
-    await act(() => {
-      root.unmount();
-    });
   });
 });

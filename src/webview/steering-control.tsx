@@ -1,7 +1,6 @@
 import type { SteeringMessage } from "../threads/threads";
 import { postMessage } from "./bridge";
 import { Icon } from "./icon";
-import { ThreadControlHeader } from "./thread-control";
 
 export const SteeringControl = ({
   messages,
@@ -9,23 +8,25 @@ export const SteeringControl = ({
   messages: SteeringMessage[];
 }): React.JSX.Element => (
   <section id="steering" hidden={!messages.length}>
-    <ThreadControlHeader
-      action={
-        <button
-          className="icon"
-          id="clear-steering"
-          title="Clear all steering messages"
-          aria-label="Clear all steering messages"
-          onClick={() => postMessage({ type: "clearSteering" })}
-        >
-          Clear all
-        </button>
-      }
-      icon="signpost"
-      iconClassName="steering-icon"
-      labelId="steering-label"
-      title={`Steering · ${messages.length}`}
-    />
+    <div id="steering-title">
+      <span id="steering-label">
+        <Icon
+          className="steering-icon"
+          kind="signpost"
+          title={`Steering · ${messages.length}`}
+        />
+        Steering · {messages.length}
+      </span>
+      <button
+        className="icon"
+        id="clear-steering"
+        title="Clear all steering messages"
+        aria-label="Clear all steering messages"
+        onClick={() => postMessage({ type: "clearSteering" })}
+      >
+        Clear all
+      </button>
+    </div>
     <div id="steering-body">
       {messages.map((message) => (
         <div className="steering-message" key={message.id}>
