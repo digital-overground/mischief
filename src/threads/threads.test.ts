@@ -65,6 +65,7 @@ class FakeAgent {
   private readonly secondPromptStartedDeferred = deferred();
   readonly promptResolvers: ((response: AgentPromptResult) => void)[] = [];
   promptImages: PromptImage[] = [];
+  promptCalls = 0;
   readonly permissionStarted = this.permissionStartedDeferred.promise;
   readonly elicitationStarted = this.elicitationStartedDeferred.promise;
   readonly firstPromptStarted = this.firstPromptStartedDeferred.promise;
@@ -131,8 +132,8 @@ class FakeAgent {
       prompt: async (_sessionId, _text, _messageId, images) => {
         this.promptImages = images;
         if (this.holdPrompts) {
-          const count = this.promptResolvers.length + 1;
-          if (count === 1) {
+          this.promptCalls += 1;
+          if (this.promptCalls === 1) {
             handlers.update({
               kind: "assistant",
               text: "Partial",
@@ -143,7 +144,7 @@ class FakeAgent {
           const result = new Promise<AgentPromptResult>((resolve) => {
             this.promptResolvers.push(resolve);
           });
-          this.markPromptStarted(count);
+          this.markPromptStarted(this.promptCalls);
           return result;
         }
         if (this.richUpdates) {
@@ -393,7 +394,6 @@ describe("threads module", () => {
     await agent.firstPromptStarted;
     expect(threads.snapshot().selected?.streaming).toBeTruthy();
     const second = threads.prompt("Second");
-    await agent.secondPromptStarted;
 
     expect(threads.snapshot().selected).toMatchObject({
       items: [
@@ -402,6 +402,7 @@ describe("threads module", () => {
         { kind: "user", queued: 1, text: "Second" },
       ],
       status: "running",
+      steering: [{ text: "Second" }],
     });
 
     await threads.cancel();
@@ -416,6 +417,37 @@ describe("threads module", () => {
       status: "idle",
       streaming: false,
     });
+  });
+
+  test("queued steering messages can be removed or sent immediately", async () => {
+    const agent = new FakeAgent();
+    agent.holdPrompts = true;
+    const threads = new Threads(memoryStorage(), agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    const first = threads.prompt("First");
+    await agent.firstPromptStarted;
+    await threads.prompt("Remove me");
+    await threads.prompt("Send me now");
+    const steering = threads.snapshot().selected?.steering ?? [];
+
+    threads.removeSteering(steering[0]?.id ?? "");
+    await threads.sendSteering(steering[1]?.id ?? "");
+    await agent.secondPromptStarted;
+
+    expect(threads.snapshot().selected).toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          cancelled: true,
+          kind: "user",
+          text: "First",
+        }),
+        expect.objectContaining({ kind: "user", text: "Send me now" }),
+      ]),
+      steering: [],
+    });
+    agent.promptResolvers[0]?.({ stopReason: "completed" });
+    await first;
   });
 
   test("ACP thoughts, tools, plans, and configuration update the Thread", async () => {

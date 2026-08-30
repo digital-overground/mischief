@@ -60,7 +60,7 @@ describe("view provider", () => {
           document
         ),
       chatFlow:
-        /id="chat"><div id="transcript"><\/div><div id="processing"[\s\S]*<\/div><details id="plan"/u.test(
+        /id="chat"><div id="transcript"><\/div><div id="processing"[\s\S]*<\/div><section id="steering"[\s\S]*<details id="plan"/u.test(
           document
         ),
       completedPlan:
@@ -131,6 +131,10 @@ describe("view provider", () => {
         /class="resizer" data-before="projects" data-after="threads"[\s\S]*class="resizer" data-before="threads" data-after="thread"[\s\S]*const resizePanes/u.test(
           document
         ),
+      steering:
+        /#steering-body, #plan-body \{ max-height: 110px; overflow-y: auto;[\s\S]*-webkit-line-clamp: 2;[\s\S]*id="steering" hidden>[\s\S]*id="clear-steering"[\s\S]*inlineIcon\('signpost', 'steering-icon'[\s\S]*type: 'sendSteering'[\s\S]*type: 'removeSteering'/u.test(
+          document
+        ),
       thinking:
         /const transcriptNodes[\s\S]*kind === 'thought'[\s\S]*const thinkingGroup[\s\S]*'entry thought thinking-group'/u.test(
           document
@@ -160,6 +164,7 @@ describe("view provider", () => {
       processing: true,
       progressCircle: true,
       resizable: true,
+      steering: true,
       thinking: true,
       transcriptImages: true,
     });

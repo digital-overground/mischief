@@ -235,6 +235,11 @@ export interface ThreadUsage {
   size: number;
 }
 
+export interface SteeringMessage {
+  id: string;
+  text: string;
+}
+
 const agentAuthentication = (
   error: unknown
 ): TerminalAuthentication | undefined =>
@@ -252,6 +257,7 @@ export interface ThreadDetail {
   authentication?: TerminalAuthentication;
   error?: string;
   drafts: string[];
+  steering: SteeringMessage[];
 }
 
 export interface ThreadsSnapshot {
@@ -290,7 +296,7 @@ interface Runtime {
   items: TranscriptItem[];
   configOptions: ThreadConfigOption[];
   drafts: string[];
-  pending: { id: string; text: string }[];
+  pending: { id: string; text: string; images: PromptImage[] }[];
   retryImages?: PromptImage[];
   setup?: Promise<string>;
   registration?: PromiseLike<void>;
@@ -465,7 +471,43 @@ export class Threads {
     this.emit();
   }
 
-  // oxlint-disable-next-line complexity -- prompt owns the existing turn lifecycle
+  clearSteering(): void {
+    const runtime = this.selectedRuntime();
+    if (!runtime || runtime.pending.length < 2) {
+      return;
+    }
+    const queued = new Set(runtime.pending.splice(1).map((item) => item.id));
+    runtime.items = runtime.items.filter((item) => !queued.has(item.id));
+    this.emit();
+  }
+
+  removeSteering(id: string): void {
+    const runtime = this.selectedRuntime();
+    const index = runtime?.pending.findIndex((item) => item.id === id) ?? -1;
+    if (!runtime || index < 1) {
+      return;
+    }
+    runtime.pending.splice(index, 1);
+    runtime.items = runtime.items.filter((item) => item.id !== id);
+    updateQueue(runtime);
+    this.emit();
+  }
+
+  async sendSteering(id: string): Promise<void> {
+    const record = this.selectedId
+      ? this.findRecord(this.selectedId)
+      : undefined;
+    const runtime = record ? this.runtimes.get(record.id) : undefined;
+    const index = runtime?.pending.findIndex((item) => item.id === id) ?? -1;
+    if (!record?.sessionId || !runtime || index < 1) {
+      return;
+    }
+    const [message] = runtime.pending.splice(index, 1);
+    runtime.pending.splice(1, 0, message);
+    updateQueue(runtime);
+    await runtime.connection.cancel(record.sessionId);
+  }
+
   async prompt(text: string, images: PromptImage[] = []): Promise<void> {
     const message = text;
     if (!hasPromptContent(message, images) || !this.workspace) {
@@ -508,7 +550,7 @@ export class Threads {
       ...(runtime.pending.length ? { queued: runtime.pending.length } : {}),
     };
     runtime.items.push(item);
-    runtime.pending.push({ id: messageId, text: message });
+    runtime.pending.push({ id: messageId, images, text: message });
     runtime.status = "running";
     record.error = undefined;
     record.authentication = undefined;
@@ -516,6 +558,20 @@ export class Threads {
     void this.persist();
     this.emit();
 
+    if (runtime.pending.length === 1) {
+      await this.runPrompt(record, runtime, item);
+    }
+  }
+
+  private async runPrompt(
+    record: StoredThread,
+    runtime: Runtime,
+    item: TranscriptItem
+  ): Promise<void> {
+    const pending = runtime.pending.find((message) => message.id === item.id);
+    if (!pending) {
+      return;
+    }
     let completed = false;
     try {
       await runtime.registration;
@@ -528,9 +584,9 @@ export class Threads {
       }
       const result = await runtime.connection.prompt(
         record.sessionId,
-        message,
-        messageId,
-        images
+        pending.text,
+        pending.id,
+        pending.images
       );
       if (result.stopReason === "cancelled") {
         item.cancelled = true;
@@ -546,13 +602,13 @@ export class Threads {
       runtime.registration = undefined;
       runtime.status = "error";
       record.error = errorMessage(error);
-      record.retryText = message;
-      runtime.retryImages = images;
+      record.retryText = pending.text;
+      runtime.retryImages = pending.images;
       record.authentication =
         agentAuthentication(error) ?? record.authentication;
     } finally {
       runtime.pending = runtime.pending.filter(
-        (pending) => pending.id !== messageId
+        (message) => message.id !== pending.id
       );
       updateQueue(runtime);
       if (runtime.status !== "error" && !runtime.interaction) {
@@ -567,6 +623,13 @@ export class Threads {
     }
     await this.persist();
     this.emit();
+    const [next] = runtime.pending;
+    const nextItem = next
+      ? runtime.items.find((candidate) => candidate.id === next.id)
+      : undefined;
+    if (runtime.status === "running" && nextItem) {
+      void this.runPrompt(record, runtime, nextItem);
+    }
   }
 
   async retry(): Promise<void> {
@@ -768,6 +831,7 @@ export class Threads {
     };
   }
 
+  // oxlint-disable-next-line complexity -- snapshot assembles optional Thread state
   private selectedDetail(): ThreadDetail | undefined {
     if (!this.workspace) {
       return undefined;
@@ -783,6 +847,7 @@ export class Threads {
         items: [],
         name: "New Thread",
         status: "idle",
+        steering: [],
         streaming: false,
       };
     }
@@ -811,6 +876,8 @@ export class Threads {
       items,
       name: record.name,
       status: runtime?.status ?? (record.error ? "error" : "idle"),
+      steering:
+        runtime?.pending.slice(1).map(({ id, text }) => ({ id, text })) ?? [],
       streaming: Boolean(runtime?.streaming),
     };
   }
@@ -1042,6 +1109,10 @@ export class Threads {
 
   private findRecord(id: string): StoredThread | undefined {
     return this.stored.threads.find((record) => record.id === id);
+  }
+
+  private selectedRuntime(): Runtime | undefined {
+    return this.selectedId ? this.runtimes.get(this.selectedId) : undefined;
   }
 
   private requireRecord(id: string): StoredThread {

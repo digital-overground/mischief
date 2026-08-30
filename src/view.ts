@@ -225,6 +225,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     return false;
   }
 
+  // oxlint-disable-next-line complexity -- message routing is intentionally flat
   private async handleThreadMessage(
     data: Record<string, unknown>
   ): Promise<boolean> {
@@ -254,6 +255,18 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
     if (data.type === "clearPlan") {
       this.threads.clearPlan();
+      return true;
+    }
+    if (data.type === "clearSteering") {
+      this.threads.clearSteering();
+      return true;
+    }
+    if (data.type === "removeSteering" && typeof data.id === "string") {
+      this.threads.removeSteering(data.id);
+      return true;
+    }
+    if (data.type === "sendSteering" && typeof data.id === "string") {
+      await this.threads.sendSteering(data.id);
       return true;
     }
     if (data.type === "retry") {

@@ -210,6 +210,11 @@ const empty = (container, text) => {
       postMessage({ type: "clearPlan" });
     }
   });
+  $("clear-steering").addEventListener("click", () => {
+    if (state.threads.selected) {
+      postMessage({ type: "clearSteering" });
+    }
+  });
   document.addEventListener("click", () => {
     $("usage-menu").hidden = true;
     $("usage").setAttribute("aria-expanded", "false");
@@ -705,8 +710,12 @@ const empty = (container, text) => {
     brain:
       '<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 18V5"></path><path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"></path><path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"></path><path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"></path><path d="M18 18a4 4 0 0 0 2-7.464"></path><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"></path><path d="M6 18a4 4 0 0 1-2-7.464"></path><path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"></path></svg>',
     plan: '<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 6h8"></path><path d="M13 12h8"></path><path d="M13 18h8"></path><path d="m3 17 2 2 4-4"></path><rect width="6" height="6" x="3" y="4" rx="1"></rect></svg>',
+    send: '<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></svg>',
+    signpost:
+      '<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 13v8"></path><path d="M12 3v3"></path><path d="M2.354 10.354a1.207 1.207 0 0 1 0-1.708l2.06-2.06A2 2 0 0 1 5.828 6h12.344a2 2 0 0 1 1.414.586l2.06 2.06a1.207 1.207 0 0 1 0 1.708l-2.06 2.06a2 2 0 0 1-1.414.586H5.828a2 2 0 0 1-1.414-.586z"></path></svg>',
     tool: '<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-8 8l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 8-8z"></path></svg>',
     user: '<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>',
+    x: '<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>',
   };
 
   const entryMeta = {
@@ -866,6 +875,7 @@ const empty = (container, text) => {
     $("notice").textContent = selected?.error || "";
     renderActions(selected);
     renderInteraction(selected?.interaction);
+    renderSteering(selected);
     renderPlan(selected);
     $("composer").disabled = !selected;
     $("processing").hidden =
@@ -881,7 +891,9 @@ const empty = (container, text) => {
   };
 
   const renderTranscriptItems = (selected, transcript) => {
-    const items = selected?.items.filter((item) => item.kind !== "plan") || [];
+    const items =
+      selected?.items.filter((item) => item.kind !== "plan" && !item.queued) ||
+      [];
     transcript.replaceChildren();
     if (!selected) {
       empty(transcript, "Select a managed Workspace.");
@@ -951,6 +963,51 @@ const empty = (container, text) => {
           true
         )
       );
+    }
+  };
+
+  const renderSteering = (selected) => {
+    const messages = selected?.steering || [];
+    const steering = $("steering");
+    const label = $("steering-label");
+    const body = $("steering-body");
+    steering.hidden = !messages.length;
+    label.replaceChildren();
+    body.replaceChildren();
+    if (!messages.length) {
+      return;
+    }
+    label.append(
+      inlineIcon("signpost", "steering-icon", "Steering messages"),
+      `Steering · ${messages.length}`
+    );
+    for (const message of messages) {
+      const row = document.createElement("div");
+      const text = document.createElement("div");
+      const actions = document.createElement("div");
+      const sendNow = document.createElement("button");
+      const remove = document.createElement("button");
+      row.className = "steering-message";
+      text.className = "steering-text";
+      actions.className = "steering-actions";
+      text.textContent = message.text;
+      sendNow.className = "icon";
+      sendNow.title = "Send immediately";
+      sendNow.setAttribute("aria-label", "Send steering message immediately");
+      sendNow.append(inlineIcon("send", "steering-action-icon", sendNow.title));
+      sendNow.addEventListener("click", () =>
+        postMessage({ id: message.id, type: "sendSteering" })
+      );
+      remove.className = "icon";
+      remove.title = "Remove";
+      remove.setAttribute("aria-label", "Remove steering message");
+      remove.append(inlineIcon("x", "steering-action-icon", remove.title));
+      remove.addEventListener("click", () =>
+        postMessage({ id: message.id, type: "removeSteering" })
+      );
+      actions.append(sendNow, remove);
+      row.append(text, actions);
+      body.append(row);
     }
   };
 
