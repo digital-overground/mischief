@@ -18,6 +18,9 @@ body {
   font-family: var(--mischief-ui-font);
   font-size: 13px;
 }
+#root {
+  height: 100%;
+}
 main {
   height: 100%;
   display: flex;
@@ -818,6 +821,7 @@ details.entry > summary::-webkit-details-marker {
   color: var(--vscode-button-foreground);
 }
 footer {
+  flex: none;
   position: relative;
   border-top: 1px solid var(--vscode-panel-border);
   background: var(--vscode-editor-background, var(--vscode-sideBar-background));
