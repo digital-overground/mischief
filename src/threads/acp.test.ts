@@ -94,6 +94,10 @@ describe("ACP adapter", () => {
       })
     ).toStrictEqual({
       allCompleted: true,
+      entries: [
+        { content: "Inspect", status: "completed" },
+        { content: "Test", status: "completed" },
+      ],
       text: "✓ Inspect\n✓ Test",
       type: "plan",
     });

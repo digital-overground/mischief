@@ -510,6 +510,10 @@ export const translateSessionUpdate = (
     case "plan": {
       return {
         allCompleted: allPlanEntriesCompleted(update.entries),
+        entries: update.entries.map(({ content, status }) => ({
+          content,
+          status,
+        })),
         text: update.entries
           .map(
             (entry) =>

@@ -34,7 +34,30 @@ export const PlanControl = ({
           Clear
         </button>
       </summary>
-      <pre id="plan-body">{plan.text}</pre>
+      {plan.planEntries?.length ? (
+        <ol id="plan-body">
+          {plan.planEntries.map((entry, index) => (
+            <li className={`plan-task ${entry.status}`} key={index}>
+              {entry.status === "in_progress" ? (
+                <span
+                  className="plan-task-spinner"
+                  role="img"
+                  aria-label="In progress"
+                />
+              ) : (
+                <Icon
+                  className="plan-task-icon"
+                  kind={entry.status === "completed" ? "circleCheck" : "circle"}
+                  title={entry.status === "completed" ? "Completed" : "Pending"}
+                />
+              )}
+              <span>{entry.content}</span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <pre id="plan-body">{plan.text}</pre>
+      )}
     </details>
   );
 };

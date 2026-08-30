@@ -44,11 +44,13 @@ describe("transcript reducer", () => {
     });
     reduceTranscript(items, {
       allCompleted: false,
+      entries: [{ content: "Inspect", status: "pending" }],
       text: "• Inspect",
       type: "plan",
     });
     reduceTranscript(items, {
       allCompleted: false,
+      entries: [{ content: "Inspect", status: "completed" }],
       text: "✓ Inspect",
       type: "plan",
     });
@@ -71,6 +73,7 @@ describe("transcript reducer", () => {
         allCompleted: false,
         id: "plan",
         kind: "plan",
+        planEntries: [{ content: "Inspect", status: "completed" }],
         text: "✓ Inspect",
         title: "Plan",
       },
@@ -81,6 +84,10 @@ describe("transcript reducer", () => {
     const items: TranscriptItem[] = [];
     reduceTranscript(items, {
       allCompleted: true,
+      entries: [
+        { content: "Inspect", status: "completed" },
+        { content: "Test", status: "completed" },
+      ],
       text: "✓ Inspect\n✓ Test",
       type: "plan",
     });

@@ -3,6 +3,8 @@ type IconKind =
   | "bot"
   | "brain"
   | "chat"
+  | "circle"
+  | "circleCheck"
   | "plan"
   | "send"
   | "signpost"
@@ -46,6 +48,13 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
       <path d="M8 10h8" />
       <path d="M12 6v8" />
+    </>
+  ),
+  circle: <circle cx="12" cy="12" r="10" />,
+  circleCheck: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="m9 12 2 2 4-4" />
     </>
   ),
   plan: (

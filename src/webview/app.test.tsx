@@ -316,6 +316,11 @@ describe("React webview", () => {
             {
               id: "plan-1",
               kind: "plan",
+              planEntries: [
+                { content: "Inspect the view", status: "completed" },
+                { content: "Refactor the view", status: "in_progress" },
+                { content: "Test the view", status: "pending" },
+              ],
               text: "1. Refactor the view",
               title: "Plan",
             },
@@ -335,17 +340,25 @@ describe("React webview", () => {
     });
 
     expect({
+      completedIcon: document.querySelector<HTMLElement>(
+        ".plan-task.completed .plan-task-icon"
+      )?.title,
       font: document.documentElement.style.getPropertyValue(
         "--mischief-mono-font"
       ),
       plan: document.querySelector("#plan-body")?.textContent,
+      processing: document.querySelector(
+        '.plan-task-spinner[aria-label="In progress"]'
+      ),
       steering: document
         .querySelector("#steering")
         ?.textContent?.includes("Keep the controls small"),
       title: document.querySelector("#thread-title")?.textContent,
     }).toStrictEqual({
+      completedIcon: "Completed",
       font: "Test Mono",
-      plan: "1. Refactor the view",
+      plan: "Inspect the viewRefactor the viewTest the view",
+      processing: expect.any(HTMLElement),
       steering: true,
       title: "React refactor",
     });

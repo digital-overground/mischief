@@ -802,7 +802,38 @@ details.entry > summary::-webkit-details-marker {
   height: 14px;
 }
 #plan-body {
-  padding: 0 10px 7px 45px;
+  margin: 0;
+  padding: 0 10px 7px 29px;
+  font-family: var(--vscode-font-family);
+  list-style: none;
+}
+.plan-task {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 20px;
+  color: var(--vscode-foreground);
+}
+.plan-task-icon,
+.plan-task-spinner {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  color: var(--vscode-descriptionForeground);
+}
+.plan-task.completed .plan-task-icon {
+  color: var(--vscode-charts-green);
+}
+.plan-task.in_progress .plan-task-spinner {
+  color: var(--vscode-textLink-foreground);
+  font-family: var(--mischief-mono-font);
+}
+.plan-task-spinner::before {
+  content: "⠋";
+  animation: thread-status-frame 600ms step-end infinite;
 }
 .interaction-buttons {
   display: flex;

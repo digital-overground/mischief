@@ -92,7 +92,12 @@ export type AgentUpdate =
       messageId?: string;
     }
   | ({ type: "tool" } & AgentToolUpdate)
-  | { type: "plan"; text: string; allCompleted: boolean }
+  | {
+      type: "plan";
+      text: string;
+      allCompleted: boolean;
+      entries: PlanEntry[];
+    }
   | { type: "usage"; usage: ThreadUsage }
   | { type: "config"; options: ThreadConfigOption[] }
   | { type: "sessionInfo"; title?: string; updatedAt?: string };
@@ -153,6 +158,11 @@ export type AgentConnectionFactory = (
   handlers: AgentHandlers
 ) => AgentConnection;
 
+export interface PlanEntry {
+  content: string;
+  status: string;
+}
+
 export type ThreadStatus = "idle" | "running" | "waiting" | "error";
 export type ThreadIndicator =
   | "active"
@@ -173,6 +183,7 @@ export interface TranscriptItem {
     | "system";
   text?: string;
   allCompleted?: boolean;
+  planEntries?: PlanEntry[];
   images?: PromptImage[];
   title?: string;
   status?: string;

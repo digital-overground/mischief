@@ -72,12 +72,14 @@ const upsertPlan = (
   if (existing) {
     existing.text = update.text;
     existing.allCompleted = update.allCompleted;
+    existing.planEntries = update.entries;
     return existing;
   }
   const plan: TranscriptItem = {
     allCompleted: update.allCompleted,
     id: "plan",
     kind: "plan",
+    planEntries: update.entries,
     text: update.text,
     title: "Plan",
   };

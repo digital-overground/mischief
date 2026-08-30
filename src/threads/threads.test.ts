@@ -177,6 +177,13 @@ class FakeAgent {
           });
           handlers.update({
             allCompleted: this.completePlan,
+            entries: [
+              { content: "Inspect", status: "completed" },
+              {
+                content: "Fix",
+                status: this.completePlan ? "completed" : "in_progress",
+              },
+            ],
             text: this.completePlan ? "✓ Inspect\n✓ Fix" : "✓ Inspect\n• Fix",
             type: "plan",
           });
