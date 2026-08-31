@@ -1,9 +1,12 @@
 import { memo, useMemo } from "react";
 import type { ReactNode } from "react";
 
-import { postMessage } from "./bridge";
-import { Icon } from "./icon";
-import type { RenderedThreadDetail, RenderedTranscriptItem } from "./protocol";
+import { postMessage } from "../../bridge";
+import { Icon } from "../../icon";
+import type {
+  RenderedThreadDetail,
+  RenderedTranscriptItem,
+} from "../../protocol";
 
 const MarkdownBody = ({
   className = "body markdown",

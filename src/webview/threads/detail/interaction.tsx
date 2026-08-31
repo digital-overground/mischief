@@ -1,5 +1,8 @@
-import type { ElicitationField, ThreadInteraction } from "../threads/threads";
-import { postMessage } from "./bridge";
+import type {
+  ElicitationField,
+  ThreadInteraction,
+} from "../../../threads/threads";
+import { postMessage } from "../../bridge";
 
 const ActionButton = ({
   children,

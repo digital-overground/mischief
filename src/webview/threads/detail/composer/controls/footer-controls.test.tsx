@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import type { RenderedThreadDetail } from "./protocol";
+import type { RenderedThreadDetail } from "../../../../protocol";
 
 const action = vi.fn<() => void>();
 const postMessage = vi.fn<(message: unknown) => void>();

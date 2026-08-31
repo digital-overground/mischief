@@ -1,8 +1,8 @@
 import { memo, useEffect, useState } from "react";
 
-import type { ThreadIndicator, ThreadSummary } from "../threads/threads";
-import { postMessage } from "./bridge";
-import type { RenderedThreadsSnapshot } from "./protocol";
+import type { ThreadIndicator, ThreadSummary } from "../../threads/threads";
+import { postMessage } from "../bridge";
+import type { RenderedThreadsSnapshot } from "../protocol";
 
 const indicatorLabel = (kind: ThreadIndicator): string => {
   if (kind === "active") {

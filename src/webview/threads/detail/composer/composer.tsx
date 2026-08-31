@@ -8,10 +8,10 @@ import {
 } from "react";
 import type { ClipboardEvent, KeyboardEvent } from "react";
 
-import type { PromptImage, ThreadCommand } from "../threads/threads";
-import { postMessage } from "./bridge";
-import { FooterControls } from "./footer-controls";
-import type { RenderedThreadDetail } from "./protocol";
+import type { PromptImage, ThreadCommand } from "../../../../threads/threads";
+import { postMessage } from "../../../bridge";
+import type { RenderedThreadDetail } from "../../../protocol";
+import { FooterControls } from "./controls/footer-controls";
 
 interface ComposerMatch {
   query: string;
@@ -81,6 +81,7 @@ const ComposerView = ({
   const box = useRef<HTMLTextAreaElement>(null);
   const suggestionsBox = useRef<HTMLDivElement>(null);
   const consumedDrafts = useRef("");
+  const activeThread = useRef<string | null>(null);
   const [images, setImages] = useState<PromptImage[]>([]);
   const [context, setContext] = useState<ComposerMatch>();
   const [command, setCommand] = useState<ComposerMatch>();
@@ -116,6 +117,20 @@ const ComposerView = ({
     setCommand(slashCommand(value, cursor));
     setContextIndex(0);
   };
+
+  useEffect(() => {
+    const threadId = selected?.id ?? null;
+    if (activeThread.current === threadId) {
+      return;
+    }
+    activeThread.current = threadId;
+    if (box.current) {
+      box.current.value = "";
+    }
+    setImages([]);
+    setContext(undefined);
+    setCommand(undefined);
+  }, [selected?.id]);
 
   useEffect(() => {
     const drafts = selected?.drafts ?? [];

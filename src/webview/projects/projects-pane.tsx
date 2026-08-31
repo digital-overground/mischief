@@ -2,8 +2,8 @@ import type {
   Project,
   ProjectsSnapshot,
   Workspace,
-} from "../projects/projects";
-import { postMessage } from "./bridge";
+} from "../../projects/projects";
+import { postMessage } from "../bridge";
 
 const IconButton = ({
   children,

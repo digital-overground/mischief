@@ -1,6 +1,6 @@
-import { postMessage } from "./bridge";
-import { Icon } from "./icon";
-import type { RenderedTranscriptItem } from "./protocol";
+import { postMessage } from "../../bridge";
+import { Icon } from "../../icon";
+import type { RenderedTranscriptItem } from "../../protocol";
 
 export const PlanControl = ({
   plan,
@@ -40,7 +40,7 @@ export const PlanControl = ({
             <li className={`plan-task ${entry.status}`} key={index}>
               {entry.status === "in_progress" ? (
                 <span
-                  className="plan-task-spinner"
+                  className="plan-task-indicator"
                   role="img"
                   aria-label="In progress"
                 />

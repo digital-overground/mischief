@@ -14,6 +14,28 @@ vi.stubGlobal("acquireVsCodeApi", () => ({ postMessage }));
 
 const { App } = await import("./app");
 
+const threadState = (id: string, drafts: string[]): HostToWebviewMessage => ({
+  font: "Test Mono",
+  projects: { projects: [], ungrouped: [] },
+  threads: {
+    attentionCount: 0,
+    selected: {
+      commands: [],
+      configOptions: [],
+      drafts,
+      id,
+      items: [],
+      name: id,
+      status: "idle",
+      steering: [],
+      streaming: false,
+    },
+    threads: [],
+    workspace: "/workspace",
+  },
+  type: "state",
+});
+
 const renderApp = async (): Promise<() => Promise<void>> => {
   const container = document.querySelector("#root");
   if (!(container instanceof HTMLElement)) {
@@ -217,6 +239,33 @@ describe("React webview", () => {
       suggestions: document.querySelectorAll("#context-suggestions button")
         .length,
     }).toStrictEqual({ reads: 5000, suggestions: 0 });
+    await unmount();
+  });
+
+  test("keeps a fork draft out of the original Thread composer", async () => {
+    const unmount = await renderApp();
+
+    await act(() =>
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("original", []) })
+      )
+    );
+    await act(() =>
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: threadState("fork", ["Fork from here"]),
+        })
+      )
+    );
+    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+    expect(composer?.value).toBe("Fork from here");
+
+    await act(() =>
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("original", []) })
+      )
+    );
+    expect(composer?.value).toBe("");
     await unmount();
   });
 
@@ -465,7 +514,7 @@ describe("React webview", () => {
       ),
       plan: document.querySelector("#plan-body")?.textContent,
       processing: document.querySelector(
-        '.plan-task-spinner[aria-label="In progress"]'
+        '.plan-task-indicator[aria-label="In progress"]'
       ),
       steering: document
         .querySelector("#steering")

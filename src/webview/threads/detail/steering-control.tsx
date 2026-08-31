@@ -1,6 +1,6 @@
-import type { SteeringMessage } from "../threads/threads";
-import { postMessage } from "./bridge";
-import { Icon } from "./icon";
+import type { SteeringMessage } from "../../../threads/threads";
+import { postMessage } from "../../bridge";
+import { Icon } from "../../icon";
 
 export const SteeringControl = ({
   messages,

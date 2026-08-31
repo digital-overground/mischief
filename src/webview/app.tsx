@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { postMessage } from "./bridge";
 import { PaneLayout } from "./pane-layout";
-import { ProjectsPane } from "./projects-pane";
+import { ProjectsPane } from "./projects/projects-pane";
 import type { HostToWebviewMessage, RenderedTranscriptItem } from "./protocol";
-import { ThreadView } from "./thread-view";
-import { ThreadsPane } from "./threads-pane";
+import { ThreadView } from "./threads/detail/thread-view";
+import { ThreadsPane } from "./threads/threads-pane";
 
 const initialState: Extract<HostToWebviewMessage, { type: "state" }> = {
   font: "ui-monospace, monospace",

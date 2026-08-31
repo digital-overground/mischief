@@ -854,7 +854,7 @@ details.entry > summary::-webkit-details-marker {
   color: var(--vscode-foreground);
 }
 .plan-task-icon,
-.plan-task-spinner {
+.plan-task-indicator {
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -866,13 +866,30 @@ details.entry > summary::-webkit-details-marker {
 .plan-task.completed .plan-task-icon {
   color: var(--vscode-charts-green);
 }
-.plan-task.in_progress .plan-task-spinner {
-  color: var(--vscode-textLink-foreground);
-  font-family: var(--mischief-mono-font);
+.plan-task-indicator::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--vscode-charts-blue, var(--vscode-textLink-foreground));
+  content: "";
+  animation: plan-task-pulse 2.4s ease-in-out infinite;
 }
-.plan-task-spinner::before {
-  content: "⠋";
-  animation: thread-status-frame 600ms step-end infinite;
+@keyframes plan-task-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .plan-task-indicator::before {
+    animation: none;
+    opacity: 0.7;
+  }
 }
 .interaction-buttons {
   display: flex;

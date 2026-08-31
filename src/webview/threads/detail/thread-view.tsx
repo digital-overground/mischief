@@ -1,13 +1,13 @@
 import { useLayoutEffect, useRef } from "react";
 
-import { postMessage } from "./bridge";
-import { Composer } from "./composer";
-import { Interaction } from "./interaction";
-import { PlanControl } from "./plan-control";
+import { postMessage } from "../../bridge";
 import type {
   RenderedThreadsSnapshot,
   RenderedTranscriptItem,
-} from "./protocol";
+} from "../../protocol";
+import { Composer } from "./composer/composer";
+import { Interaction } from "./interaction";
+import { PlanControl } from "./plan-control";
 import { SteeringControl } from "./steering-control";
 import { Transcript } from "./transcript";
 
