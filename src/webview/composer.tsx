@@ -8,7 +8,7 @@ import {
 } from "react";
 import type { ClipboardEvent, KeyboardEvent } from "react";
 
-import type { PromptImage } from "../threads/threads";
+import type { PromptImage, ThreadCommand } from "../threads/threads";
 import { postMessage } from "./bridge";
 import { FooterControls } from "./footer-controls";
 import type { RenderedThreadDetail } from "./protocol";
@@ -31,6 +31,16 @@ const composerContext = (
         query: query.toLowerCase().replaceAll("\\", "/"),
         start: before.length - query.length - 1,
       };
+};
+
+const slashCommand = (
+  value: string,
+  cursor: number
+): ComposerMatch | undefined => {
+  const match = value.slice(0, cursor).match(/^\/(?<query>[^\s]*)$/u);
+  return match?.groups?.query === undefined
+    ? undefined
+    : { query: match.groups.query.toLowerCase(), start: 0 };
 };
 
 const matchingContextItems = (
@@ -69,9 +79,11 @@ const ComposerView = ({
   workspace?: string;
 }): React.JSX.Element => {
   const box = useRef<HTMLTextAreaElement>(null);
+  const suggestionsBox = useRef<HTMLDivElement>(null);
   const consumedDrafts = useRef("");
   const [images, setImages] = useState<PromptImage[]>([]);
   const [context, setContext] = useState<ComposerMatch>();
+  const [command, setCommand] = useState<ComposerMatch>();
   const [contextIndex, setContextIndex] = useState(0);
   const deferredContext = useDeferredValue(context);
   const deferredMatches = useMemo(
@@ -82,14 +94,26 @@ const ComposerView = ({
     [contextItems, deferredContext]
   );
   const contextMatches = context === deferredContext ? deferredMatches : [];
-  const contextStart = deferredContext?.start ?? -1;
+  const commandMatches = command
+    ? (selected?.commands ?? []).filter(({ name }) =>
+        name.toLowerCase().startsWith(command.query)
+      )
+    : [];
+  const suggestions = command ? commandMatches : contextMatches;
 
-  const updateContextSuggestions = (value: string, cursor: number): void => {
-    const next = composerContext(value, cursor);
-    if (next && !context) {
+  useEffect(() => {
+    suggestionsBox.current
+      ?.querySelector<HTMLElement>(".selected")
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [contextIndex]);
+
+  const updateSuggestions = (value: string, cursor: number): void => {
+    const nextContext = composerContext(value, cursor);
+    if (nextContext && !context) {
       postMessage({ type: "contextItems" });
     }
-    setContext(next);
+    setContext(nextContext);
+    setCommand(slashCommand(value, cursor));
     setContextIndex(0);
   };
 
@@ -128,14 +152,6 @@ const ComposerView = ({
 
   const send = (): void => {
     const text = box.current?.value ?? "";
-    if (text.trim() === "/new" && !images.length) {
-      if (box.current) {
-        box.current.value = "";
-      }
-      setContext(undefined);
-      newThread();
-      return;
-    }
     if ((!text.trim() && !images.length) || !selected) {
       return;
     }
@@ -145,14 +161,16 @@ const ComposerView = ({
     }
     setImages([]);
     setContext(undefined);
+    setCommand(undefined);
   };
 
   const selectContext = (item: string): void => {
     const text = box.current?.value ?? "";
     const end = box.current?.selectionStart ?? text.length;
     const value = item.endsWith("/") ? item : `${item} `;
-    const next = `${text.slice(0, contextStart)}@${value}${text.slice(end)}`;
-    const cursor = contextStart + value.length + 1;
+    const start = context?.start ?? 0;
+    const next = `${text.slice(0, start)}@${value}${text.slice(end)}`;
+    const cursor = start + value.length + 1;
     if (box.current) {
       box.current.value = next;
     }
@@ -163,24 +181,41 @@ const ComposerView = ({
     });
   };
 
+  const selectCommand = (item: ThreadCommand): void => {
+    const text = box.current?.value ?? "";
+    const end = box.current?.selectionStart ?? text.length;
+    const value = `/${item.name}${item.inputHint === undefined ? "" : " "}`;
+    if (box.current) {
+      box.current.value = `${value}${text.slice(end)}`;
+    }
+    setCommand(undefined);
+    window.requestAnimationFrame(() => {
+      box.current?.setSelectionRange(value.length, value.length);
+      box.current?.focus();
+    });
+  };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (
-      contextMatches.length &&
+      suggestions.length &&
       ["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(event.key)
     ) {
       event.preventDefault();
       if (event.key === "Escape") {
         setContext(undefined);
+        setCommand(undefined);
       } else if (event.key === "ArrowDown") {
-        setContextIndex((contextIndex + 1) % contextMatches.length);
+        setContextIndex((contextIndex + 1) % suggestions.length);
       } else if (event.key === "ArrowUp") {
         setContextIndex(
-          (contextIndex + contextMatches.length - 1) % contextMatches.length
+          (contextIndex + suggestions.length - 1) % suggestions.length
         );
       } else {
-        const match = contextMatches[contextIndex];
-        if (match) {
+        const match = suggestions[contextIndex];
+        if (typeof match === "string") {
           selectContext(match);
+        } else if (match) {
+          selectCommand(match);
         }
       }
       return;
@@ -232,7 +267,7 @@ const ComposerView = ({
         autoComplete="off"
         disabled={!selected}
         onChange={(event) => {
-          updateContextSuggestions(
+          updateSuggestions(
             event.currentTarget.value,
             event.currentTarget.selectionStart
           );
@@ -242,22 +277,39 @@ const ComposerView = ({
       />
       <div
         id="context-suggestions"
+        ref={suggestionsBox}
         role="listbox"
-        hidden={!contextMatches.length}
+        hidden={!suggestions.length}
       >
-        {contextMatches.map((item, index) => (
+        {suggestions.map((item, index) => (
           <button
             type="button"
-            className={index === contextIndex ? "selected" : ""}
+            className={`${index === contextIndex ? "selected " : ""}${typeof item === "string" ? "" : "command-suggestion"}`}
             role="option"
             aria-selected={index === contextIndex}
-            key={item}
+            key={typeof item === "string" ? item : item.name}
             onMouseDown={(event) => {
               event.preventDefault();
-              selectContext(item);
+              if (typeof item === "string") {
+                selectContext(item);
+              } else {
+                selectCommand(item);
+              }
             }}
           >
-            @{item}
+            {typeof item === "string" ? (
+              <>@{item}</>
+            ) : (
+              <>
+                <span className="command-name">
+                  /{item.name}
+                  {item.inputHint === undefined ? null : (
+                    <span className="command-hint"> {item.inputHint}</span>
+                  )}
+                </span>
+                <span className="command-description">{item.description}</span>
+              </>
+            )}
           </button>
         ))}
       </div>

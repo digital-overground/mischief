@@ -19,6 +19,7 @@ const { FooterControls } = await import("./footer-controls");
 const selected = (
   overrides: Partial<RenderedThreadDetail> = {}
 ): RenderedThreadDetail => ({
+  commands: [],
   configOptions: [],
   drafts: [],
   id: "thread",

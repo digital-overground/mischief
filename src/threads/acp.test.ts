@@ -75,6 +75,36 @@ describe("ACP adapter", () => {
     });
   });
 
+  test("translates advertised commands without leaking ACP input metadata", () => {
+    expect(
+      translateSessionUpdate({
+        availableCommands: [
+          {
+            description: "Run a review",
+            input: { _meta: { futureInputType: "text" }, hint: "[branch]" },
+            name: "review",
+          },
+          {
+            description: "Start fresh",
+            input: null,
+            name: "new",
+          },
+        ],
+        sessionUpdate: "available_commands_update",
+      })
+    ).toStrictEqual({
+      commands: [
+        {
+          description: "Run a review",
+          inputHint: "[branch]",
+          name: "review",
+        },
+        { description: "Start fresh", name: "new" },
+      ],
+      type: "commands",
+    });
+  });
+
   test("translates completed plans into Thread events", () => {
     expect(
       translateSessionUpdate({

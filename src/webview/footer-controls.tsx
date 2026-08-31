@@ -394,7 +394,7 @@ export const FooterControls = ({
       <button
         className="action"
         id="footer-new-thread"
-        title="New Thread (/new)"
+        title="New Thread"
         aria-label="New Thread"
         disabled={!workspace}
         onClick={onNewThread}

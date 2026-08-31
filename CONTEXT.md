@@ -104,7 +104,6 @@ The exact split is allowed to shrink if a file does not earn its own behavior. `
 - Proposed VS Code Chat APIs.
 - Importing all existing Pi sessions.
 - Configuring or selecting additional ACP Agents.
-- Composer autocomplete for ACP-advertised slash commands; typed commands still pass through to MagPi.
 - Displaying ACP context usage and cost in the Thread header.
 - Filters, selection sending, status-bar decoration, background waiting/error notifications, and other convenience features not required for the first vertical slice.
 - Automatic deletion of ACP/Pi history when Project membership is removed.
