@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { parse } from "jsonc-parser";
+import { parse } from "jsonc-parser/lib/esm/main.js";
 import * as vscode from "vscode";
 
 const BACKGROUND_KEYS = [
@@ -199,7 +199,7 @@ export const workspaceColorOverrides = (
     .filter(
       (entry) =>
         entry.foreground &&
-        contrast(entry.displayed, base) <= 1.75 &&
+        contrast(entry.displayed, base) <= 1.5 &&
         contrast(entry.displayed, entry.foreground.color) >= 4.5
     )
     .toSorted((left, right) => left.value.localeCompare(right.value));

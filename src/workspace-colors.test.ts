@@ -52,6 +52,7 @@ describe("workspace colors", () => {
             "foreground": "#adbac7",
             "danger.background": "#ff0000",
             "accent.blue": "#4184e426",
+            "accent.green": "#57ab5a4d",
             "accent.red": "#c93c3726",
           },
         }`
@@ -79,13 +80,14 @@ describe("workspace colors", () => {
         return Promise.resolve();
       });
 
-      const applied = await ensureWorkspaceColors("/workspace");
+      const applied = await ensureWorkspaceColors("/muted");
       const written = vscode.workspaceValue;
       const palette = new Set([
         "#22272e",
         "#adbac7",
         "#ff0000",
         "#4184e426",
+        "#57ab5a4d",
         "#c93c3726",
         "#2d333b",
       ]);
@@ -107,7 +109,7 @@ describe("workspace colors", () => {
         themeOnly: true,
       });
 
-      const reapplied = await ensureWorkspaceColors("/workspace");
+      const reapplied = await ensureWorkspaceColors("/muted");
       expect({
         reapplied,
         writes: vscode.update.mock.calls.length,

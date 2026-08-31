@@ -27,7 +27,7 @@
   "type": "module",
   "main": "./dist/extension.cjs",
   "scripts": {
-    "build": "node esbuild.mjs",
+    "build": "node esbuild.mjs && node scripts/smoke-extension.mjs",
     "build:watch": "node esbuild.mjs --watch",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",

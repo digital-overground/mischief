@@ -1,6 +1,7 @@
 .gitignore
 .vscode/**
 src/**
+scripts/**
 docs/**
 AGENTS.md
 CONTEXT.md
