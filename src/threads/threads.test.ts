@@ -60,6 +60,8 @@ class FakeAgent {
     value: string | boolean;
   };
   disposed = false;
+  forkCalls: { sessionId: string; cwd: string; messageId: string }[] = [];
+  rollbackCalls: { sessionId: string; messageId: string }[] = [];
   private readonly permissionStartedDeferred = deferred();
   private readonly elicitationStartedDeferred = deferred();
   private readonly firstPromptStartedDeferred = deferred();
@@ -115,7 +117,14 @@ class FakeAgent {
       dispose: () => {
         this.disposed = true;
       },
-      load: () => {
+      fork: (sessionId, cwd, messageId) => {
+        this.forkCalls.push({ cwd, messageId, sessionId });
+        return Promise.resolve({
+          configOptions: [],
+          sessionId: "forked-session",
+        });
+      },
+      load: (sessionId) => {
         if (this.replayOnLoad) {
           handlers.update({
             kind: "user",
@@ -128,7 +137,7 @@ class FakeAgent {
             type: "message",
           });
         }
-        return Promise.resolve({ configOptions: [], sessionId: "session-1" });
+        return Promise.resolve({ configOptions: [], sessionId });
       },
       prompt: async (_sessionId, _text, _messageId, images) => {
         this.promptImages = images;
@@ -231,6 +240,10 @@ class FakeAgent {
         handlers.update({ kind: "assistant", text: "Done.", type: "message" });
         handlers.update({ title: "Fix tests", type: "sessionInfo" });
         return { stopReason: "completed" };
+      },
+      rollback: (sessionId, messageId) => {
+        this.rollbackCalls.push({ messageId, sessionId });
+        return Promise.resolve();
       },
       setConfig: (sessionId, configId, value) => {
         this.configChange = { configId, sessionId, value };
@@ -386,6 +399,55 @@ describe("threads module", () => {
     const restored = new Threads(storage, new FakeAgent().factory);
     await restored.openWorkspace("/workspace");
     expect(restored.snapshot().selected?.id).toBe(secondId);
+  });
+
+  test("forks before a user message and restores it as an editable draft", async () => {
+    const agent = new FakeAgent();
+    const threads = new Threads(memoryStorage(), agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Fork from here");
+    const message = threads
+      .snapshot()
+      .selected?.items.find((item) => item.kind === "user");
+    if (!message) {
+      throw new Error("Missing user message");
+    }
+
+    await threads.fork(message.id);
+
+    expect(agent.forkCalls).toStrictEqual([
+      {
+        cwd: "/workspace",
+        messageId: message.id,
+        sessionId: "session-1",
+      },
+    ]);
+    expect(threads.snapshot().selected).toMatchObject({
+      drafts: ["Fork from here"],
+      id: expect.any(String),
+      items: [],
+      name: "Fix tests (fork)",
+    });
+  });
+
+  test("rolls the selected Thread back through the Agent and reloads it", async () => {
+    const agent = new FakeAgent();
+    const threads = new Threads(memoryStorage(), agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Rollback here");
+    const message = threads
+      .snapshot()
+      .selected?.items.find((item) => item.kind === "user");
+    if (!message) {
+      throw new Error("Missing user message");
+    }
+
+    await threads.rollback(message.id);
+
+    expect(agent.rollbackCalls).toStrictEqual([
+      { messageId: message.id, sessionId: "session-1" },
+    ]);
+    expect(threads.snapshot().selected?.items).toStrictEqual([]);
   });
 
   test("stopping a running Thread preserves output and restores queued prompts as drafts", async () => {

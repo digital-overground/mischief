@@ -1,6 +1,6 @@
 # Thread message history
 
-**Status:** Planned
+**Status:** Implemented
 
 ## Scope
 

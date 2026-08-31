@@ -280,9 +280,16 @@ select:disabled {
 #thread-title {
   font-size: 12px;
 }
-#usage-control {
+#usage-control,
+#history-control {
   position: relative;
   flex: none;
+}
+#history-control {
+  margin-left: 6px;
+}
+#history-control + #usage-control {
+  margin-left: auto;
 }
 #usage-control[hidden],
 #usage-menu[hidden] {
@@ -335,6 +342,38 @@ select:disabled {
   margin-bottom: 12px;
   font-size: 15px;
   font-weight: 600;
+}
+#history-list {
+  position: fixed;
+  z-index: 3;
+  max-height: 500px;
+  overflow-y: auto;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  padding: 4px 0;
+  background: var(--vscode-editorWidget-background);
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+  outline: none;
+}
+.history-message {
+  width: 100%;
+  border: 0;
+  padding: 5px 8px;
+  overflow: hidden;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.history-message:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.history-actions {
+  display: flex;
+  gap: 5px;
+  padding: 2px 8px 6px;
 }
 #compact {
   width: 100%;
@@ -965,7 +1004,8 @@ footer {
   gap: 4px;
   padding: 2px 12px 4px;
 }
-#footer-new-thread {
+#footer-new-thread,
+#history {
   flex: none;
   border: 0;
   background: transparent;
@@ -977,11 +1017,13 @@ footer {
   align-items: center;
   justify-content: center;
 }
-#footer-new-thread .lucide {
+#footer-new-thread .lucide,
+#history .lucide {
   width: 18px;
   height: 18px;
 }
-#usage {
+#usage,
+#history {
   border: 0;
   background: transparent;
 }

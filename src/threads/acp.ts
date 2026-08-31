@@ -644,6 +644,22 @@ class AcpConnection implements AgentConnection {
     });
   }
 
+  fork(sessionId: string, cwd: string, messageId: string) {
+    return AcpConnection.call(async () => {
+      await this.start();
+      const session = await this.requireConnection().unstable_forkSession({
+        _meta: { "magpi-acp/client-message-id": messageId },
+        cwd,
+        mcpServers: [],
+        sessionId,
+      });
+      return {
+        configOptions: configOptions(session.configOptions),
+        sessionId: session.sessionId,
+      };
+    });
+  }
+
   load(sessionId: string, cwd: string) {
     this.cwd = cwd;
     return AcpConnection.call(async () => {
@@ -681,6 +697,16 @@ class AcpConnection implements AgentConnection {
     return AcpConnection.call(async () => {
       await this.start();
       await this.requireConnection().cancel({ sessionId });
+    });
+  }
+
+  rollback(sessionId: string, messageId: string): Promise<void> {
+    return AcpConnection.call(async () => {
+      await this.start();
+      await this.requireConnection().extMethod("_magpi-acp/session/rewind", {
+        clientMessageId: messageId,
+        sessionId,
+      });
     });
   }
 

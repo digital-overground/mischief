@@ -256,6 +256,21 @@ export class MischiefView implements vscode.WebviewViewProvider {
       await this.threads.remove(data.id);
       return true;
     }
+    if (data.type === "forkThread" && typeof data.id === "string") {
+      await this.threads.fork(data.id);
+      return true;
+    }
+    if (data.type === "rollbackThread" && typeof data.id === "string") {
+      const confirmed = await vscode.window.showWarningMessage(
+        "Rollback this Thread? The selected message and everything after it will leave the active branch.",
+        { modal: true },
+        "Rollback"
+      );
+      if (confirmed === "Rollback") {
+        await this.threads.rollback(data.id);
+      }
+      return true;
+    }
     if (data.type === "renameThread") {
       await this.renameThread();
       return true;

@@ -121,6 +121,11 @@ export interface AgentConnection {
   cancel: (sessionId: string) => Promise<void>;
   create: (cwd: string) => Promise<AgentSession>;
   dispose: () => void;
+  fork: (
+    sessionId: string,
+    cwd: string,
+    messageId: string
+  ) => Promise<AgentSession>;
   load: (sessionId: string, cwd: string) => Promise<AgentSession>;
   prompt: (
     sessionId: string,
@@ -128,6 +133,7 @@ export interface AgentConnection {
     messageId: string,
     images: PromptImage[]
   ) => Promise<AgentPromptResult>;
+  rollback: (sessionId: string, messageId: string) => Promise<void>;
   setConfig: (
     sessionId: string,
     configId: string,
@@ -766,6 +772,72 @@ export class Threads {
       return;
     }
     await Threads.cancelRuntime(record, runtime);
+    await this.persist();
+    this.emit();
+  }
+
+  async fork(messageId: string): Promise<void> {
+    const record = this.selectedId
+      ? this.findRecord(this.selectedId)
+      : undefined;
+    const runtime = record ? this.runtimes.get(record.id) : undefined;
+    const message = runtime?.items.find(
+      (item) => item.id === messageId && item.kind === "user"
+    );
+    if (!record?.sessionId || !runtime || !message || !this.workspace) {
+      return;
+    }
+    if (runtime.status !== "idle") {
+      throw new Error("Wait for the current turn to finish before forking");
+    }
+
+    const setup = await runtime.connection.fork(
+      record.sessionId,
+      record.workspace,
+      messageId
+    );
+    const now = new Date().toISOString();
+    const fork: StoredThread = {
+      createdAt: now,
+      id: randomUUID(),
+      name: `${record.name} (fork)`,
+      sessionId: setup.sessionId,
+      updatedAt: now,
+      workspace: record.workspace,
+    };
+    this.stored.threads.unshift(fork);
+    this.stored.selected[record.workspace] = fork.id;
+    this.selectedId = fork.id;
+    this.viewedId = fork.id;
+    await this.persist();
+    await this.load(fork);
+    const forkRuntime = this.runtimes.get(fork.id);
+    if (forkRuntime && message.text) {
+      forkRuntime.drafts.push(message.text);
+    }
+    this.emit();
+  }
+
+  async rollback(messageId: string): Promise<void> {
+    const record = this.selectedId
+      ? this.findRecord(this.selectedId)
+      : undefined;
+    const runtime = record ? this.runtimes.get(record.id) : undefined;
+    const message = runtime?.items.find(
+      (item) => item.id === messageId && item.kind === "user"
+    );
+    if (!record?.sessionId || !runtime || !message) {
+      return;
+    }
+    if (runtime.status !== "idle") {
+      await Threads.cancelRuntime(record, runtime);
+    }
+    await runtime.connection.rollback(record.sessionId, messageId);
+    runtime.connection.dispose();
+    this.runtimes.delete(record.id);
+    record.error = undefined;
+    record.authentication = undefined;
+    await this.load(record);
     await this.persist();
     this.emit();
   }

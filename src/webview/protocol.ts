@@ -40,7 +40,10 @@ export type HostToWebviewMessage =
 export type WebviewToHostMessage =
   | { type: "ready" | "add" | "refresh" | "contextItems" | "newThread" }
   | { type: "openWorkspace" | "removeMembership"; path: string }
-  | { type: "selectThread" | "removeThread"; id: string }
+  | {
+      type: "selectThread" | "removeThread" | "forkThread" | "rollbackThread";
+      id: string;
+    }
   | {
       type:
         | "renameThread"
