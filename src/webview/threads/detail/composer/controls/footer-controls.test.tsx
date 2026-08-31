@@ -99,23 +99,30 @@ describe("Footer controls", () => {
     );
 
     const list = document.querySelector<HTMLElement>("#history-list");
-    expect(
-      [...document.querySelectorAll(".history-message")].map(
-        (message) => message.textContent
-      )
-    ).toStrictEqual(["First request", "Most recent request"]);
+    const entries = [
+      ...document.querySelectorAll<HTMLElement>(".history-entry"),
+    ];
     expect({
+      actionText: list?.textContent?.includes("Fork") ?? true,
       active: document.activeElement === list,
       left: list?.style.left,
+      messages: [...document.querySelectorAll(".history-message")].map(
+        (message) => message.textContent
+      ),
+      rowTabIndexes: entries.map((entry) => entry.tabIndex),
       width: list?.style.width,
-    }).toStrictEqual({ active: true, left: "200px", width: "814px" });
+    }).toStrictEqual({
+      actionText: false,
+      active: true,
+      left: "200px",
+      messages: ["First request", "Most recent request"],
+      rowTabIndexes: [0, 0],
+      width: "814px",
+    });
 
-    await act(() =>
-      document.querySelector<HTMLButtonElement>(".history-message")?.click()
+    const fork = entries[0]?.querySelector<HTMLButtonElement>(
+      'button[aria-label="Fork from this message"]'
     );
-    const fork = [
-      ...document.querySelectorAll<HTMLButtonElement>("button"),
-    ].find((button) => button.textContent === "Fork");
     await act(() => fork?.click());
     expect(postMessage).toHaveBeenCalledWith({
       id: "user-1",
@@ -127,14 +134,11 @@ describe("Footer controls", () => {
         new MouseEvent("click", { bubbles: true, clientX: 200 })
       )
     );
-    await act(() =>
-      document
-        .querySelectorAll<HTMLButtonElement>(".history-message")[1]
-        ?.click()
-    );
-    const rollback = [
-      ...document.querySelectorAll<HTMLButtonElement>("button"),
-    ].find((button) => button.textContent === "Rollback");
+    const rollback = document
+      .querySelectorAll<HTMLElement>(".history-entry")[1]
+      ?.querySelector<HTMLButtonElement>(
+        'button[aria-label="Rollback to this message"]'
+      );
     await act(() => rollback?.click());
     expect(postMessage).toHaveBeenCalledWith({
       id: "user-2",

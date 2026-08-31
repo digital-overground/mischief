@@ -355,25 +355,61 @@ select:disabled {
   box-shadow: 0 2px 8px var(--vscode-widget-shadow);
   outline: none;
 }
-.history-message {
-  width: 100%;
-  border: 0;
-  padding: 5px 8px;
-  overflow: hidden;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: pointer;
+.history-entry {
+  position: relative;
+  outline: none;
 }
-.history-message:hover {
+.history-entry:hover,
+.history-entry:focus-within {
   background: var(--vscode-list-hoverBackground);
 }
+.history-entry:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+.history-message {
+  display: block;
+  padding: 5px 62px 5px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .history-actions {
+  position: absolute;
+  top: 50%;
+  right: 4px;
   display: flex;
-  gap: 5px;
-  padding: 2px 8px 6px;
+  gap: 2px;
+  visibility: hidden;
+  transform: translateY(-50%);
+}
+.history-entry:hover .history-actions,
+.history-entry:focus-within .history-actions {
+  visibility: visible;
+}
+.history-action {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  border-radius: 3px;
+  padding: 4px;
+  background: var(--vscode-list-hoverBackground);
+  color: inherit;
+  cursor: pointer;
+}
+.history-action:hover,
+.history-action:focus-visible {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+.history-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.history-action .lucide {
+  width: 16px;
+  height: 16px;
 }
 #compact {
   width: 100%;
@@ -387,6 +423,12 @@ select:disabled {
   justify-content: flex-end;
   gap: 12px;
   overflow-x: auto;
+}
+#configs::-webkit-scrollbar {
+  display: none;
+}
+#usage-control + #configs {
+  margin-left: 0;
 }
 #configs:empty {
   display: none;

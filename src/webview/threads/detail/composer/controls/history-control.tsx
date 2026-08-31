@@ -17,7 +17,6 @@ export const HistoryControl = ({
     left: number;
     width: number;
   }>();
-  const [selectedMessage, setSelectedMessage] = useState<string>();
 
   useLayoutEffect(() => {
     if (position && list.current) {
@@ -32,7 +31,6 @@ export const HistoryControl = ({
     }
     const close = (): void => {
       setPosition(undefined);
-      setSelectedMessage(undefined);
     };
     const escape = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
@@ -51,10 +49,8 @@ export const HistoryControl = ({
     event.stopPropagation();
     if (position) {
       setPosition(undefined);
-      setSelectedMessage(undefined);
       return;
     }
-    setSelectedMessage(undefined);
     const left = Math.min(event.clientX, window.innerWidth - 510);
     setPosition({
       bottom:
@@ -90,45 +86,37 @@ export const HistoryControl = ({
           onClick={(event) => event.stopPropagation()}
         >
           {messages.map((message) => (
-            <div className="history-entry" key={message.id}>
-              <button
-                className="history-message"
-                title={message.text}
-                type="button"
-                aria-expanded={selectedMessage === message.id}
-                onClick={() =>
-                  setSelectedMessage((current) =>
-                    current === message.id ? undefined : message.id
-                  )
-                }
-              >
+            <div className="history-entry" key={message.id} tabIndex={0}>
+              <span className="history-message" title={message.text}>
                 {message.text}
-              </button>
-              {selectedMessage === message.id ? (
-                <div className="history-actions">
-                  <button
-                    className="action"
-                    type="button"
-                    disabled={selected?.status !== "idle"}
-                    onClick={() => {
-                      postMessage({ id: message.id, type: "forkThread" });
-                      setPosition(undefined);
-                    }}
-                  >
-                    Fork
-                  </button>
-                  <button
-                    className="action"
-                    type="button"
-                    onClick={() => {
-                      postMessage({ id: message.id, type: "rollbackThread" });
-                      setPosition(undefined);
-                    }}
-                  >
-                    Rollback
-                  </button>
-                </div>
-              ) : null}
+              </span>
+              <div className="history-actions">
+                <button
+                  className="history-action"
+                  title="Fork from this message"
+                  aria-label="Fork from this message"
+                  type="button"
+                  disabled={selected?.status !== "idle"}
+                  onClick={() => {
+                    postMessage({ id: message.id, type: "forkThread" });
+                    setPosition(undefined);
+                  }}
+                >
+                  <SvgIcon kind="fork" />
+                </button>
+                <button
+                  className="history-action"
+                  title="Rollback to this message"
+                  aria-label="Rollback to this message"
+                  type="button"
+                  onClick={() => {
+                    postMessage({ id: message.id, type: "rollbackThread" });
+                    setPosition(undefined);
+                  }}
+                >
+                  <SvgIcon kind="rollback" />
+                </button>
+              </div>
             </div>
           ))}
         </div>
