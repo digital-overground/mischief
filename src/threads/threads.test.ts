@@ -130,6 +130,7 @@ class FakeAgent {
         if (this.replayOnLoad) {
           handlers.update({
             kind: "user",
+            messageId: "pi-user-1",
             text: "Restore me",
             type: "message",
           });
@@ -753,8 +754,21 @@ describe("threads module", () => {
     await restored.openWorkspace("/workspace");
 
     expect(restored.snapshot().selected?.items).toMatchObject([
-      { kind: "user", text: "Restore me" },
+      { id: "user:pi-user-1", kind: "user", text: "Restore me" },
       { kind: "assistant", text: "Restored." },
+    ]);
+
+    await restored.rollback("user:pi-user-1");
+    await restored.fork("user:pi-user-1");
+    expect(loadingAgent.rollbackCalls).toStrictEqual([
+      { messageId: "pi-user-1", sessionId: "session-1" },
+    ]);
+    expect(loadingAgent.forkCalls).toStrictEqual([
+      {
+        cwd: "/workspace",
+        messageId: "pi-user-1",
+        sessionId: "session-1",
+      },
     ]);
   });
 

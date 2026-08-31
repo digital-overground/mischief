@@ -242,7 +242,7 @@ describe("React webview", () => {
     await unmount();
   });
 
-  test("keeps a fork draft out of the original Thread composer", async () => {
+  test("keeps composer drafts with their Threads while switching", async () => {
     const unmount = await renderApp();
 
     await act(() =>
@@ -250,6 +250,12 @@ describe("React webview", () => {
         new MessageEvent("message", { data: threadState("original", []) })
       )
     );
+    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+    if (!composer) {
+      throw new Error("Missing composer");
+    }
+    composer.value = "Original draft";
+
     await act(() =>
       window.dispatchEvent(
         new MessageEvent("message", {
@@ -257,15 +263,21 @@ describe("React webview", () => {
         })
       )
     );
-    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
-    expect(composer?.value).toBe("Fork from here");
+    expect(composer.value).toBe("Fork from here");
 
     await act(() =>
       window.dispatchEvent(
         new MessageEvent("message", { data: threadState("original", []) })
       )
     );
-    expect(composer?.value).toBe("");
+    expect(composer.value).toBe("Original draft");
+
+    await act(() =>
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("fork", []) })
+      )
+    );
+    expect(composer.value).toBe("Fork from here");
     await unmount();
   });
 

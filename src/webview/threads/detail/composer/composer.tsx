@@ -82,6 +82,9 @@ const ComposerView = ({
   const suggestionsBox = useRef<HTMLDivElement>(null);
   const consumedDrafts = useRef("");
   const activeThread = useRef<string | null>(null);
+  const draftsByThread = useRef(
+    new Map<string, { images: PromptImage[]; text: string }>()
+  );
   const [images, setImages] = useState<PromptImage[]>([]);
   const [context, setContext] = useState<ComposerMatch>();
   const [command, setCommand] = useState<ComposerMatch>();
@@ -123,11 +126,18 @@ const ComposerView = ({
     if (activeThread.current === threadId) {
       return;
     }
-    activeThread.current = threadId;
-    if (box.current) {
-      box.current.value = "";
+    if (activeThread.current) {
+      draftsByThread.current.set(activeThread.current, {
+        images,
+        text: box.current?.value ?? "",
+      });
     }
-    setImages([]);
+    activeThread.current = threadId;
+    const draft = threadId ? draftsByThread.current.get(threadId) : undefined;
+    if (box.current) {
+      box.current.value = draft?.text ?? "";
+    }
+    setImages(draft?.images ?? []);
     setContext(undefined);
     setCommand(undefined);
   }, [selected?.id]);
@@ -171,6 +181,9 @@ const ComposerView = ({
       return;
     }
     postMessage({ images, text, type: "prompt" });
+    if (selected.id) {
+      draftsByThread.current.delete(selected.id);
+    }
     if (box.current) {
       box.current.value = "";
     }

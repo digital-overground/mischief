@@ -349,6 +349,9 @@ const threadUsage = (
 const hasPromptContent = (text: string, images: PromptImage[]): boolean =>
   Boolean(text.trim() || images.length);
 
+const agentMessageId = (messageId: string): string =>
+  messageId.startsWith("user:") ? messageId.slice(5) : messageId;
+
 const stopStreaming = (runtime: Runtime): void => {
   if (runtime.streamingTimer) {
     clearTimeout(runtime.streamingTimer);
@@ -803,7 +806,7 @@ export class Threads {
     const setup = await runtime.connection.fork(
       record.sessionId,
       record.workspace,
-      messageId
+      agentMessageId(messageId)
     );
     const now = new Date().toISOString();
     const fork: StoredThread = {
@@ -841,7 +844,10 @@ export class Threads {
     if (runtime.status !== "idle") {
       await Threads.cancelRuntime(record, runtime);
     }
-    await runtime.connection.rollback(record.sessionId, messageId);
+    await runtime.connection.rollback(
+      record.sessionId,
+      agentMessageId(messageId)
+    );
     runtime.connection.dispose();
     this.runtimes.delete(record.id);
     record.error = undefined;
