@@ -897,7 +897,7 @@ footer {
   bottom: calc(100% + 4px);
   left: 8px;
   z-index: 2;
-  max-height: 180px;
+  max-height: 220px;
   overflow-y: auto;
   border: 1px solid var(--vscode-widget-border);
   background: var(--vscode-editorWidget-background);
@@ -929,19 +929,21 @@ footer {
   white-space: normal;
 }
 #context-suggestions .command-name {
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 #context-suggestions .command-hint,
 #context-suggestions .command-description {
   color: var(--vscode-descriptionForeground);
 }
 #context-suggestions .command-description {
-  display: none;
+  display: -webkit-box;
   min-width: 0;
+  overflow: hidden;
+  font-family: var(--mischief-mono-font);
+  font-size: 0.9em;
   overflow-wrap: anywhere;
-}
-#context-suggestions button.command-suggestion.selected .command-description {
-  display: block;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 #context-suggestions button:hover,
 #context-suggestions button.selected {
