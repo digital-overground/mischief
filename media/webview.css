@@ -42,8 +42,11 @@ main > section {
   flex: 0 1 20%;
 }
 #thread {
+  min-width: 0;
   flex: 1 1 50%;
+  overflow: hidden;
   border-bottom: 0;
+  overflow-wrap: anywhere;
 }
 main > section.collapsed {
   min-height: 26px;
@@ -512,11 +515,17 @@ select:disabled {
 }
 #chat {
   flex: 1;
+  min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 8px;
   font-family: var(--mischief-mono-font);
   font-size: 13px;
+}
+#chat * {
+  min-width: 0;
+  max-width: 100%;
 }
 #transcript {
   min-height: 0;
@@ -590,7 +599,6 @@ article.entry {
 }
 .entry-content {
   flex: 1;
-  min-width: 0;
 }
 .transcript-images {
   display: flex;
@@ -636,6 +644,7 @@ pre {
 }
 .markdown {
   white-space: normal;
+  overflow-wrap: anywhere;
 }
 .markdown > :first-child {
   margin-top: 0;
@@ -683,10 +692,11 @@ pre {
   font-family: var(--mischief-mono-font);
 }
 .markdown pre {
-  overflow-x: auto;
+  overflow-x: hidden;
   padding: 8px;
   background: var(--vscode-textCodeBlock-background);
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .markdown pre code {
   padding: 0;
@@ -703,12 +713,14 @@ pre {
 .markdown table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
 }
 .markdown th,
 .markdown td {
   border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
   padding: 4px 6px;
   text-align: left;
+  overflow-wrap: anywhere;
 }
 .markdown hr {
   border: 0;
@@ -730,16 +742,20 @@ details.entry > summary::-webkit-details-marker {
   margin: 7px 0 0 22px;
 }
 .tool-body pre {
+  max-height: 180px;
   margin: 4px 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 6px;
   background: var(--vscode-textCodeBlock-background);
-  max-height: 180px;
-  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .link {
   border: 0;
   padding: 2px 0;
   display: block;
+  overflow-wrap: anywhere;
   background: transparent;
   color: var(--vscode-textLink-foreground);
   cursor: pointer;

@@ -110,6 +110,24 @@ describe("view provider", () => {
     );
   });
 
+  test("conversation content wraps instead of creating horizontal overflow", () => {
+    const style = readFileSync("media/webview.css", "utf-8");
+
+    expect(style).toMatch(
+      /#thread \{[^}]*min-width: 0;[^}]*overflow: hidden;/u
+    );
+    expect(style).toMatch(
+      /#chat \* \{[^}]*min-width: 0;[^}]*max-width: 100%;/u
+    );
+    expect(style).toMatch(
+      /\.markdown pre \{[^}]*overflow-x: hidden;[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/u
+    );
+    expect(style).toMatch(/\.markdown table \{[^}]*table-layout: fixed;/u);
+    expect(style).toMatch(
+      /\.tool-body pre \{[^}]*overflow-y: auto;[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/u
+    );
+  });
+
   test("sends only the changed transcript item while streaming", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     let emit: ((change: unknown) => void) | undefined;
