@@ -59,6 +59,56 @@ describe("React webview", () => {
     vi.useRealTimers();
   });
 
+  test("maximizes the current Thread and restores the pane layout", async () => {
+    const unmount = await renderApp();
+    const projects = document.querySelector<HTMLElement>("#projects");
+    const threads = document.querySelector<HTMLElement>("#threads");
+    const thread = document.querySelector<HTMLElement>("#thread");
+    const maximize =
+      document.querySelector<HTMLButtonElement>("#maximize-thread");
+    if (!projects || !threads || !thread || !maximize) {
+      throw new Error("Missing pane controls");
+    }
+    projects.style.flexBasis = "140px";
+    threads.style.flexBasis = "90px";
+    const maximizeIcon = maximize.innerHTML;
+
+    await act(() => maximize.click());
+
+    expect(maximize.innerHTML).not.toBe(maximizeIcon);
+    expect({
+      maximized: maximize.getAttribute("aria-pressed"),
+      projects: projects.classList.contains("collapsed"),
+      thread: thread.classList.contains("collapsed"),
+      threads: threads.classList.contains("collapsed"),
+    }).toStrictEqual({
+      maximized: "true",
+      projects: true,
+      thread: false,
+      threads: true,
+    });
+
+    await act(() => maximize.click());
+
+    expect(maximize.innerHTML).toBe(maximizeIcon);
+    expect({
+      maximized: maximize.getAttribute("aria-pressed"),
+      projects: [
+        projects.classList.contains("collapsed"),
+        projects.style.flexBasis,
+      ],
+      threads: [
+        threads.classList.contains("collapsed"),
+        threads.style.flexBasis,
+      ],
+    }).toStrictEqual({
+      maximized: "false",
+      projects: [false, "140px"],
+      threads: [false, "90px"],
+    });
+    await unmount();
+  });
+
   test("shows each Workspace color and routes new Workspace creation", async () => {
     const unmount = await renderApp();
     await act(() => {

@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef } from "react";
 
 import { postMessage } from "../../bridge";
+import { SvgIcon } from "../../icon";
 import type {
   RenderedThreadsSnapshot,
   RenderedTranscriptItem,
@@ -20,11 +21,15 @@ const Processing = (): React.JSX.Element => (
 // oxlint-disable-next-line complexity -- the component renders Thread state branches
 export const ThreadView = ({
   contextItems,
+  onToggleMaximized,
   snapshot,
+  threadMaximized,
   transcript,
 }: {
   contextItems: string[];
+  onToggleMaximized: () => void;
   snapshot: RenderedThreadsSnapshot;
+  threadMaximized: boolean;
   transcript: {
     items: RenderedTranscriptItem[];
     streaming: boolean;
@@ -52,12 +57,25 @@ export const ThreadView = ({
   const plan =
     transcriptItems.findLast((item) => item.kind === "plan" && item.text) ??
     selected?.items.find((item) => item.kind === "plan" && item.text);
+  const maximizeLabel = threadMaximized
+    ? "Restore Pane Layout"
+    : "Maximize Current Thread";
   return (
     <section id="thread">
       <header id="thread-header">
         <span className="heading" id="thread-title">
           {selected?.name || "Thread"}
         </span>
+        <button
+          className="icon"
+          id="maximize-thread"
+          title={maximizeLabel}
+          aria-label={maximizeLabel}
+          aria-pressed={threadMaximized}
+          onClick={onToggleMaximized}
+        >
+          <SvgIcon kind={threadMaximized ? "minimize" : "maximize"} />
+        </button>
         <button
           className="icon"
           id="rename-thread"

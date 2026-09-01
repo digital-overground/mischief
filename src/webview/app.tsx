@@ -17,6 +17,7 @@ const initialState: Extract<HostToWebviewMessage, { type: "state" }> = {
 export const App = (): React.JSX.Element => {
   const [snapshot, setSnapshot] = useState(initialState);
   const [contextItems, setContextItems] = useState<string[]>([]);
+  const [threadMaximized, setThreadMaximized] = useState(false);
   const [transcript, setTranscript] = useState<{
     items: RenderedTranscriptItem[];
     streaming: boolean;
@@ -80,12 +81,17 @@ export const App = (): React.JSX.Element => {
   return (
     <PaneLayout
       projects={<ProjectsPane snapshot={snapshot.projects} />}
+      threadMaximized={threadMaximized}
       threads={<ThreadsPane snapshot={snapshot.threads} />}
       thread={
         <ThreadView
           contextItems={contextItems}
           snapshot={snapshot.threads}
+          threadMaximized={threadMaximized}
           transcript={transcript}
+          onToggleMaximized={() =>
+            setThreadMaximized((maximized) => !maximized)
+          }
         />
       }
     />

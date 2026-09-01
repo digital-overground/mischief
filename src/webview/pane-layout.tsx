@@ -7,13 +7,24 @@ const COLLAPSED_PANE_HEIGHT = 26;
 export const PaneLayout = ({
   projects,
   thread,
+  threadMaximized,
   threads,
 }: {
   projects: ReactNode;
   thread: ReactNode;
+  threadMaximized: boolean;
   threads: ReactNode;
 }): React.JSX.Element => {
   const root = useRef<HTMLElement>(null);
+  const savedLayout = useRef<
+    | {
+        collapsed: boolean;
+        expandedHeight?: string;
+        flexBasis: string;
+        pane: HTMLElement;
+      }[]
+    | null
+  >(null);
 
   useEffect(() => {
     const main = root.current;
@@ -94,7 +105,10 @@ export const PaneLayout = ({
       }
       toggle.tabIndex = 0;
       toggle.setAttribute("role", "button");
-      toggle.setAttribute("aria-expanded", "true");
+      toggle.setAttribute(
+        "aria-expanded",
+        String(!pane.classList.contains("collapsed"))
+      );
       const click = (event: MouseEvent): void => {
         if ((event.target as Element).closest("button")) {
           return;
@@ -159,9 +173,37 @@ export const PaneLayout = ({
         signal: controller.signal,
       });
     }
+    if (threadMaximized) {
+      savedLayout.current ??= panes.map((pane) => ({
+        collapsed: pane.classList.contains("collapsed"),
+        expandedHeight: pane.dataset.expandedHeight,
+        flexBasis: pane.style.flexBasis,
+        pane,
+      }));
+      for (const pane of panes) {
+        const collapsed = pane.id !== "thread";
+        if (pane.classList.contains("collapsed") !== collapsed) {
+          togglePane(pane);
+        }
+      }
+    } else if (savedLayout.current) {
+      for (const state of savedLayout.current) {
+        state.pane.classList.toggle("collapsed", state.collapsed);
+        state.pane.style.flexBasis = state.flexBasis;
+        if (state.expandedHeight === undefined) {
+          delete state.pane.dataset.expandedHeight;
+        } else {
+          state.pane.dataset.expandedHeight = state.expandedHeight;
+        }
+        state.pane
+          .querySelector<HTMLElement>(":scope > header > .heading")
+          ?.setAttribute("aria-expanded", String(!state.collapsed));
+      }
+      savedLayout.current = null;
+    }
     rebalancePanes();
     return () => controller.abort();
-  }, []);
+  }, [threadMaximized]);
 
   return (
     <main ref={root}>

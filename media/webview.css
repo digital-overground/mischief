@@ -136,6 +136,14 @@ select:disabled {
   cursor: pointer;
   border-radius: 3px;
 }
+#maximize-thread {
+  width: 22px;
+  height: 22px;
+  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 .icon:not(:disabled):hover,
 .row:hover {
   background: var(--vscode-list-hoverBackground);
