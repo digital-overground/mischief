@@ -179,6 +179,13 @@ select:disabled {
   background: transparent;
   cursor: pointer;
 }
+.workspace-color {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px currentColor;
+}
 .meta {
   color: var(--vscode-descriptionForeground);
   font-size: 11px;
@@ -754,28 +761,124 @@ details.entry > summary::-webkit-details-marker {
   display: none;
 }
 #interaction {
-  margin: 5px 8px;
-  padding: 8px;
+  margin: 8px;
+  padding: 12px;
   border: 1px solid var(--vscode-focusBorder);
+  border-radius: 6px;
   background: var(--vscode-editorWidget-background);
+  font-family: var(--mischief-ui-font);
+}
+.interaction-question {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.interaction-question .lucide {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  margin-top: 1px;
+  color: var(--vscode-textLink-foreground);
 }
 #interaction .message {
-  margin-bottom: 7px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: pre-wrap;
 }
-#interaction label {
+.interaction-context {
+  display: grid;
+  gap: 3px;
+  margin: -2px 0 14px 26px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+.interaction-context-label {
+  font-weight: 500;
+}
+.interaction-field {
   display: block;
-  margin: 6px 0;
+  margin: 10px 0;
 }
-#interaction input:not([type="checkbox"]),
-#interaction select,
+fieldset.interaction-field {
+  border: 0;
+  padding: 0;
+}
+.interaction-field > legend,
+.interaction-field-label {
+  display: block;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 500;
+}
+.interaction-field-description {
+  display: block;
+  margin-top: 2px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.interaction-choice-list {
+  display: grid;
+  gap: 2px;
+  margin-top: 5px;
+}
+#interaction .interaction-choice {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 7px;
+  margin: 0;
+  padding: 6px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.interaction-choice:hover,
+.interaction-choice:focus-within {
+  background: var(--vscode-list-hoverBackground);
+}
+.interaction-choice input {
+  align-self: start;
+  justify-self: start;
+  margin: 2px 0 0;
+  accent-color: var(--vscode-focusBorder);
+  outline: none;
+}
+.interaction-choice-title {
+  display: block;
+  line-height: 1.35;
+}
+.interaction-boolean {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+.interaction-boolean > input {
+  margin: 2px 0 0;
+}
+#interaction .interaction-field > input:not([type="checkbox"]),
 #interaction textarea {
   display: block;
   width: 100%;
-  margin-top: 3px;
+  margin-top: 5px;
   border: 1px solid var(--vscode-input-border);
+  border-radius: 3px;
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
-  padding: 4px;
+  padding: 6px 7px;
+  font-family: var(--mischief-ui-font);
+}
+#interaction textarea {
+  min-height: 58px;
+  resize: vertical;
+}
+#interaction input:not([type="radio"]):not([type="checkbox"]):focus-visible,
+#interaction textarea:focus-visible {
+  border-color: var(--vscode-focusBorder);
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
 }
 #steering,
 #plan {

@@ -45,7 +45,8 @@ export const activate = async (
   const view = new MischiefView(
     new Projects(context.globalState),
     threads,
-    context.extensionUri
+    context.extensionUri,
+    context.globalState
   );
   context.subscriptions.push(output, { dispose: () => threads.dispose() });
   registerMischiefView(context, view);

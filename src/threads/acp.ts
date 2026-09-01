@@ -193,12 +193,26 @@ const permissionResponse = (
     ? { outcome: { optionId: response.optionId, outcome: "selected" } }
     : { outcome: { outcome: "cancelled" } };
 
+const elicitationOptionDescription = (
+  meta: Record<string, unknown> | null | undefined
+): string | undefined => {
+  const magPiAcp = meta?.magPiAcp;
+  if (!magPiAcp || typeof magPiAcp !== "object") {
+    return;
+  }
+  const { description } = magPiAcp as Record<string, unknown>;
+  return typeof description === "string" ? description : undefined;
+};
+
 const elicitationOptions = (
   schema: ElicitationPropertySchema
-): { value: string; name: string }[] | undefined => {
+): { value: string; name: string; description?: string }[] | undefined => {
   if (schema.type === "string") {
     if (schema.oneOf) {
       return schema.oneOf.map((option) => ({
+        ...(elicitationOptionDescription(option._meta)
+          ? { description: elicitationOptionDescription(option._meta) }
+          : {}),
         name: option.title,
         value: option.const,
       }));
@@ -210,6 +224,9 @@ const elicitationOptions = (
   if (schema.type === "array") {
     if ("anyOf" in schema.items) {
       return schema.items.anyOf.map((option) => ({
+        ...(elicitationOptionDescription(option._meta)
+          ? { description: elicitationOptionDescription(option._meta) }
+          : {}),
         name: option.title,
         value: option.const,
       }));
@@ -249,7 +266,13 @@ const elicitationRequest = (
       };
     }
   );
-  return { fields, message: request.message };
+  return {
+    ...(request.requestedSchema.description
+      ? { context: request.requestedSchema.description }
+      : {}),
+    fields,
+    message: request.message,
+  };
 };
 
 const stringValue = (

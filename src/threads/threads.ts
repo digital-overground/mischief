@@ -65,6 +65,7 @@ export type AgentPermissionResponse =
 
 export interface AgentElicitationRequest {
   message: string;
+  context?: string;
   fields: ElicitationField[];
 }
 
@@ -225,7 +226,7 @@ export interface ElicitationField {
   type: "text" | "number" | "boolean" | "select" | "multiselect";
   required: boolean;
   defaultValue?: string | number | boolean | string[];
-  options?: { value: string; name: string }[];
+  options?: { value: string; name: string; description?: string }[];
 }
 
 export type ThreadInteraction =
@@ -239,6 +240,7 @@ export type ThreadInteraction =
       id: string;
       kind: "elicitation";
       message: string;
+      context?: string;
       fields: ElicitationField[];
     };
 
@@ -1163,6 +1165,7 @@ export class Threads {
     stopStreaming(runtime);
     runtime.status = "waiting";
     runtime.interaction = {
+      ...(request.context ? { context: request.context } : {}),
       fields: request.fields,
       id: randomUUID(),
       kind: "elicitation",

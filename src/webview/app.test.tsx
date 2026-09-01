@@ -59,6 +59,63 @@ describe("React webview", () => {
     vi.useRealTimers();
   });
 
+  test("shows each Workspace color and routes new Workspace creation", async () => {
+    const unmount = await renderApp();
+    await act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            font: "Test Mono",
+            projects: {
+              projects: [
+                {
+                  name: "project",
+                  root: "/project",
+                  workspaces: [
+                    {
+                      ahead: 0,
+                      behind: 0,
+                      changes: 0,
+                      color: "#c93c3726",
+                      current: false,
+                      linked: true,
+                      name: "project-feature",
+                      path: "/worktrees/project-feature",
+                    },
+                  ],
+                },
+              ],
+              ungrouped: [],
+            },
+            threads: { attentionCount: 0, threads: [] },
+            type: "state",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    const dot = document.querySelector<HTMLElement>(".workspace-color");
+    const create = document.querySelector<HTMLButtonElement>(
+      '[aria-label="New Workspace"]'
+    );
+    if (!dot || !create) {
+      throw new Error("Missing Workspace controls");
+    }
+    postMessage.mockClear();
+
+    await act(() => create.click());
+
+    expect({
+      fill: dot.style.backgroundColor,
+      message: postMessage.mock.calls,
+      outline: dot.style.color,
+    }).toStrictEqual({
+      fill: "rgba(201, 60, 55, 0.15)",
+      message: [[{ path: "/project", type: "newWorkspace" }]],
+      outline: "rgb(201, 60, 55)",
+    });
+    await unmount();
+  });
+
   test("applies streaming transcript items without replacing history or composer text", async () => {
     const unmount = await renderApp();
     const state: HostToWebviewMessage = {
@@ -561,6 +618,121 @@ describe("React webview", () => {
     });
     expect(postMessage).toHaveBeenCalledWith({ type: "clearPlan" });
 
+    await unmount();
+  });
+
+  test("renders elicitation choices as radios and submits custom context with the selection", async () => {
+    const unmount = await renderApp();
+    const state: HostToWebviewMessage = {
+      font: "Test Mono",
+      projects: { projects: [], ungrouped: [] },
+      threads: {
+        attentionCount: 1,
+        selected: {
+          commands: [],
+          configOptions: [],
+          drafts: [],
+          id: "thread-1",
+          interaction: {
+            context: "Test prompt context.",
+            fields: [
+              {
+                label: "Suggested answers",
+                name: "choice",
+                options: [
+                  {
+                    description:
+                      "Games can trust the roster for the whole round.",
+                    name: "Immutable once round starts",
+                    value: "immutable",
+                  },
+                  {
+                    description:
+                      "Changes remain possible until scoring begins.",
+                    name: "Editable until first score",
+                    value: "editable",
+                  },
+                ],
+                required: false,
+                type: "select",
+              },
+              {
+                description: "Add context for the selected suggestion.",
+                label: "Custom response",
+                name: "other",
+                required: false,
+                type: "text",
+              },
+            ],
+            id: "ask-1",
+            kind: "elicitation",
+            message: "Can Team membership change after a round starts?",
+          },
+          items: [],
+          name: "Elicitation",
+          status: "waiting",
+          steering: [],
+          streaming: false,
+        },
+        threads: [],
+        workspace: "/workspace",
+      },
+      type: "state",
+    };
+    await act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+
+    const choices = [
+      ...document.querySelectorAll<HTMLInputElement>(
+        '#interaction input[type="radio"]'
+      ),
+    ];
+    const custom = document.querySelector<HTMLTextAreaElement>(
+      '#interaction textarea[name="other"]'
+    );
+    const submit = document.querySelector<HTMLButtonElement>(
+      '#interaction button[type="submit"]'
+    );
+    if (!custom || !submit || choices.length !== 2) {
+      throw new Error("Missing elicitation controls");
+    }
+
+    expect({
+      context: document.querySelector(".interaction-context")?.textContent,
+      descriptions: [...document.querySelectorAll(".interaction-choice")].map(
+        (choice) => choice.textContent
+      ),
+      icon: document.querySelector(".interaction-question .lucide"),
+      question: document.querySelector(".interaction-question")?.textContent,
+    }).toStrictEqual({
+      context: "Context:Test prompt context.",
+      descriptions: [
+        "Immutable once round startsGames can trust the roster for the whole round.",
+        "Editable until first scoreChanges remain possible until scoring begins.",
+      ],
+      icon: expect.any(SVGElement),
+      question: "Can Team membership change after a round starts?",
+    });
+
+    postMessage.mockClear();
+    await act(() => {
+      choices[0]?.click();
+      custom.value = "Allow admins to correct mistakes.";
+      submit.click();
+    });
+
+    expect(postMessage).toHaveBeenCalledWith({
+      id: "ask-1",
+      response: {
+        action: "accept",
+        values: {
+          choice: "immutable",
+          other: "Allow admins to correct mistakes.",
+        },
+      },
+      type: "respond",
+    });
     await unmount();
   });
 });

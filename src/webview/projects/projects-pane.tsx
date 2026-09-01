@@ -19,6 +19,16 @@ const IconButton = ({
   </button>
 );
 
+const opaqueColor = (color: string): string => {
+  if (color.length === 5) {
+    return color.slice(0, -1);
+  }
+  if (color.length === 9) {
+    return color.slice(0, -2);
+  }
+  return color;
+};
+
 const WorkspaceRow = ({
   removable = false,
   workspace,
@@ -34,6 +44,16 @@ const WorkspaceRow = ({
         postMessage({ path: workspace.path, type: "openWorkspace" })
       }
     >
+      {workspace.color ? (
+        <span
+          aria-hidden="true"
+          className="workspace-color"
+          style={{
+            backgroundColor: workspace.color,
+            color: opaqueColor(workspace.color),
+          }}
+        />
+      ) : null}
       <span className="name">{workspace.name}</span>
       <span className="meta">
         {[
@@ -75,6 +95,14 @@ const ProjectGroup = ({ project }: { project: Project }): React.JSX.Element => (
   <>
     <div className="group-row">
       <span className="name">{project.name}</span>
+      <IconButton
+        title="New Workspace"
+        onClick={() =>
+          postMessage({ path: project.root, type: "newWorkspace" })
+        }
+      >
+        ＋
+      </IconButton>
       <IconButton
         title="Remove membership"
         onClick={() =>

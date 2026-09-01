@@ -1,9 +1,13 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { ensureWorkspaceColors } from "./workspace-colors";
+import {
+  assignWorkspaceColors,
+  ensureWorkspaceColors,
+  workspaceWindowColor,
+} from "./workspace-colors";
 
 const vscode = vi.hoisted(() => ({
   extensions: [] as { extensionPath: string; packageJSON: unknown }[],
@@ -116,6 +120,35 @@ describe("workspace colors", () => {
       }).toStrictEqual({
         reapplied: false,
         writes: 1,
+      });
+
+      const workspace = path.join(folder, "workspace");
+      await mkdir(path.join(workspace, ".vscode"), { recursive: true });
+      await writeFile(
+        path.join(workspace, ".vscode", "settings.json"),
+        '{ "editor.fontSize": 14 }'
+      );
+      const assigned = await assignWorkspaceColors(workspace);
+      const settings = JSON.parse(
+        await readFile(
+          path.join(workspace, ".vscode", "settings.json"),
+          "utf-8"
+        )
+      ) as Record<string, unknown>;
+      const assignedColors = settings[
+        "workbench.colorCustomizations"
+      ] as Record<string, unknown>;
+      await expect(workspaceWindowColor(workspace)).resolves.toBe(
+        assignedColors["titleBar.activeBackground"]
+      );
+      expect({
+        assigned,
+        color: assignedColors["titleBar.activeBackground"],
+        preserved: settings["editor.fontSize"],
+      }).toMatchObject({
+        assigned: true,
+        color: expect.stringMatching(/^#[\da-f]{8}$/iu),
+        preserved: 14,
       });
     } finally {
       await rm(folder, { force: true, recursive: true });

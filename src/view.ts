@@ -3,9 +3,11 @@ import path from "node:path";
 import MarkdownIt from "markdown-it";
 import * as vscode from "vscode";
 
+import { normalizeWorkspaceName } from "./projects/projects";
 import type {
   Projects,
   ProjectsSnapshot,
+  ProjectsStorage,
   Workspace,
 } from "./projects/projects";
 import type {
@@ -17,8 +19,13 @@ import type {
 } from "./threads/threads";
 import { webviewHtml } from "./webview";
 import type { HostToWebviewMessage } from "./webview/protocol";
+import {
+  assignWorkspaceColors,
+  workspaceWindowColor,
+} from "./workspace-colors";
 
 const VIEW_ID = "mischief.view";
+const START_WORKSPACES_KEY = "mischief.startWorkspaces";
 const DEFAULT_MONO_FONT_FAMILY =
   '"Lilex", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
 const markdown = new MarkdownIt({ breaks: true, html: false, linkify: true });
@@ -94,12 +101,19 @@ export class MischiefView implements vscode.WebviewViewProvider {
   private projectsSnapshot: ProjectsSnapshot = { projects: [], ungrouped: [] };
   private readonly extensionUri: vscode.Uri;
   private readonly projects: Projects;
+  private readonly storage: ProjectsStorage;
   private readonly threads: Threads;
 
-  constructor(projects: Projects, threads: Threads, extensionUri: vscode.Uri) {
+  constructor(
+    projects: Projects,
+    threads: Threads,
+    extensionUri: vscode.Uri,
+    storage: ProjectsStorage
+  ) {
     this.projects = projects;
     this.threads = threads;
     this.extensionUri = extensionUri;
+    this.storage = storage;
     threads.onChange((change) => {
       if (change?.type === "transcript") {
         this.renderTranscript(change);
@@ -110,11 +124,12 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   async initialize(folder?: string): Promise<void> {
-    this.projectsSnapshot = folder
-      ? await this.projects.open(folder)
-      : await this.projects.refresh();
+    await this.setProjects(
+      folder ? this.projects.open(folder) : this.projects.refresh()
+    );
     await this.syncThreads();
     this.render();
+    await this.startPendingWorkspace();
   }
 
   async addWorkspace(): Promise<void> {
@@ -127,20 +142,60 @@ export class MischiefView implements vscode.WebviewViewProvider {
     if (!selected?.[0]) {
       return;
     }
-    this.projectsSnapshot = await this.projects.add(selected[0].fsPath);
+    await this.setProjects(this.projects.add(selected[0].fsPath));
     await this.syncThreads();
     this.render();
+  }
+
+  async newWorkspace(projectRoot: string): Promise<void> {
+    const project = this.projectsSnapshot.projects.find(
+      (candidate) => candidate.root === projectRoot
+    );
+    if (!project) {
+      return;
+    }
+    const name = await vscode.window.showInputBox({
+      prompt: "Create a linked worktree and branch",
+      title: `New Workspace for ${project.name}`,
+      validateInput: (value) => {
+        const normalized = normalizeWorkspaceName(value);
+        if (!normalized) {
+          return "Enter a Workspace name";
+        }
+        return /[/\\]/u.test(normalized)
+          ? "Workspace names cannot contain slashes"
+          : undefined;
+      },
+    });
+    if (name === undefined) {
+      return;
+    }
+    const workspace = await this.projects.createWorkspace(project.root, name);
+    try {
+      await assignWorkspaceColors(workspace);
+    } catch (error) {
+      void vscode.window.showWarningMessage(
+        `Mischief created the Workspace but could not assign its color: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+    await this.setProjects(this.projects.refresh());
+    const pending = this.storage.get<string[]>(START_WORKSPACES_KEY, []);
+    await this.storage.update(START_WORKSPACES_KEY, [
+      ...new Set([...pending, workspace]),
+    ]);
+    this.render();
+    await this.openWorkspace(workspace);
   }
 
   async refresh(): Promise<void> {
-    this.projectsSnapshot = await this.projects.refresh();
+    await this.setProjects(this.projects.refresh());
     await this.syncThreads();
     this.render();
   }
 
-  async newThread(): Promise<void> {
+  async newThread(preserveFocus = true): Promise<void> {
     const creating = this.threads.newThread();
-    this.view?.show(true);
+    this.view?.show(preserveFocus);
     await creating;
   }
 
@@ -177,6 +232,17 @@ export class MischiefView implements vscode.WebviewViewProvider {
       this.threads.markViewed();
     }
     this.render();
+  }
+
+  private async setProjects(
+    snapshot: Promise<ProjectsSnapshot>
+  ): Promise<void> {
+    this.projectsSnapshot = await snapshot;
+    await Promise.all(
+      this.workspaces().map(async (workspace) => {
+        workspace.color = await workspaceWindowColor(workspace.path);
+      })
+    );
   }
 
   private async syncThreads(): Promise<void> {
@@ -231,6 +297,10 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
     if (data.type === "newThread") {
       await this.threads.newThread();
+      return true;
+    }
+    if (data.type === "newWorkspace" && typeof data.path === "string") {
+      await this.newWorkspace(data.path);
       return true;
     }
     if (data.type === "openWorkspace" && typeof data.path === "string") {
@@ -358,6 +428,20 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
   }
 
+  private async startPendingWorkspace(): Promise<void> {
+    const workspace = this.workspaces().find((candidate) => candidate.current);
+    const pending = this.storage.get<string[]>(START_WORKSPACES_KEY, []);
+    if (!workspace || !pending.includes(workspace.path)) {
+      return;
+    }
+    await this.storage.update(
+      START_WORKSPACES_KEY,
+      pending.filter((candidate) => candidate !== workspace.path)
+    );
+    await vscode.commands.executeCommand("workbench.view.extension.mischief");
+    await this.newThread(false);
+  }
+
   private async openWorkspace(candidate: string): Promise<void> {
     const workspace = this.workspaces().find((item) => item.path === candidate);
     if (!workspace || workspace.current) {
@@ -385,7 +469,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     const removesCurrent =
       project?.workspaces.some((workspace) => workspace.current) ||
       standalone?.current;
-    this.projectsSnapshot = await this.projects.remove(candidate);
+    await this.setProjects(this.projects.remove(candidate));
     if (removesCurrent) {
       await this.threads.closeWorkspace();
     }

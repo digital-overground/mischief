@@ -3,6 +3,7 @@ import type {
   ThreadInteraction,
 } from "../../../threads/threads";
 import { postMessage } from "../../bridge";
+import { SvgIcon } from "../../icon";
 
 const ActionButton = ({
   children,
@@ -24,6 +25,15 @@ const ActionButton = ({
   </button>
 );
 
+const FieldDescription = ({
+  children,
+}: {
+  children?: string;
+}): React.JSX.Element | null =>
+  children ? (
+    <span className="interaction-field-description">{children}</span>
+  ) : null;
+
 const FormField = ({
   field,
 }: {
@@ -31,79 +41,121 @@ const FormField = ({
 }): React.JSX.Element => {
   const label = `${field.label}${field.required ? " *" : ""}`;
   if (field.type === "select" || field.type === "multiselect") {
-    let defaults: string[] = [];
+    let defaultValues: string[] = [];
     if (Array.isArray(field.defaultValue)) {
-      defaults = field.defaultValue;
+      defaultValues = field.defaultValue;
     } else if (field.defaultValue !== undefined) {
-      defaults = [String(field.defaultValue)];
+      defaultValues = [String(field.defaultValue)];
     }
+    const defaults = new Set(defaultValues);
+    const inputType = field.type === "multiselect" ? "checkbox" : "radio";
+    const focusIndex = Math.max(
+      0,
+      field.options?.findIndex((item) => defaults.has(item.value)) ?? 0
+    );
     return (
-      <label>
-        {label}
-        <select
-          name={field.name}
-          multiple={field.type === "multiselect"}
-          required={field.required && field.type !== "multiselect"}
-          title={field.description}
-          defaultValue={
-            field.type === "multiselect" ? defaults : (defaults[0] ?? "")
-          }
-        >
-          {!field.required && field.type === "select" ? (
-            <option value="" />
-          ) : null}
-          {field.options?.map((item) => (
-            <option value={item.value} key={item.value}>
-              {item.name}
-            </option>
+      <fieldset className="interaction-field interaction-choices">
+        <legend>{label}</legend>
+        <FieldDescription>{field.description}</FieldDescription>
+        <div className="interaction-choice-list">
+          {field.options?.map((item, index) => (
+            <label className="interaction-choice" key={item.value}>
+              <input
+                autoFocus={index === focusIndex}
+                defaultChecked={defaults.has(item.value)}
+                name={field.name}
+                required={field.required && field.type === "select"}
+                type={inputType}
+                value={item.value}
+              />
+              <span className="interaction-choice-copy">
+                <span className="interaction-choice-title">{item.name}</span>
+                <FieldDescription>{item.description}</FieldDescription>
+              </span>
+            </label>
           ))}
-        </select>
-      </label>
+        </div>
+      </fieldset>
     );
   }
   if (field.type === "boolean") {
     return (
-      <label>
-        {label}
+      <label className="interaction-field interaction-boolean">
         <input
+          defaultChecked={Boolean(field.defaultValue)}
           name={field.name}
           type="checkbox"
-          title={field.description}
-          defaultChecked={Boolean(field.defaultValue)}
         />
-      </label>
-    );
-  }
-  if (field.type === "number") {
-    return (
-      <label>
-        {label}
-        <input
-          name={field.name}
-          type="number"
-          required={field.required}
-          title={field.description}
-          defaultValue={
-            typeof field.defaultValue === "number" ? field.defaultValue : ""
-          }
-        />
+        <span>
+          <span className="interaction-field-label">{label}</span>
+          <FieldDescription>{field.description}</FieldDescription>
+        </span>
       </label>
     );
   }
   return (
-    <label>
-      {label}
-      <textarea
-        name={field.name}
-        rows={2}
-        required={field.required}
-        title={field.description}
-        defaultValue={
-          typeof field.defaultValue === "string" ? field.defaultValue : ""
-        }
-      />
+    <label className="interaction-field">
+      <span className="interaction-field-label">{label}</span>
+      <FieldDescription>{field.description}</FieldDescription>
+      {field.type === "number" ? (
+        <input
+          defaultValue={
+            typeof field.defaultValue === "number" ? field.defaultValue : ""
+          }
+          name={field.name}
+          required={field.required}
+          type="number"
+        />
+      ) : (
+        <textarea
+          defaultValue={
+            typeof field.defaultValue === "string" ? field.defaultValue : ""
+          }
+          name={field.name}
+          required={field.required}
+          rows={3}
+        />
+      )}
     </label>
   );
+};
+
+const Question = ({ children }: { children: string }): React.JSX.Element => (
+  <div className="interaction-question">
+    <SvgIcon kind="question" />
+    <div className="message">{children}</div>
+  </div>
+);
+
+const Context = ({ children }: { children: string }): React.JSX.Element => (
+  <div className="interaction-context">
+    <span className="interaction-context-label">Context:</span>
+    <span>{children}</span>
+  </div>
+);
+
+const formValues = (
+  form: HTMLFormElement,
+  fields: ElicitationField[]
+): Record<string, unknown> => {
+  const data = new FormData(form);
+  const values: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (field.type === "boolean") {
+      values[field.name] = data.has(field.name);
+    } else if (field.type === "multiselect") {
+      const selected = data.getAll(field.name).map(String);
+      if (field.required || selected.length) {
+        values[field.name] = selected;
+      }
+    } else {
+      const value = data.get(field.name);
+      if (typeof value === "string" && (field.required || value !== "")) {
+        values[field.name] = value;
+      }
+    }
+  }
+  return values;
 };
 
 const cancel = (id: string): void => {
@@ -121,7 +173,7 @@ export const Interaction = ({
   if (interaction.kind === "permission") {
     return (
       <div id="interaction">
-        <div className="message">{interaction.message}</div>
+        <Question>{interaction.message}</Question>
         <div className="interaction-buttons">
           {interaction.options.map((item) => (
             <ActionButton
@@ -147,37 +199,17 @@ export const Interaction = ({
   }
   return (
     <div id="interaction">
-      <div className="message">{interaction.message}</div>
+      <Question>{interaction.message}</Question>
+      {interaction.context ? <Context>{interaction.context}</Context> : null}
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          const values: Record<string, unknown> = {};
-          for (const field of interaction.fields) {
-            const input = event.currentTarget.elements.namedItem(field.name);
-            if (!(input instanceof HTMLElement)) {
-              continue;
-            }
-            if (field.type === "boolean" && input instanceof HTMLInputElement) {
-              values[field.name] = input.checked;
-            } else if (
-              field.type === "multiselect" &&
-              input instanceof HTMLSelectElement
-            ) {
-              values[field.name] = [...input.selectedOptions].map(
-                (item) => item.value
-              );
-            } else if (
-              (input instanceof HTMLInputElement ||
-                input instanceof HTMLSelectElement ||
-                input instanceof HTMLTextAreaElement) &&
-              (field.required || input.value !== "")
-            ) {
-              values[field.name] = input.value;
-            }
-          }
           postMessage({
             id: interaction.id,
-            response: { action: "accept", values },
+            response: {
+              action: "accept",
+              values: formValues(event.currentTarget, interaction.fields),
+            },
             type: "respond",
           });
         }}

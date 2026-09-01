@@ -135,6 +135,43 @@ describe("projects module", () => {
     expect(snapshot.projects[0]?.workspaces).toHaveLength(2);
   });
 
+  test("creates a normalized branch in the sibling worktrees directory", async () => {
+    const parent = await temporaryFolder();
+    const root = path.join(parent, "mischief");
+    await git(parent, "init", "--initial-branch=main", root);
+    await git(root, "config", "user.email", "mischief@example.test");
+    await git(root, "config", "user.name", "Mischief Test");
+    await git(root, "commit", "--allow-empty", "--message=initial");
+    const projects = new Projects(new MemoryStorage());
+    await projects.add(root);
+
+    await expect(projects.createWorkspace(root, "../escape")).rejects.toThrow(
+      "without slashes"
+    );
+    const workspace = await projects.createWorkspace(root, "My New Thing");
+    const expected = await realpath(
+      path.join(parent, "worktrees", "mischief-my-new-thing")
+    );
+    const { stdout: branch } = await exec("git", [
+      "-C",
+      workspace,
+      "branch",
+      "--show-current",
+    ]);
+
+    expect({ branch: branch.trim(), workspace }).toStrictEqual({
+      branch: "my-new-thing",
+      workspace: expected,
+    });
+    const snapshot = await projects.refresh();
+    expect(snapshot.projects[0]?.workspaces).toContainEqual(
+      expect.objectContaining({
+        branch: "my-new-thing",
+        path: expected,
+      })
+    );
+  });
+
   test("adding a Git Workspace discovers its Project and linked Workspaces", async () => {
     const parent = await temporaryFolder();
     const root = path.join(parent, "mischief");

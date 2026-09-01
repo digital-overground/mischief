@@ -9,6 +9,7 @@ type IconKind =
   | "rollback"
   | "circleCheck"
   | "plan"
+  | "question"
   | "send"
   | "signpost"
   | "stop"
@@ -82,6 +83,13 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M13 18h8" />
       <path d="m3 17 2 2 4-4" />
       <rect width="6" height="6" x="3" y="4" rx="1" />
+    </>
+  ),
+  question: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M9.1 9a3 3 0 1 1 5.8 1c0 2-3 3-3 3" />
+      <path d="M12 17h.01" />
     </>
   ),
   rollback: (

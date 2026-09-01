@@ -1,8 +1,8 @@
-import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { parse } from "jsonc-parser/lib/esm/main.js";
+import { applyEdits, modify, parse } from "jsonc-parser/lib/esm/main.js";
 import * as vscode from "vscode";
 
 const BACKGROUND_KEYS = [
@@ -239,6 +239,108 @@ const hasWindowColors = (value: unknown): boolean => {
         WINDOW_KEYS.has(key) || (key.startsWith("[") && hasWindowColors(nested))
     )
   );
+};
+
+const readWorkspaceSettings = async (
+  workspacePath: string
+): Promise<{
+  file: string;
+  settings: Record<string, unknown>;
+  source: string;
+}> => {
+  const file = path.join(workspacePath, ".vscode", "settings.json");
+  let source = "{\n}\n";
+  try {
+    source = await readFile(file, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const errors: { error: number; length: number; offset: number }[] = [];
+  const settings = object(
+    parse(source, errors, {
+      allowTrailingComma: true,
+    })
+  );
+  if (!settings || errors.length) {
+    throw new Error(`Invalid Workspace settings: ${file}`);
+  }
+  return { file, settings, source };
+};
+
+const windowColor = (value: unknown): string | undefined => {
+  const colors = object(value);
+  if (!colors) {
+    return undefined;
+  }
+  for (const key of ["titleBar.activeBackground", ...WINDOW_BACKGROUND_KEYS]) {
+    const color = colors[key];
+    if (typeof color === "string" && rgba(color)) {
+      return color;
+    }
+  }
+  for (const [key, nested] of Object.entries(colors)) {
+    if (key.startsWith("[")) {
+      const color = windowColor(nested);
+      if (color) {
+        return color;
+      }
+    }
+  }
+  return undefined;
+};
+
+export const workspaceWindowColor = async (
+  workspacePath: string
+): Promise<string | undefined> => {
+  try {
+    const { settings } = await readWorkspaceSettings(workspacePath);
+    return windowColor(settings["workbench.colorCustomizations"]);
+  } catch {
+    return undefined;
+  }
+};
+
+export const assignWorkspaceColors = async (
+  workspacePath: string
+): Promise<boolean> => {
+  const { file, settings, source } = await readWorkspaceSettings(workspacePath);
+  const existing = object(settings["workbench.colorCustomizations"]);
+  if (hasWindowColors(existing)) {
+    return false;
+  }
+  const themePath = activeThemePath();
+  if (!themePath) {
+    return false;
+  }
+  const overrides = workspaceColorOverrides(
+    await readThemeColors(themePath),
+    randomUUID()
+  );
+  if (!overrides) {
+    return false;
+  }
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(
+    file,
+    applyEdits(
+      source,
+      modify(
+        source,
+        ["workbench.colorCustomizations"],
+        { ...existing, ...overrides },
+        {
+          formattingOptions: {
+            insertFinalNewline: true,
+            insertSpaces: true,
+            tabSize: 2,
+          },
+        }
+      )
+    )
+  );
+  return true;
 };
 
 export const ensureWorkspaceColors = async (

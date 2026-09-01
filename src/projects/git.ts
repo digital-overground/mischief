@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { realpath } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -24,6 +24,25 @@ const run = async (cwd: string, ...args: string[]): Promise<string> => {
     encoding: "utf-8",
   });
   return stdout.trim();
+};
+
+export const createGitWorkspace = async (
+  root: string,
+  branch: string
+): Promise<string> => {
+  try {
+    await run(root, "check-ref-format", "--branch", branch);
+  } catch {
+    throw new Error(`"${branch}" is not a valid Git branch name`);
+  }
+  const workspace = path.join(
+    path.dirname(root),
+    "worktrees",
+    `${path.basename(root)}-${branch}`
+  );
+  await mkdir(path.dirname(workspace), { recursive: true });
+  await run(root, "worktree", "add", "-b", branch, workspace);
+  return realpath(workspace);
 };
 
 const parseWorktrees = (output: string): { path: string; branch?: string }[] =>

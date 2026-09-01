@@ -1,9 +1,12 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 
-import { discoverGitProject } from "./git";
+import { createGitWorkspace, discoverGitProject } from "./git";
 
 const STORAGE_KEY = "mischief.projects";
+
+export const normalizeWorkspaceName = (name: string): string =>
+  name.trim().toLowerCase().replaceAll(/\s+/gu, "-");
 
 export interface ProjectsStorage {
   get: <T>(key: string, fallback: T) => T;
@@ -16,6 +19,7 @@ export interface Workspace {
   branch?: string;
   linked: boolean;
   changes: number;
+  color?: string;
   ahead: number;
   behind: number;
   current: boolean;
@@ -83,6 +87,18 @@ export class Projects {
 
   refresh(): Promise<ProjectsSnapshot> {
     return this.snapshot();
+  }
+
+  async createWorkspace(projectRoot: string, name: string): Promise<string> {
+    const root = await realpath(projectRoot);
+    if (!this.readStored().roots.includes(root)) {
+      throw new Error("Project is not managed by Mischief");
+    }
+    const branch = normalizeWorkspaceName(name);
+    if (!branch || /[/\\]/u.test(branch)) {
+      throw new Error("Enter a Workspace name without slashes");
+    }
+    return createGitWorkspace(root, branch);
   }
 
   async remove(folder: string): Promise<ProjectsSnapshot> {

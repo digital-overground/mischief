@@ -5,6 +5,10 @@ import { describe, expect, test, vi } from "vitest";
 
 import { MischiefView } from "./view";
 
+const vscode = vi.hoisted(() => ({
+  executeCommand: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+}));
+
 vi.mock(
   import("vscode"),
   () =>
@@ -14,6 +18,7 @@ vi.mock(
           fsPath: path.join(base.fsPath, ...parts),
         }),
       },
+      commands: { executeCommand: vscode.executeCommand },
       workspace: {
         getConfiguration: vi.fn<() => { get: () => string }>(() => ({
           get: () => "",
@@ -23,6 +28,73 @@ vi.mock(
 );
 
 describe("view provider", () => {
+  test("focuses Mischief and starts a Thread in a newly created Workspace", async () => {
+    vscode.executeCommand.mockClear();
+    const folder = "/workspace";
+    let active: string | undefined;
+    let pending = [folder];
+    const projects = {
+      open: vi.fn<() => Promise<unknown>>(() =>
+        Promise.resolve({
+          projects: [],
+          ungrouped: [
+            {
+              ahead: 0,
+              behind: 0,
+              changes: 0,
+              current: true,
+              linked: false,
+              name: "workspace",
+              path: folder,
+            },
+          ],
+        })
+      ),
+    };
+    const threads = {
+      newThread: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+      onChange: vi.fn<() => void>(),
+      openWorkspace: vi.fn<(workspace: string) => Promise<void>>(
+        (workspace) => {
+          active = workspace;
+          return Promise.resolve();
+        }
+      ),
+      snapshot: () => ({
+        attentionCount: 0,
+        threads: [],
+        ...(active ? { workspace: active } : {}),
+      }),
+    };
+    const storage = {
+      get: () => pending,
+      update: vi.fn<(_key: string, value: unknown) => Promise<void>>(
+        (_key, value) => {
+          pending = value as string[];
+          return Promise.resolve();
+        }
+      ),
+    };
+    const provider = new MischiefView(
+      projects as never,
+      threads as never,
+      { fsPath: process.cwd() } as never,
+      storage as never
+    );
+
+    await provider.initialize(folder);
+
+    expect({
+      command: vscode.executeCommand.mock.calls,
+      newThreads: threads.newThread.mock.calls.length,
+      pending,
+    }).toStrictEqual({
+      command: [["workbench.view.extension.mischief"]],
+      newThreads: 1,
+      pending: [],
+    });
+  });
+
   test("static webview shell loads the React bundle", () => {
     const html = readFileSync("media/webview.html", "utf-8");
     const style = readFileSync("media/webview.css", "utf-8");
@@ -63,7 +135,8 @@ describe("view provider", () => {
     const provider = new MischiefView(
       {} as never,
       threads as never,
-      { fsPath: process.cwd() } as never
+      { fsPath: process.cwd() } as never,
+      {} as never
     );
     await provider.resolveWebviewView({
       onDidDispose: vi.fn<() => void>(),
@@ -147,7 +220,8 @@ describe("view provider", () => {
       threads as never,
       {
         fsPath: process.cwd(),
-      } as never
+      } as never,
+      {} as never
     );
 
     await provider.resolveWebviewView(view as never);
@@ -200,7 +274,8 @@ describe("view provider", () => {
       threads as never,
       {
         fsPath: process.cwd(),
-      } as never
+      } as never,
+      {} as never
     );
 
     await provider.resolveWebviewView(view as never);
