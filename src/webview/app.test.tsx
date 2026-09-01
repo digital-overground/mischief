@@ -109,6 +109,63 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("opens Settings and toggles Workspace window colors", async () => {
+    const unmount = await renderApp();
+    const dialog =
+      document.querySelector<HTMLDialogElement>("#settings-dialog");
+    const checkbox = dialog?.querySelector<HTMLInputElement>(
+      'input[type="checkbox"]'
+    );
+    const close = dialog?.querySelector<HTMLButtonElement>(
+      '[aria-label="Close Settings"]'
+    );
+    if (!dialog || !checkbox || !close) {
+      throw new Error("Missing Settings controls");
+    }
+    Object.defineProperties(dialog, {
+      close: { value: () => dialog.removeAttribute("open") },
+      showModal: { value: () => dialog.setAttribute("open", "") },
+    });
+    const defaultChecked = checkbox.checked;
+
+    await act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            assignWorkspaceColors: false,
+            type: "showSettings",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+
+    expect({
+      checked: checkbox.checked,
+      defaultChecked,
+      description: dialog.querySelector(".settings-description")?.textContent,
+      open: dialog.open,
+      title: dialog.querySelector(".settings-name")?.textContent,
+    }).toStrictEqual({
+      checked: false,
+      defaultChecked: true,
+      description:
+        "Automatically assigns colors from the active theme to Workspace windows that do not already define them.",
+      open: true,
+      title: "Assign Workspace window colors",
+    });
+
+    postMessage.mockClear();
+    await act(() => checkbox.click());
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({
+      type: "setAssignWorkspaceColors",
+      value: true,
+    });
+
+    await act(() => close.click());
+    expect(dialog.open).toBeFalsy();
+    await unmount();
+  });
+
   test("shows each Workspace color and routes new Workspace creation", async () => {
     const unmount = await renderApp();
     await act(() => {

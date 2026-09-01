@@ -28,6 +28,10 @@ const VIEW_ID = "mischief.view";
 const START_WORKSPACES_KEY = "mischief.startWorkspaces";
 const DEFAULT_MONO_FONT_FAMILY =
   '"Lilex", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+const workspaceColorsEnabled = (): boolean =>
+  vscode.workspace
+    .getConfiguration("mischief")
+    .get<boolean>("assignWorkspaceColors", true);
 const markdown = new MarkdownIt({ breaks: true, html: false, linkify: true });
 
 const renderTranscriptItem = (
@@ -171,12 +175,14 @@ export class MischiefView implements vscode.WebviewViewProvider {
       return;
     }
     const workspace = await this.projects.createWorkspace(project.root, name);
-    try {
-      await assignWorkspaceColors(workspace);
-    } catch (error) {
-      void vscode.window.showWarningMessage(
-        `Mischief created the Workspace but could not assign its color: ${error instanceof Error ? error.message : String(error)}`
-      );
+    if (workspaceColorsEnabled()) {
+      try {
+        await assignWorkspaceColors(workspace);
+      } catch (error) {
+        void vscode.window.showWarningMessage(
+          `Mischief created the Workspace but could not assign its color: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
     }
     await this.setProjects(this.projects.refresh());
     const pending = this.storage.get<string[]>(START_WORKSPACES_KEY, []);
@@ -201,6 +207,14 @@ export class MischiefView implements vscode.WebviewViewProvider {
 
   configurationChanged(): void {
     this.render();
+  }
+
+  showSettings(): void {
+    const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
+    void postMessage?.({
+      assignWorkspaceColors: workspaceColorsEnabled(),
+      type: "showSettings",
+    } satisfies HostToWebviewMessage);
   }
 
   async resolveWebviewView(view: vscode.WebviewView): Promise<void> {
@@ -289,6 +303,19 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
     if (data.type === "refresh") {
       await this.refresh();
+      return true;
+    }
+    if (
+      data.type === "setAssignWorkspaceColors" &&
+      typeof data.value === "boolean"
+    ) {
+      await vscode.workspace
+        .getConfiguration("mischief")
+        .update(
+          "assignWorkspaceColors",
+          data.value,
+          vscode.ConfigurationTarget.Global
+        );
       return true;
     }
     if (data.type === "contextItems") {

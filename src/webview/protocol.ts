@@ -35,7 +35,8 @@ export type HostToWebviewMessage =
       item: RenderedTranscriptItem;
       streaming: boolean;
     }
-  | { type: "contextItems"; items: string[] };
+  | { type: "contextItems"; items: string[] }
+  | { type: "showSettings"; assignWorkspaceColors: boolean };
 
 export type WebviewToHostMessage =
   | { type: "ready" | "add" | "refresh" | "contextItems" | "newThread" }
@@ -58,6 +59,7 @@ export type WebviewToHostMessage =
         | "authenticate";
     }
   | { type: "prompt"; text: string; images: PromptImage[] }
+  | { type: "setAssignWorkspaceColors"; value: boolean }
   | { type: "removeSteering" | "sendSteering"; id: string }
   | { type: "setConfig"; id: string; value: string | boolean }
   | { type: "respond"; id: string; response: ThreadInteractionResponse }

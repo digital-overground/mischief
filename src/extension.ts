@@ -59,6 +59,9 @@ export const activate = async (
     vscode.commands.registerCommand("mischief.newThread", () =>
       view.newThread()
     ),
+    vscode.commands.registerCommand("mischief.settings", () =>
+      view.showSettings()
+    ),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration("mischief.fontFamily")) {
         view.configurationChanged();
@@ -67,8 +70,15 @@ export const activate = async (
   );
 
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const workspaceColorsEnabled = vscode.workspace
+    .getConfiguration("mischief")
+    .get<boolean>("assignWorkspaceColors", true);
   try {
-    if (folder && (await ensureWorkspaceColors(folder))) {
+    if (
+      folder &&
+      workspaceColorsEnabled &&
+      (await ensureWorkspaceColors(folder))
+    ) {
       output.appendLine("Applied workspace colors from the active theme");
     }
   } catch (error) {

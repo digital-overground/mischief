@@ -16,6 +16,7 @@ const initialState: Extract<HostToWebviewMessage, { type: "state" }> = {
 
 export const App = (): React.JSX.Element => {
   const [snapshot, setSnapshot] = useState(initialState);
+  const [assignWorkspaceColors, setAssignWorkspaceColors] = useState(true);
   const [contextItems, setContextItems] = useState<string[]>([]);
   const [threadMaximized, setThreadMaximized] = useState(false);
   const [transcript, setTranscript] = useState<{
@@ -24,10 +25,17 @@ export const App = (): React.JSX.Element => {
     threadId?: string;
   }>({ items: [], streaming: false });
   const previousWorkspace = useRef<string | null>(null);
+  const settingsDialog = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
     const receive = (event: MessageEvent<HostToWebviewMessage>): void => {
-      if (event.data.type === "contextItems") {
+      if (event.data.type === "showSettings") {
+        setAssignWorkspaceColors(event.data.assignWorkspaceColors);
+        const dialog = settingsDialog.current;
+        if (dialog && !dialog.open) {
+          dialog.showModal();
+        }
+      } else if (event.data.type === "contextItems") {
         setContextItems(event.data.items);
       } else if (event.data.type === "state") {
         setSnapshot(event.data);
@@ -79,21 +87,65 @@ export const App = (): React.JSX.Element => {
   }, [currentWorkspace]);
 
   return (
-    <PaneLayout
-      projects={<ProjectsPane snapshot={snapshot.projects} />}
-      threadMaximized={threadMaximized}
-      threads={<ThreadsPane snapshot={snapshot.threads} />}
-      thread={
-        <ThreadView
-          contextItems={contextItems}
-          snapshot={snapshot.threads}
-          threadMaximized={threadMaximized}
-          transcript={transcript}
-          onToggleMaximized={() =>
-            setThreadMaximized((maximized) => !maximized)
-          }
-        />
-      }
-    />
+    <>
+      <PaneLayout
+        projects={<ProjectsPane snapshot={snapshot.projects} />}
+        threadMaximized={threadMaximized}
+        threads={<ThreadsPane snapshot={snapshot.threads} />}
+        thread={
+          <ThreadView
+            contextItems={contextItems}
+            snapshot={snapshot.threads}
+            threadMaximized={threadMaximized}
+            transcript={transcript}
+            onToggleMaximized={() =>
+              setThreadMaximized((maximized) => !maximized)
+            }
+          />
+        }
+      />
+      <dialog
+        id="settings-dialog"
+        ref={settingsDialog}
+        aria-labelledby="settings-title"
+      >
+        <div className="settings-header">
+          <h2 id="settings-title">Mischief Settings</h2>
+          <button
+            className="icon"
+            type="button"
+            title="Close Settings"
+            aria-label="Close Settings"
+            onClick={() => settingsDialog.current?.close()}
+          >
+            ×
+          </button>
+        </div>
+        <label className="settings-option">
+          <input
+            type="checkbox"
+            checked={assignWorkspaceColors}
+            aria-describedby="assign-workspace-colors-description"
+            onChange={(event) => {
+              const value = event.currentTarget.checked;
+              setAssignWorkspaceColors(value);
+              postMessage({ type: "setAssignWorkspaceColors", value });
+            }}
+          />
+          <span>
+            <span className="settings-name">
+              Assign Workspace window colors
+            </span>
+            <span
+              className="settings-description"
+              id="assign-workspace-colors-description"
+            >
+              Automatically assigns colors from the active theme to Workspace
+              windows that do not already define them.
+            </span>
+          </span>
+        </label>
+      </dialog>
+    </>
   );
 };

@@ -89,11 +89,30 @@
       {
         "command": "mischief.newThread",
         "title": "Mischief: New Thread"
+      },
+      {
+        "command": "mischief.settings",
+        "title": "Mischief: Settings",
+        "icon": "$(gear)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "mischief.settings",
+          "when": "view == mischief.view",
+          "group": "navigation@10"
+        }
+      ]
+    },
     "configuration": {
       "title": "Mischief",
       "properties": {
+        "mischief.assignWorkspaceColors": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically assign Workspace window colors from the active theme."
+        },
         "mischief.fontFamily": {
           "type": "string",
           "default": "",

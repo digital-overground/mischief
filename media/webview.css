@@ -26,6 +26,61 @@ main {
   display: flex;
   flex-direction: column;
 }
+#settings-dialog {
+  width: min(360px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 6px;
+  padding: 0;
+  color: var(--vscode-foreground);
+  background: var(--vscode-editorWidget-background);
+  box-shadow: 0 4px 16px var(--vscode-widget-shadow);
+}
+#settings-dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+.settings-header {
+  min-height: 36px;
+  padding: 6px 8px 6px 12px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid
+    var(--vscode-widget-border, var(--vscode-panel-border));
+}
+.settings-header h2 {
+  margin: 0;
+  flex: 1;
+  font-size: 13px;
+}
+.settings-header .icon {
+  font-size: 18px;
+}
+.settings-option {
+  padding: 14px 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  cursor: pointer;
+}
+.settings-option input {
+  margin: 2px 0 0;
+  accent-color: var(--vscode-focusBorder);
+}
+.settings-name,
+.settings-description {
+  display: block;
+}
+.settings-name {
+  font-weight: 600;
+}
+.settings-description {
+  margin-top: 3px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  line-height: 1.4;
+}
 main > section {
   min-height: 72px;
   display: flex;

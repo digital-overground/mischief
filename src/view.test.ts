@@ -6,13 +6,18 @@ import { describe, expect, test, vi } from "vitest";
 import { MischiefView } from "./view";
 
 const vscode = vi.hoisted(() => ({
+  assignWorkspaceColors: true,
   executeCommand: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+  updateConfiguration: vi.fn<
+    (key: string, value: unknown, target: number) => Promise<void>
+  >(() => Promise.resolve()),
 }));
 
 vi.mock(
   import("vscode"),
   () =>
     ({
+      ConfigurationTarget: { Global: 1 },
       Uri: {
         joinPath: (base: { fsPath: string }, ...parts: string[]) => ({
           fsPath: path.join(base.fsPath, ...parts),
@@ -20,9 +25,11 @@ vi.mock(
       },
       commands: { executeCommand: vscode.executeCommand },
       workspace: {
-        getConfiguration: vi.fn<() => { get: () => string }>(() => ({
-          get: () => "",
-        })),
+        getConfiguration: () => ({
+          get: (key: string) =>
+            key === "assignWorkspaceColors" ? vscode.assignWorkspaceColors : "",
+          update: vscode.updateConfiguration,
+        }),
       },
     }) as never
 );
@@ -254,6 +261,59 @@ describe("view provider", () => {
       placeholders: webview.html.includes("{{"),
       uris: webview.html.includes("webview:/"),
     }).toStrictEqual({ csp: true, placeholders: false, uris: true });
+  });
+
+  test("persists Workspace color assignment from Settings", async () => {
+    const postMessage = vi.fn<(message: unknown) => void>();
+    let receive: ((message: unknown) => void) | undefined;
+    vscode.assignWorkspaceColors = true;
+    vscode.updateConfiguration.mockImplementation((_key, value) => {
+      vscode.assignWorkspaceColors = value as boolean;
+      return Promise.resolve();
+    });
+    const provider = new MischiefView(
+      {} as never,
+      {
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({ attentionCount: 0, threads: [] }),
+      } as never,
+      { fsPath: process.cwd() } as never,
+      {} as never
+    );
+    await provider.resolveWebviewView({
+      onDidDispose: vi.fn<() => void>(),
+      webview: {
+        asWebviewUri: (uri: { fsPath: string }) => ({
+          toString: () => `webview:${uri.fsPath}`,
+        }),
+        cspSource: "webview-csp",
+        html: "",
+        onDidReceiveMessage: (listener: (message: unknown) => void) => {
+          receive = listener;
+        },
+        options: {},
+        postMessage,
+      },
+    } as never);
+    postMessage.mockClear();
+
+    provider.showSettings();
+    receive?.({ type: "setAssignWorkspaceColors", value: false });
+    await vi.waitFor(() =>
+      expect(vscode.updateConfiguration).toHaveBeenCalledWith(
+        "assignWorkspaceColors",
+        false,
+        1
+      )
+    );
+    provider.showSettings();
+
+    expect(postMessage.mock.calls).toStrictEqual([
+      [{ assignWorkspaceColors: true, type: "showSettings" }],
+      [{ assignWorkspaceColors: false, type: "showSettings" }],
+    ]);
+    vscode.updateConfiguration.mockReset();
+    vscode.assignWorkspaceColors = true;
   });
 
   test("renders Markdown without allowing raw HTML", async () => {
