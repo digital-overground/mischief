@@ -7,7 +7,6 @@ import { normalizeWorkspaceName } from "./projects/projects";
 import type {
   Projects,
   ProjectsSnapshot,
-  ProjectsStorage,
   Workspace,
 } from "./projects/projects";
 import type {
@@ -106,14 +105,14 @@ export class MischiefView implements vscode.WebviewViewProvider {
   private projectsSnapshot: ProjectsSnapshot = { projects: [], ungrouped: [] };
   private readonly extensionUri: vscode.Uri;
   private readonly projects: Projects;
-  private readonly storage: ProjectsStorage;
+  private readonly storage: Pick<vscode.Memento, "get" | "update">;
   private readonly threads: Threads;
 
   constructor(
     projects: Projects,
     threads: Threads,
     extensionUri: vscode.Uri,
-    storage: ProjectsStorage
+    storage: Pick<vscode.Memento, "get" | "update">
   ) {
     this.projects = projects;
     this.threads = threads;

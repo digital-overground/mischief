@@ -1,9 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
 import * as vscode from "vscode";
 
+import { ProfileSync } from "./profile-sync/profile-sync";
 import { Projects } from "./projects/projects";
 import { acpConnectionFactory } from "./threads/acp";
 import type { AgentLaunch } from "./threads/acp";
@@ -35,19 +37,29 @@ export const activate = async (
   context: vscode.ExtensionContext
 ): Promise<void> => {
   const output = vscode.window.createOutputChannel("Mischief");
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const log = (message: string): void => output.appendLine(message);
+  const profileSync = await ProfileSync.open({
+    instanceId: randomUUID(),
+    log,
+    profileDirectory: context.globalStorageUri.fsPath,
+    workspace: folder,
+  });
   const threads = new Threads(
     context.globalState,
-    acpConnectionFactory(agentLaunch(context), (message) =>
-      output.appendLine(message)
-    )
+    acpConnectionFactory(agentLaunch(context), log)
   );
   const view = new MischiefView(
-    new Projects(context.globalState),
+    new Projects(profileSync),
     threads,
     context.extensionUri,
     context.globalState
   );
-  context.subscriptions.push(output, { dispose: () => threads.dispose() });
+  context.subscriptions.push(
+    output,
+    { dispose: () => threads.dispose() },
+    { dispose: () => profileSync.dispose() }
+  );
   registerMischiefView(context, view);
 
   context.subscriptions.push(
@@ -68,7 +80,6 @@ export const activate = async (
     })
   );
 
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   try {
     await view.initialize(folder);
     output.appendLine("Mischief activated");

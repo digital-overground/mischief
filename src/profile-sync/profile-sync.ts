@@ -18,10 +18,17 @@ export interface ProfileSyncSnapshot {
   readonly memberships: readonly Membership[];
 }
 
-export interface ProfileSyncChange {
+interface PutMembershipChange {
   readonly membership: Membership;
   readonly type: "putMembership";
 }
+
+interface RemoveMembershipChange {
+  readonly path: string;
+  readonly type: "removeMembership";
+}
+
+export type ProfileSyncChange = PutMembershipChange | RemoveMembershipChange;
 
 export interface ProfileSyncOptions {
   readonly instanceId: string;
@@ -175,10 +182,23 @@ export class ProfileSync {
   }
 
   async apply(change: ProfileSyncChange): Promise<void> {
-    if (!isMembership(change.membership)) {
-      throw new TypeError("Profile Sync membership is invalid");
+    let membership: Membership;
+    if (change.type === "putMembership") {
+      if (!isMembership(change.membership)) {
+        throw new TypeError("Profile Sync membership is invalid");
+      }
+      membership = copyMembership(change.membership);
+    } else {
+      if (!isAbsolutePath(change.path)) {
+        throw new TypeError("Profile Sync membership path is invalid");
+      }
+      const current = this.records.get(change.path);
+      if (!current || current.state === "removed") {
+        return;
+      }
+      membership = { ...copyMembership(current), state: "removed" };
     }
-    const membership = copyMembership(change.membership);
+
     const record: MembershipRecord = {
       ...membership,
       version: 1,

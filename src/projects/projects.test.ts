@@ -1,14 +1,17 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
-import type { ProjectsStorage } from "./projects";
+import { ProfileSync } from "../profile-sync/profile-sync";
 import { Projects } from "./projects";
 
 const exec = promisify(execFile);
+const log = vi.fn<(message: string) => void>();
+const profileSyncs: ProfileSync[] = [];
 const temporaryFolders: string[] = [];
 
 const temporaryFolder = async (): Promise<string> => {
@@ -21,21 +24,27 @@ const git = async (cwd: string, ...args: string[]): Promise<void> => {
   await exec("git", ["-C", cwd, ...args]);
 };
 
-class MemoryStorage implements ProjectsStorage {
-  private readonly values = new Map<string, unknown>();
+const openProfileSync = async (
+  profileDirectory?: string,
+  workspace?: string
+): Promise<ProfileSync> => {
+  const directory = profileDirectory ?? (await temporaryFolder());
+  const sync = await ProfileSync.open({
+    instanceId: randomUUID(),
+    log,
+    profileDirectory: directory,
+    workspace: workspace ?? path.join(directory, "workspace"),
+  });
+  profileSyncs.push(sync);
+  return sync;
+};
 
-  get<T>(key: string, fallback: T): T {
-    return (this.values.get(key) as T | undefined) ?? fallback;
-  }
-
-  update(key: string, value: unknown): Promise<void> {
-    this.values.set(key, value);
-    return Promise.resolve();
-  }
-}
+const createProjects = async (): Promise<Projects> =>
+  new Projects(await openProfileSync());
 
 describe("projects module", () => {
   afterEach(async () => {
+    await Promise.all(profileSyncs.splice(0).map((sync) => sync.dispose()));
     await Promise.all(
       temporaryFolders
         .splice(0)
@@ -45,7 +54,7 @@ describe("projects module", () => {
 
   test("refresh removes membership for a missing untracked Workspace", async () => {
     const folder = await temporaryFolder();
-    const projects = new Projects(new MemoryStorage());
+    const projects = await createProjects();
     await projects.add(folder);
 
     await rm(folder, { recursive: true });
@@ -56,9 +65,9 @@ describe("projects module", () => {
     expect(snapshot.ungrouped).toStrictEqual([]);
   });
 
-  test("an explicitly removed Workspace stays unmanaged until it is added", async () => {
+  test("an explicitly removed Workspace stays removed until it is added", async () => {
     const folder = await temporaryFolder();
-    const projects = new Projects(new MemoryStorage());
+    const projects = await createProjects();
 
     await projects.open(folder);
     const removed = await projects.remove(folder);
@@ -71,7 +80,7 @@ describe("projects module", () => {
 
   test("opening a folder adds and marks its Workspace as current", async () => {
     const folder = await temporaryFolder();
-    const projects = new Projects(new MemoryStorage());
+    const projects = await createProjects();
     const canonicalFolder = await realpath(folder);
 
     const snapshot = await projects.open(folder);
@@ -81,9 +90,9 @@ describe("projects module", () => {
     ]);
   });
 
-  test("adding a non-Git folder creates an ungrouped Workspace", async () => {
+  test("adding an untracked folder creates an ungrouped Workspace", async () => {
     const folder = await temporaryFolder();
-    const projects = new Projects(new MemoryStorage());
+    const projects = await createProjects();
     const canonicalFolder = await realpath(folder);
 
     const snapshot = await projects.add(folder);
@@ -107,7 +116,7 @@ describe("projects module", () => {
     await git(root, "config", "user.name", "Mischief Test");
     await git(root, "commit", "--allow-empty", "--message=initial");
     await git(root, "worktree", "add", "-b", "deleted", linked);
-    const projects = new Projects(new MemoryStorage());
+    const projects = await createProjects();
     await projects.add(root);
 
     await rm(linked, { recursive: true });
@@ -126,7 +135,7 @@ describe("projects module", () => {
     await git(root, "config", "user.email", "mischief@example.test");
     await git(root, "config", "user.name", "Mischief Test");
     await git(root, "commit", "--allow-empty", "--message=initial");
-    const projects = new Projects(new MemoryStorage());
+    const projects = await createProjects();
     await projects.add(root);
 
     await git(root, "worktree", "add", "-b", "later", linked);
@@ -142,7 +151,7 @@ describe("projects module", () => {
     await git(root, "config", "user.email", "mischief@example.test");
     await git(root, "config", "user.name", "Mischief Test");
     await git(root, "commit", "--allow-empty", "--message=initial");
-    const projects = new Projects(new MemoryStorage());
+    const projects = await createProjects();
     await projects.add(root);
 
     await expect(projects.createWorkspace(root, "../escape")).rejects.toThrow(
@@ -172,6 +181,38 @@ describe("projects module", () => {
     );
   });
 
+  test("Project membership added in one Instance appears when another Instance refreshes", async () => {
+    const parent = await temporaryFolder();
+    const root = path.join(parent, "mischief");
+    await git(parent, "init", "--initial-branch=main", root);
+    await git(root, "config", "user.email", "mischief@example.test");
+    await git(root, "config", "user.name", "Mischief Test");
+    await git(root, "commit", "--allow-empty", "--message=initial");
+    const canonicalRoot = await realpath(root);
+    const profileDirectory = await temporaryFolder();
+    vi.useFakeTimers();
+    const firstSync = await openProfileSync(profileDirectory, canonicalRoot);
+    const secondSync = await openProfileSync(
+      profileDirectory,
+      path.join(profileDirectory, "second-workspace")
+    );
+
+    try {
+      const first = new Projects(firstSync);
+      const second = new Projects(secondSync);
+      await first.add(root);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      await vi.waitFor(async () => {
+        const snapshot = await second.refresh();
+        expect(snapshot.projects).toMatchObject([{ root: canonicalRoot }]);
+      });
+    } finally {
+      await Promise.all([firstSync.dispose(), secondSync.dispose()]);
+      vi.useRealTimers();
+    }
+  });
+
   test("adding a Git Workspace discovers its Project and linked Workspaces", async () => {
     const parent = await temporaryFolder();
     const root = path.join(parent, "mischief");
@@ -183,7 +224,7 @@ describe("projects module", () => {
     await git(root, "commit", "--allow-empty", "--message=initial");
     await git(root, "worktree", "add", "-b", "feature", linked);
 
-    const projects = new Projects(new MemoryStorage());
+    const projects = await createProjects();
     const snapshot = await projects.add(linked);
     const canonicalRoot = await realpath(root);
     const canonicalLinked = await realpath(linked);
