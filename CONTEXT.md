@@ -4,7 +4,7 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 
 ## Language
 
-**Project**: A conceptual Git-based grouping deliberately managed by Mischief. A Project is anchored to one Git checkout root and contains that root plus any linked Git Workspaces. _Avoid_: Repository, application, VS Code workspace.
+**Project**: A conceptual Git-based grouping added to Mischief. A Project is anchored to one Git checkout root and contains that root plus any linked Git Workspaces. _Avoid_: Repository, application, VS Code workspace.
 
 **Workspace**: A concrete folder or checkout where a Thread runs. Linked Git worktrees are separate Workspaces in the same Project. _Avoid_: Project, session, checkout when the folder itself is meant.
 
@@ -12,14 +12,14 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 
 **Agent**: An ACP-speaking executable that runs Threads. MagPi ACP is the default Agent. _Avoid_: Model, provider, session.
 
-**Membership**: Whether a Project or standalone Workspace is present in Mischief's profile-wide managed list. Removing membership does not delete Threads or Agent history. _Avoid_: Deletion, archive.
+**Membership**: Whether a Project or untracked Workspace is present in Mischief's profile-wide list. Removing membership does not delete Threads or Agent history. _Avoid_: Deletion, archive.
 
 **ACP session**: The protocol-level runtime/session identified by an ACP Agent. It is an implementation detail behind a Mischief Thread. _Avoid_: Thread when speaking about the user's domain.
 
 ## Relationships
 
 - A Project contains one or more Git Workspaces: its checkout root and discovered linked worktrees.
-- A non-Git Workspace belongs to the non-selectable `Ungrouped` section rather than a Project.
+- An untracked Workspace belongs to the non-selectable `Ungrouped` section rather than a Project.
 - Projects themselves are not selectable in the combined view. They are labeled by their root folder name and sorted alphabetically; the currently open Workspace is visibly indicated.
 - A Workspace contains zero or more Threads.
 - A Thread runs through exactly one Agent and one Workspace.
@@ -29,17 +29,17 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 
 ## Project behavior
 
-- Opening an unlisted folder in VS Code automatically creates or discovers its Git-root Project; a non-Git folder becomes a standalone Workspace. An explicitly removed path is the exception and stays unmanaged until `Add Workspace…` is used.
+- Opening an unlisted folder in VS Code automatically creates or discovers its Git-root Project; a non-Git folder becomes an untracked Workspace. An explicitly removed path is the exception and stays removed until `Add Workspace…` is used.
 - Opening an already-listed Workspace does not change Project membership.
 - A Project is anchored to its Git checkout root; selecting a subfolder resolves to that Project rather than creating a separate Project.
 - The Git checkout root and its current linked worktrees are discovered automatically and shown as Workspaces in the same Project.
 - Newly-created linked worktrees appear on refresh; deleted or pruned worktrees disappear on refresh.
 - When a Workspace disappears, Mischief removes its Threads from the visible index but preserves ACP/Pi history; it does not delete that history. If the exact Workspace returns, Mischief restores those Threads automatically.
-- Project identity is the exact canonical Git-root path; standalone Workspace identity is the exact canonical folder path. Separate clones never join the same Project based on GitHub or another remote origin.
+- A Project is keyed by its exact canonical Git-root path; an untracked Workspace is keyed by its exact canonical folder path. Separate clones never join the same Project based on GitHub or another remote origin.
 - Membership is global per VS Code profile, persists across restarts, and is shared by every open Mischief window in that profile.
 - Selecting a Workspace focuses its existing VS Code window when open; otherwise it opens the folder in a new window. Workspace rows use the folder name as their primary label and show branch/worktree identity plus Git changes, ahead, and behind status.
-- Removing a Git Project removes the whole group’s membership; discovered linked Workspaces cannot be hidden individually. A standalone Workspace can be removed from `Ungrouped`. Removal affects membership only and suppresses automatic re-addition: Mischief Thread registrations and ACP/Pi history remain and reappear when the same Project or Workspace is explicitly added again. Active turns in the removed membership are cancelled, but open VS Code folders remain open.
-- If a managed Git root or standalone Workspace no longer exists on disk, Mischief removes its membership automatically.
+- Removing a Git Project removes the whole group’s membership; discovered linked Workspaces cannot be hidden individually. An untracked Workspace can be removed from `Ungrouped`. Removal affects membership only and prevents automatic re-addition: Mischief Thread registrations and ACP/Pi history remain and reappear when the same Project or Workspace is explicitly added again. Active turns in the removed membership are cancelled, but open VS Code folders remain open.
+- If a listed Git root or untracked Workspace no longer exists on disk, Mischief removes its membership automatically.
 - `Add Workspace…` lets the user choose any folder, including one not currently open or previously removed; Mischief derives its Git-root Project or adds it under `Ungrouped`.
 
 ## Thread behavior

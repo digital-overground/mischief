@@ -6,7 +6,7 @@
 
 Keep every running Mischief Instance in one VS Code profile synchronized without adding a broker process.
 
-A user with multiple Workspace windows open must see the same managed Project and Workspace membership, durable Thread registrations, and current Thread statuses in each window. Closing an owning window must eventually make its live statuses offline rather than leaving them running forever.
+A user with multiple Workspace windows open must see the same Project and Workspace list, durable Thread registrations, and current Thread statuses in each window. Closing an owning window must eventually make its live statuses offline rather than leaving them running forever.
 
 This plan does not keep Agent turns alive after their owning VS Code window closes. That requires a future runtime daemon.
 
@@ -41,8 +41,8 @@ The implementation agent must preserve these facts:
 - `Projects` currently stores complete `roots`, `ungrouped`, and `suppressed` arrays under `mischief.projects`.
 - `Projects` rereads storage for operations, but VS Code does not provide a cross-window `globalState` change event.
 - `Threads` currently loads the complete `mischief.threads` value once in its constructor. Two extension hosts can therefore hold stale copies and overwrite unrelated Thread registrations.
-- Project identity remains the exact canonical Git-root path.
-- Standalone Workspace identity remains the exact canonical folder path.
+- A Git Project is keyed by its exact canonical Git-root path.
+- An untracked Workspace is keyed by its exact canonical folder path.
 - Linked worktrees remain discovered Workspaces, not independent memberships.
 - Thread IDs are UUIDs and remain globally unique.
 - ACP owns transcript history. Profile Sync stores registrations and status, not full transcripts.
@@ -58,8 +58,8 @@ Phase 0 must record this trade-off in `docs/adr/0001-profile-sync-files.md`: sha
 
 ### Included
 
-- Synchronized managed Project and standalone Workspace membership.
-- Synchronized suppression tombstones.
+- Synchronized Git Project and untracked Workspace membership.
+- Synchronized removal tombstones.
 - Synchronized durable Thread registrations and selected-Thread restoration.
 - Instance presence for open Workspace windows.
 - Thread status heartbeats for `running`, `waiting`, `idle`, and `error`.
@@ -169,7 +169,7 @@ interface ProfileSyncSnapshot {
 - Never mutate a previously returned snapshot.
 - Sort arrays deterministically.
 - Exclude removed Thread tombstones from `threads`.
-- Keep managed and suppressed membership states visible to `Projects`.
+- Keep active and removed membership states visible to `Projects`.
 - Retain tombstone and presence mechanics privately.
 - Include derived Workspace activity without exposing filesystem details.
 
@@ -186,7 +186,7 @@ Use one discriminated union rather than many pass-through methods. Add variants 
 ```ts
 type ProfileSyncChange =
   | { type: "putMembership"; membership: Membership }
-  | { type: "removeMembership"; identity: string }
+  | { type: "removeMembership"; path: string }
   | { type: "putThread"; thread: SyncedThread }
   | { type: "removeThread"; id: string; workspace: string }
   | { type: "selectThread"; threadId?: string; workspace: string }
@@ -213,7 +213,7 @@ Use a versioned directory so a future incompatible format can coexist during mig
 ```text
 <globalStorageUri>/profile-sync-v1/
   memberships/
-    <sha256-identity>.json
+    <sha256-path>.json
   threads/
     <thread-id>.json
   selections/
@@ -224,26 +224,27 @@ Use a versioned directory so a future incompatible format can coexist during mig
     <thread-id>.json
 ```
 
-Use Node's standard `crypto.createHash("sha256")`. Use the complete lowercase hexadecimal digest. Never derive identity from a remote URL or folder basename.
+Hash the complete canonical path with Node's standard `crypto.createHash("sha256")` and use the full lowercase hexadecimal digest. Never substitute a remote URL or folder basename for the path.
 
 ### Membership record
 
 ```ts
 interface MembershipRecord {
   version: 1;
-  identity: string;
-  kind: "project" | "standalone";
-  state: "managed" | "suppressed";
+  kind: "git" | "untracked";
+  path: string;
+  state: "active" | "removed";
   writtenAt: string;
 }
 ```
 
 Rules:
 
-- `identity` is already canonicalized by `Projects` before writing.
-- A Git Project record stores its root only; linked Workspaces continue to come from Git discovery.
-- Removal writes `state: "suppressed"`; it does not delete the record.
-- Adding a previously suppressed identity overwrites the same hashed record with `state: "managed"`.
+- `path` is already canonicalized by `Projects` before writing.
+- A `git` record stores the Project root only; linked Workspaces continue to come from Git discovery.
+- An `untracked` record stores the non-Git Workspace folder.
+- Removal writes `state: "removed"`; it does not delete the record.
+- Adding a previously removed path overwrites the same hashed record with `state: "active"`.
 
 ### Thread record
 
@@ -365,7 +366,7 @@ Membership, Thread, and selection records use one local helper inside `profile-s
 2. Rename it over the destination.
 3. Leave the previous destination untouched if writing fails.
 
-There is no global lock. Records are independent, and current behavior gives each Workspace one Owner Instance. Concurrent writes to the same membership record use last completed write wins; simultaneous add/remove actions for the same identity are outside the first-version guarantee. Within one process, ignore an observed record whose `writtenAt` predates the cached record.
+There is no global lock. Records are independent, and current behavior gives each Workspace one Owner Instance. Concurrent writes to the same membership record use last completed write wins; simultaneous add/remove actions for the same path are outside the first-version guarantee. Within one process, ignore an observed record whose `writtenAt` predates the cached record.
 
 ### Validation
 
@@ -474,7 +475,7 @@ Test setup:
 - Create one real temporary profile directory with `mkdtemp`.
 - Open two `ProfileSync` instances with fixed Instance IDs and different Workspace paths.
 - Subscribe to the second Instance.
-- Apply one managed standalone membership through the first Instance.
+- Apply one active untracked Workspace membership through the first Instance.
 - Advance fake timers through one polling interval.
 - Assert through `second.snapshot()` that the exact known membership is present.
 - Dispose both Instances and remove the temporary directory in `finally`.
@@ -506,25 +507,25 @@ Do not add Threads, presence, migration, expiry, retries, or UI code in this pha
 
 The focused test is green from two independent `ProfileSync` objects sharing only a temporary directory.
 
-## Phase 2: Preserve membership and suppression behavior
+## Phase 2: Preserve membership removal behavior
 
-### Slice 2A: Suppression tombstones
+### Slice 2A: Removal tombstones
 
 #### Red
 
 Add a test:
 
-> removing membership in one Instance suppresses it in another Instance
+> removing membership in one Instance marks it removed in another Instance
 
-Start with a managed record, remove it through `apply`, advance the poll, and assert that the second snapshot exposes it as suppressed rather than managed.
+Start with an active record, remove it through `apply`, advance the poll, and assert that the second snapshot exposes it as removed rather than active.
 
 #### Green
 
-Add the `removeMembership` change and tombstone merge. Overwrite the same hashed record; do not add a deletion protocol.
+Add the `removeMembership` change and removal tombstone merge. Overwrite the same hashed record; do not add a deletion protocol.
 
 #### Completion criterion
 
-A later stale in-memory managed value cannot reappear after a valid suppression record has been observed.
+A later stale in-memory active value cannot reappear after a valid removed record has been observed.
 
 ### Slice 2B: Projects integration
 
@@ -541,10 +542,10 @@ Use a real temporary Git Project as existing tests do. Use two real Profile Sync
 Refactor `Projects` to consume Profile Sync membership instead of `mischief.projects` arrays:
 
 - `open` still canonicalizes the selected folder.
-- `add` writes one managed membership record.
-- `remove` writes one suppression record.
+- `add` writes one active membership record.
+- `remove` writes one removed membership record.
 - `refresh` reads the latest Profile Sync snapshot and performs Git discovery.
-- Missing roots and standalone paths retain existing cleanup behavior without deleting suppression tombstones.
+- Missing Git roots and untracked Workspace paths retain existing cleanup behavior without deleting removal tombstones.
 - Linked worktree discovery remains inside `Projects`.
 
 Remove `StoredProjects`, `STORAGE_KEY`, and `ProjectsStorage` only after all callers and tests have moved. Do not leave a pass-through compatibility wrapper.
@@ -561,13 +562,13 @@ Add one Profile Sync test:
 
 > opening Profile Sync imports legacy Project membership exactly once
 
-Pass a representative legacy value containing a Git root, standalone Workspace, and suppressed identity. Open Profile Sync twice and assert one active record per identity with suppression preserved.
+Pass a representative legacy value containing a Git root, untracked Workspace, and path from the legacy `suppressed` array. Open Profile Sync twice and assert one active or removed record per path with removal preserved.
 
 ### Green
 
 - Let `ProfileSync.open` accept optional legacy Project values only for migration.
 - Import only when no v1 membership records exist.
-- Use deterministic identities so concurrent idempotent imports converge.
+- Use canonical paths so concurrent idempotent imports converge.
 - In `src/extension.ts`, read `mischief.profileSyncProjectsVersion`, pass legacy values only when needed, and update the marker to `1` after `ProfileSync.open` succeeds.
 - Leave legacy values untouched.
 - Prefer existing v1 records over legacy values.
@@ -778,7 +779,7 @@ Use a literal host message and assert accessible status text, not CSS class impl
 
 ### Completion criterion
 
-Every active Instance renders the same aggregate activity for all managed Workspaces while still identifying its own current Workspace correctly.
+Every active Instance renders the same aggregate activity for all listed Workspaces while still identifying its own current Workspace correctly.
 
 ## Phase 8: Lifecycle and cleanup
 
@@ -854,9 +855,9 @@ Formatting, linting, type checking, all tests, and both bundles pass after revie
 
 ### Membership
 
-- Adding a Project or standalone Workspace in one Instance appears in every other running Instance within two seconds.
+- Adding a Git Project or untracked Workspace in one Instance appears in every other running Instance within two seconds.
 - Removing membership in one Instance removes it everywhere within two seconds.
-- Suppressed paths stay suppressed and are not resurrected by stale readers.
+- Removed paths stay removed and are not resurrected by stale readers.
 - Linked Workspace discovery and missing-path cleanup retain current behavior.
 - Separate clones remain separate Projects.
 
@@ -890,8 +891,8 @@ Formatting, linting, type checking, all tests, and both bundles pass after revie
 
 After automated checks pass:
 
-1. Launch one Extension Development Host and open a managed Workspace.
-2. Launch a second Extension Development Host under the same test profile and open another managed Workspace.
+1. Launch one Extension Development Host and open a listed Workspace.
+2. Launch a second Extension Development Host under the same test profile and open another listed Workspace.
 3. Add and remove membership in one window; verify the other updates without manual refresh.
 4. Start a Thread in one window; verify the other window shows running activity for that Workspace.
 5. Trigger a permission or elicitation request; verify waiting/attention appears in the other window.

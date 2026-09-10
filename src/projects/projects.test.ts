@@ -43,7 +43,7 @@ describe("projects module", () => {
     );
   });
 
-  test("refresh removes membership for a missing standalone Workspace", async () => {
+  test("refresh removes membership for a missing untracked Workspace", async () => {
     const folder = await temporaryFolder();
     const projects = new Projects(new MemoryStorage());
     await projects.add(folder);
