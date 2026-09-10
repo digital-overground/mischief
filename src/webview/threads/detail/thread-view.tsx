@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 import { postMessage } from "../../bridge";
 import { SvgIcon } from "../../icon";
@@ -38,6 +38,7 @@ export const ThreadView = ({
 }): React.JSX.Element => {
   const chat = useRef<HTMLDivElement>(null);
   const previousThread = useRef<string | null>(null);
+  const [copyNotice, setCopyNotice] = useState(0);
   const shouldStick = useRef(true);
   const { selected } = snapshot;
   const transcriptItems =
@@ -100,6 +101,7 @@ export const ThreadView = ({
         }}
       >
         <Transcript
+          onCopied={() => setCopyNotice((notice) => notice + 1)}
           selected={selected}
           streamedItems={transcriptItems}
           key={selected?.id ?? "none"}
@@ -130,6 +132,7 @@ export const ThreadView = ({
       <PlanControl plan={plan} key={plan?.id ?? "no-plan"} />
       <Composer
         contextItems={contextItems}
+        copyNotice={copyNotice}
         selected={selected}
         workspace={snapshot.workspace}
       />

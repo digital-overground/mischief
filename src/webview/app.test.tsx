@@ -7,7 +7,14 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { HostToWebviewMessage } from "./protocol";
 
 const postMessage = vi.fn<(message: unknown) => void>();
+const writeText = vi.fn<(text: string) => Promise<void>>(() =>
+  Promise.resolve()
+);
 vi.stubGlobal("acquireVsCodeApi", () => ({ postMessage }));
+Object.defineProperty(navigator, "clipboard", {
+  configurable: true,
+  value: { writeText },
+});
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -52,6 +59,7 @@ describe("React webview", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     postMessage.mockClear();
+    writeText.mockClear();
     document.body.innerHTML = '<div id="root"></div>';
   });
 
@@ -328,6 +336,44 @@ describe("React webview", () => {
       scrollHeight: scrollHeight.mock.calls.length,
       scrollTop: scrollTop.mock.calls.length,
     }).toStrictEqual({ clientHeight: 0, scrollHeight: 0, scrollTop: 0 });
+    await unmount();
+  });
+
+  test("copies and clears highlighted transcript text when selection ends", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (state.type !== "state" || !state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    state.threads.selected.items = [
+      { id: "assistant", kind: "assistant", text: "Copy this" },
+    ];
+    await act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    const body = document.querySelector<HTMLElement>("#transcript .body");
+    const selection = window.getSelection();
+    if (!body || !selection) {
+      throw new Error("Missing transcript selection");
+    }
+    const range = document.createRange();
+    range.selectNodeContents(body);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    await act(async () => {
+      body.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      // Browser finalizes selection after mouseup handlers.
+      selection.addRange(range);
+      await Promise.resolve();
+    });
+
+    expect(writeText).toHaveBeenCalledExactlyOnceWith("Copy this");
+    expect(document.querySelector(".toast")?.textContent).toBe(
+      "copied to clipboard"
+    );
+    await act(() => vi.advanceTimersByTime(1));
+    expect(selection.toString()).toBe("");
     await unmount();
   });
 
