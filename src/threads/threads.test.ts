@@ -433,24 +433,31 @@ describe("threads module", () => {
     });
   });
 
-  test("rolls the selected Thread back through the Agent and reloads it", async () => {
+  test("rolls back before the selected user message and restores its draft", async () => {
     const agent = new FakeAgent();
     const threads = new Threads(memoryStorage(), agent.factory);
     await threads.openWorkspace("/workspace");
-    await threads.prompt("Rollback here");
+    await threads.prompt("Restore me");
+    await threads.prompt("Later message");
     const message = threads
       .snapshot()
-      .selected?.items.find((item) => item.kind === "user");
+      .selected?.items.find(
+        (item) => item.kind === "user" && item.text === "Restore me"
+      );
     if (!message) {
       throw new Error("Missing user message");
     }
+    agent.replayOnLoad = true;
 
     await threads.rollback(message.id);
 
     expect(agent.rollbackCalls).toStrictEqual([
       { messageId: message.id, sessionId: "session-1" },
     ]);
-    expect(threads.snapshot().selected?.items).toStrictEqual([]);
+    expect(threads.snapshot().selected).toMatchObject({
+      drafts: ["Restore me"],
+      items: [],
+    });
   });
 
   test("stopping a running Thread preserves output and restores queued prompts as drafts", async () => {
@@ -759,11 +766,16 @@ describe("threads module", () => {
     ]);
 
     await restored.rollback("user:pi-user-1");
-    await restored.fork("user:pi-user-1");
     expect(loadingAgent.rollbackCalls).toStrictEqual([
       { messageId: "pi-user-1", sessionId: "session-1" },
     ]);
-    expect(loadingAgent.forkCalls).toStrictEqual([
+
+    const forkingAgent = new FakeAgent();
+    forkingAgent.replayOnLoad = true;
+    const forking = new Threads(storage, forkingAgent.factory);
+    await forking.openWorkspace("/workspace");
+    await forking.fork("user:pi-user-1");
+    expect(forkingAgent.forkCalls).toStrictEqual([
       {
         cwd: "/workspace",
         messageId: "pi-user-1",

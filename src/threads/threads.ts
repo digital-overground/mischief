@@ -850,12 +850,12 @@ export class Threads {
       record.sessionId,
       agentMessageId(messageId)
     );
-    runtime.connection.dispose();
-    this.runtimes.delete(record.id);
+    runtime.items = runtime.items.slice(0, runtime.items.indexOf(message));
+    if (message.text) {
+      runtime.drafts.push(message.text);
+    }
     record.error = undefined;
     record.authentication = undefined;
-    await this.load(record);
-    await this.persist();
     this.emit();
   }
 
