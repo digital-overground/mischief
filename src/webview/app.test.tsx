@@ -117,6 +117,40 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test.each(["projects", "threads"])(
+    "exits Thread maximize when the %s pane is expanded",
+    async (paneId) => {
+      const unmount = await renderApp();
+      const projects = document.querySelector<HTMLElement>("#projects");
+      const threads = document.querySelector<HTMLElement>("#threads");
+      const heading = document.querySelector<HTMLElement>(
+        `#${paneId} > header > .heading`
+      );
+      const maximize =
+        document.querySelector<HTMLButtonElement>("#maximize-thread");
+      if (!projects || !threads || !heading || !maximize) {
+        throw new Error("Missing pane controls");
+      }
+
+      await act(() => maximize.click());
+      await act(() => heading.click());
+
+      expect(maximize.getAttribute("aria-pressed")).toBe("false");
+      expect(document.querySelector(`#${paneId}`)?.classList).not.toContain(
+        "collapsed"
+      );
+
+      await act(() => maximize.click());
+
+      expect({
+        maximized: maximize.getAttribute("aria-pressed"),
+        projects: projects.classList.contains("collapsed"),
+        threads: threads.classList.contains("collapsed"),
+      }).toStrictEqual({ maximized: "true", projects: true, threads: true });
+      await unmount();
+    }
+  );
+
   test("opens Settings and toggles Workspace window colors", async () => {
     const unmount = await renderApp();
     const dialog =

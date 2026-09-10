@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { postMessage } from "./bridge";
 import { PaneLayout } from "./pane-layout";
@@ -77,6 +77,7 @@ export const App = (): React.JSX.Element => {
       ].find((workspace) => workspace.current)?.path,
     [snapshot.projects]
   );
+  const exitThreadMaximize = useCallback(() => setThreadMaximized(false), []);
   useEffect(() => {
     if ((currentWorkspace ?? null) === previousWorkspace.current) {
       return;
@@ -89,6 +90,7 @@ export const App = (): React.JSX.Element => {
   return (
     <>
       <PaneLayout
+        onExitThreadMaximize={exitThreadMaximize}
         projects={<ProjectsPane snapshot={snapshot.projects} />}
         threadMaximized={threadMaximized}
         threads={<ThreadsPane snapshot={snapshot.threads} />}
