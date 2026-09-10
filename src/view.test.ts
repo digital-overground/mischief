@@ -214,10 +214,14 @@ describe("view provider", () => {
       onDidDispose: vi.fn<() => void>(),
       webview,
     };
+    let attentionCount = 2;
+    let emit: (() => void) | undefined;
     const threads = {
-      onChange: vi.fn<() => void>(),
+      onChange: (listener: () => void) => {
+        emit = listener;
+      },
       snapshot: () => ({
-        attentionCount: 2,
+        attentionCount,
         threads: [
           {
             createdAt: "2026-01-01T00:00:00.000Z",
@@ -254,6 +258,14 @@ describe("view provider", () => {
     expect((view as { badge?: unknown }).badge).toStrictEqual({
       tooltip: "2 Threads need attention",
       value: 2,
+    });
+
+    attentionCount = 0;
+    emit?.();
+
+    expect((view as { badge?: unknown }).badge).toStrictEqual({
+      tooltip: "",
+      value: 0,
     });
     expect(webview.html).toContain('id="root"');
     expect({

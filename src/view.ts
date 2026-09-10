@@ -632,7 +632,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
           tooltip: `${threads.attentionCount} Thread${threads.attentionCount === 1 ? "" : "s"} need attention`,
           value: threads.attentionCount,
         }
-      : undefined;
+      : { tooltip: "", value: 0 };
     if (threads.selected) {
       threads.selected = {
         ...threads.selected,
