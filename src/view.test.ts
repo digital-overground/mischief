@@ -17,17 +17,20 @@ vi.mock(
   import("vscode"),
   () =>
     ({
-      ConfigurationTarget: { Global: 1 },
+      ConfigurationTarget: { Global: 1, Workspace: 2 },
       Uri: {
+        file: (fsPath: string) => ({ fsPath }),
         joinPath: (base: { fsPath: string }, ...parts: string[]) => ({
           fsPath: path.join(base.fsPath, ...parts),
         }),
       },
       commands: { executeCommand: vscode.executeCommand },
+      extensions: { all: [] },
       workspace: {
         getConfiguration: () => ({
           get: (key: string) =>
             key === "assignWorkspaceColors" ? vscode.assignWorkspaceColors : "",
+          inspect: () => ({}),
           update: vscode.updateConfiguration,
         }),
       },

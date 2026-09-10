@@ -183,7 +183,7 @@ describe("React webview", () => {
                       ahead: 0,
                       behind: 0,
                       changes: 0,
-                      color: "#c93c3726",
+                      color: "#0e1c14",
                       current: false,
                       linked: true,
                       name: "project-feature",
@@ -214,11 +214,11 @@ describe("React webview", () => {
     expect({
       fill: dot.style.backgroundColor,
       message: postMessage.mock.calls,
-      outline: dot.style.color,
+      ring: dot.style.boxShadow,
     }).toStrictEqual({
-      fill: "rgba(201, 60, 55, 0.15)",
+      fill: "rgb(14, 28, 20)",
       message: [[{ path: "/project", type: "newWorkspace" }]],
-      outline: "rgb(201, 60, 55)",
+      ring: "0 0 0 1px #50a072",
     });
     await unmount();
   });

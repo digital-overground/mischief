@@ -9,7 +9,6 @@ import { acpConnectionFactory } from "./threads/acp";
 import type { AgentLaunch } from "./threads/acp";
 import { Threads } from "./threads/threads";
 import { MischiefView, registerMischiefView } from "./view";
-import { ensureWorkspaceColors } from "./workspace-colors";
 
 const agentLaunch = (context: vscode.ExtensionContext): AgentLaunch => {
   const env = { MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT: "true" };
@@ -70,22 +69,6 @@ export const activate = async (
   );
 
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  const workspaceColorsEnabled = vscode.workspace
-    .getConfiguration("mischief")
-    .get<boolean>("assignWorkspaceColors", true);
-  try {
-    if (
-      folder &&
-      workspaceColorsEnabled &&
-      (await ensureWorkspaceColors(folder))
-    ) {
-      output.appendLine("Applied workspace colors from the active theme");
-    }
-  } catch (error) {
-    output.appendLine(
-      `Workspace colors were not applied: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
   try {
     await view.initialize(folder);
     output.appendLine("Mischief activated");

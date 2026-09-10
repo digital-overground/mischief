@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   assignWorkspaceColors,
   ensureWorkspaceColors,
+  workspaceColorOverrides,
   workspaceWindowColor,
 } from "./workspace-colors";
 
@@ -37,6 +38,13 @@ vi.mock(
     }) as never
 );
 
+const colorLightness = (color: string): number => {
+  const channels = [1, 3, 5].map((index) =>
+    Number.parseInt(color.slice(index, index + 2), 16)
+  );
+  return (Math.max(...channels) + Math.min(...channels)) / 2;
+};
+
 describe("workspace colors", () => {
   afterEach(() => {
     vscode.extensions = [];
@@ -44,7 +52,7 @@ describe("workspace colors", () => {
     vi.clearAllMocks();
   });
 
-  test("adds subdued active-theme colors once without replacing other overrides", async () => {
+  test("adds generated theme-compatible colors once without replacing other overrides", async () => {
     const folder = await mkdtemp("/tmp/mischief-theme-");
     try {
       await writeFile(
@@ -86,31 +94,61 @@ describe("workspace colors", () => {
 
       const applied = await ensureWorkspaceColors("/muted");
       const written = vscode.workspaceValue;
-      const palette = new Set([
-        "#22272e",
-        "#adbac7",
-        "#ff0000",
-        "#4184e426",
-        "#57ab5a4d",
-        "#c93c3726",
-        "#2d333b",
-      ]);
       expect({
         applied,
-        bright: written?.["titleBar.activeBackground"] === "#ff0000",
-        mutedAccent: new Set(["#4184e426", "#c93c3726"]).has(
-          String(written?.["titleBar.activeBackground"])
-        ),
+        color: written?.["titleBar.activeBackground"],
         preserved: written?.["editorCursor.foreground"],
-        themeOnly: Object.values(written ?? {}).every((value) =>
-          palette.has(String(value))
-        ),
       }).toStrictEqual({
         applied: true,
-        bright: false,
-        mutedAccent: true,
+        color: expect.stringMatching(/^#[\da-f]{6}$/iu),
         preserved: "#ff0000",
-        themeOnly: true,
+      });
+
+      const theme = {
+        "editor.background": "#22272e",
+        foreground: "#adbac7",
+      };
+      const projectColors = Array.from(
+        { length: 100 },
+        (_, index) =>
+          workspaceColorOverrides(theme, `/project-${index}`)?.[
+            "titleBar.activeBackground"
+          ]
+      );
+      const project = "/project";
+      const workspaceColor = workspaceColorOverrides(
+        theme,
+        "/worktree-a",
+        project
+      )?.["titleBar.activeBackground"];
+      const mischief = "/Users/kyle.humphrey/Projects/_tools/mischief";
+      const mischiefColors = [
+        mischief,
+        `${mischief}-composer-list-editing`,
+        `${mischief}-workspace-color-families`,
+      ].map(
+        (workspace) =>
+          workspaceColorOverrides(theme, workspace, mischief)?.[
+            "titleBar.activeBackground"
+          ] ?? ""
+      );
+      const lightnesses = mischiefColors.map(colorLightness);
+      expect({
+        bases: new Set(projectColors).size,
+        spaced: Math.max(...lightnesses) - Math.min(...lightnesses) >= 30,
+        stable:
+          workspaceColorOverrides(theme, "/worktree-a", project)?.[
+            "titleBar.activeBackground"
+          ] === workspaceColor,
+        varied:
+          workspaceColorOverrides(theme, "/worktree-b", project)?.[
+            "titleBar.activeBackground"
+          ] !== workspaceColor,
+      }).toStrictEqual({
+        bases: 7,
+        spaced: true,
+        stable: true,
+        varied: true,
       });
 
       const reapplied = await ensureWorkspaceColors("/muted");
@@ -147,7 +185,7 @@ describe("workspace colors", () => {
         preserved: settings["editor.fontSize"],
       }).toMatchObject({
         assigned: true,
-        color: expect.stringMatching(/^#[\da-f]{8}$/iu),
+        color: expect.stringMatching(/^#[\da-f]{6}$/iu),
         preserved: 14,
       });
     } finally {

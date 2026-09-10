@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -41,6 +41,15 @@ const WINDOW_KEYS = new Set<string>([
   ...WINDOW_BACKGROUND_KEYS,
   ...WINDOW_FOREGROUND_KEYS,
 ]);
+const PROJECT_HUES = [0, 35, 60, 120, 180, 225, 285] as const;
+const WORKSPACE_VARIANTS = [
+  { hue: -12, neutral: 0.12 },
+  { hue: -8, neutral: 0.24 },
+  { hue: -4, neutral: 0.36 },
+  { hue: 4, neutral: 0.48 },
+  { hue: 8, neutral: 0.6 },
+  { hue: 12, neutral: 0.72 },
+] as const;
 
 type Colors = Record<string, string>;
 
@@ -95,6 +104,35 @@ const luminance = (color: Rgba): number =>
 const contrast = (left: Rgba, right: Rgba): number => {
   const values = [luminance(left), luminance(right)].toSorted((a, b) => b - a);
   return ((values[0] ?? 0) + 0.05) / ((values[1] ?? 0) + 0.05);
+};
+
+const hash = (value: string): Buffer =>
+  createHash("sha256").update(value).digest();
+
+const hex = (color: Rgba): string =>
+  `#${[color.red, color.green, color.blue]
+    .map((channel) => Math.round(channel * 255))
+    .map((channel) => channel.toString(16).padStart(2, "0"))
+    .join("")}`;
+
+const hsl = (hue: number, lightness: number, alpha: number): string => {
+  const saturation = 0.7;
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const x = chroma * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const sectors = [
+    [chroma, x, 0],
+    [x, chroma, 0],
+    [0, chroma, x],
+    [0, x, chroma],
+    [x, 0, chroma],
+    [chroma, 0, x],
+  ];
+  const [red, green, blue] = sectors[Math.floor(hue / 60)] ?? sectors[0] ?? [];
+  const offset = lightness - chroma / 2;
+  return `#${[red + offset, green + offset, blue + offset, alpha]
+    .map((channel) => Math.round(channel * 255))
+    .map((channel) => channel.toString(16).padStart(2, "0"))
+    .join("")}`;
 };
 
 export const readThemeColors = async (
@@ -160,7 +198,8 @@ const activeThemePath = (): string | undefined => {
 
 export const workspaceColorOverrides = (
   colors: Colors,
-  workspacePath: string
+  workspacePath: string,
+  projectPath = workspacePath
 ): Colors | undefined => {
   const base = BACKGROUND_KEYS.map((key) => rgba(colors[key] ?? "")).find(
     (color) => color?.alpha === 1
@@ -176,56 +215,43 @@ export const workspaceColorOverrides = (
     return undefined;
   }
 
-  const mutedCandidates = [
-    ...new Map(
-      Object.values(colors)
-        .map((value) => ({ color: rgba(value), value }))
-        .filter((entry): entry is { color: Rgba; value: string } =>
-          Boolean(entry.color && entry.color.alpha >= 0.08)
-        )
-        .map((entry) => [entry.value.toLowerCase(), entry] as const)
-    ).values(),
-  ]
-    .map((entry) => {
-      const displayed = composite(entry.color, base);
-      const foreground = foregrounds
-        .toSorted(
-          (left, right) =>
-            contrast(displayed, right.color) - contrast(displayed, left.color)
-        )
-        .at(0);
-      return { ...entry, displayed, foreground };
-    })
-    .filter(
-      (entry) =>
-        entry.foreground &&
-        contrast(entry.displayed, base) <= 1.5 &&
-        contrast(entry.displayed, entry.foreground.color) >= 4.5
-    )
-    .toSorted((left, right) => left.value.localeCompare(right.value));
-  const chromaticCandidates = mutedCandidates.filter(
-    ({ color }) =>
-      Math.max(color.red, color.green, color.blue) -
-        Math.min(color.red, color.green, color.blue) >=
-      0.2
+  const projectHash = hash(projectPath);
+  const workspaceHash = hash(workspacePath);
+  const baseHue =
+    PROJECT_HUES[projectHash.readUInt32BE(0) % PROJECT_HUES.length];
+  if (baseHue === undefined) {
+    return undefined;
+  }
+  const linked = workspacePath !== projectPath;
+  const variant = linked
+    ? WORKSPACE_VARIANTS[
+        workspaceHash.readUInt32BE(4) % WORKSPACE_VARIANTS.length
+      ]
+    : undefined;
+  const hue = (baseHue + (variant?.hue ?? 0) + 360) % 360;
+  const color = rgba(hsl(hue, 0.5, 0.18));
+  if (!color) {
+    return undefined;
+  }
+  const displayed = composite(color, base);
+  const neutral = luminance(base) < 0.5 ? 0 : 1;
+  const amount = variant?.neutral ?? 0;
+  const selected = {
+    alpha: 1,
+    blue: displayed.blue * (1 - amount) + neutral * amount,
+    green: displayed.green * (1 - amount) + neutral * amount,
+    red: displayed.red * (1 - amount) + neutral * amount,
+  };
+  const [foreground] = foregrounds.toSorted(
+    (left, right) =>
+      contrast(selected, right.color) - contrast(selected, left.color)
   );
-  const candidates =
-    chromaticCandidates.length > 1 ? chromaticCandidates : mutedCandidates;
-  if (!candidates.length) {
+  if (!foreground || contrast(selected, foreground.color) < 4.5) {
     return undefined;
   }
-
-  const hash = createHash("sha256")
-    .update(workspacePath)
-    .digest()
-    .readUInt32BE(0);
-  const selected = candidates.at(hash % candidates.length);
-  const foreground = selected?.foreground;
-  if (!selected || !foreground) {
-    return undefined;
-  }
+  const value = hex(selected);
   return Object.fromEntries([
-    ...WINDOW_BACKGROUND_KEYS.map((key) => [key, selected.value]),
+    ...WINDOW_BACKGROUND_KEYS.map((key) => [key, value]),
     ...WINDOW_FOREGROUND_KEYS.map((key) => [key, foreground.value]),
   ]);
 };
@@ -303,7 +329,8 @@ export const workspaceWindowColor = async (
 };
 
 export const assignWorkspaceColors = async (
-  workspacePath: string
+  workspacePath: string,
+  projectPath = workspacePath
 ): Promise<boolean> => {
   const { file, settings, source } = await readWorkspaceSettings(workspacePath);
   const existing = object(settings["workbench.colorCustomizations"]);
@@ -316,7 +343,8 @@ export const assignWorkspaceColors = async (
   }
   const overrides = workspaceColorOverrides(
     await readThemeColors(themePath),
-    randomUUID()
+    workspacePath,
+    projectPath
   );
   if (!overrides) {
     return false;
@@ -344,7 +372,8 @@ export const assignWorkspaceColors = async (
 };
 
 export const ensureWorkspaceColors = async (
-  workspacePath: string
+  workspacePath: string,
+  projectPath = workspacePath
 ): Promise<boolean> => {
   const configuration = vscode.workspace.getConfiguration(
     "workbench",
@@ -365,7 +394,8 @@ export const ensureWorkspaceColors = async (
   }
   const overrides = workspaceColorOverrides(
     await readThemeColors(themePath),
-    workspacePath
+    workspacePath,
+    projectPath
   );
   if (!overrides) {
     return false;

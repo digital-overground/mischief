@@ -21,6 +21,7 @@ import { webviewHtml } from "./webview";
 import type { HostToWebviewMessage } from "./webview/protocol";
 import {
   assignWorkspaceColors,
+  ensureWorkspaceColors,
   workspaceWindowColor,
 } from "./workspace-colors";
 
@@ -177,7 +178,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     const workspace = await this.projects.createWorkspace(project.root, name);
     if (workspaceColorsEnabled()) {
       try {
-        await assignWorkspaceColors(workspace);
+        await assignWorkspaceColors(workspace, project.root);
       } catch (error) {
         void vscode.window.showWarningMessage(
           `Mischief created the Workspace but could not assign its color: ${error instanceof Error ? error.message : String(error)}`
@@ -252,6 +253,22 @@ export class MischiefView implements vscode.WebviewViewProvider {
     snapshot: Promise<ProjectsSnapshot>
   ): Promise<void> {
     this.projectsSnapshot = await snapshot;
+    const current = this.workspaces().find((workspace) => workspace.current);
+    if (current && workspaceColorsEnabled()) {
+      const projectRoot =
+        this.projectsSnapshot.projects.find((project) =>
+          project.workspaces.some(
+            (workspace) => workspace.path === current.path
+          )
+        )?.root ?? current.path;
+      try {
+        await ensureWorkspaceColors(current.path, projectRoot);
+      } catch (error) {
+        void vscode.window.showWarningMessage(
+          `Mischief could not assign this Workspace's color: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
     await Promise.all(
       this.workspaces().map(async (workspace) => {
         workspace.color = await workspaceWindowColor(workspace.path);
