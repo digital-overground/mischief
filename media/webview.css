@@ -1152,6 +1152,33 @@ footer {
 #processing[hidden] {
   display: none;
 }
+.toast {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  z-index: 2;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 3px;
+  padding: 4px 8px;
+  background: var(--vscode-editorWidget-background);
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+  font-family: var(--mischief-mono-font);
+  font-size: 11px;
+  pointer-events: none;
+  animation: toast 2s ease both;
+}
+@keyframes toast {
+  0%,
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -7px);
+  }
+  12%,
+  70% {
+    opacity: 1;
+    transform: translate(-50%);
+  }
+}
 #composer {
   display: block;
   width: 100%;

@@ -200,12 +200,23 @@ const TranscriptNodes = memo(
 );
 
 export const Transcript = ({
+  onCopied,
   selected,
   streamedItems,
 }: {
+  onCopied: () => void;
   selected?: RenderedThreadDetail;
   streamedItems: RenderedTranscriptItem[];
 }): React.JSX.Element => {
+  const onTranscriptHighlight = async (): Promise<void> => {
+    const selection = window.getSelection();
+    const text = selection?.toString();
+    if (selection && text) {
+      await navigator.clipboard.writeText(text);
+      setTimeout(() => selection.removeAllRanges(), 0);
+      onCopied();
+    }
+  };
   const { history, tail } = useMemo(() => {
     const items = selected?.items.filter((item) => item.kind !== "plan") ?? [];
     return { history: items.slice(0, -1), tail: items.at(-1) };
@@ -229,5 +240,9 @@ export const Transcript = ({
   } else {
     content = <div className="empty">Send a prompt to start this Thread.</div>;
   }
-  return <div id="transcript">{content}</div>;
+  return (
+    <div id="transcript" onMouseUp={onTranscriptHighlight}>
+      {content}
+    </div>
+  );
 };

@@ -11,6 +11,7 @@ import type { ClipboardEvent, KeyboardEvent } from "react";
 import type { PromptImage, ThreadCommand } from "../../../../threads/threads";
 import { postMessage } from "../../../bridge";
 import type { RenderedThreadDetail } from "../../../protocol";
+import { Toast } from "../../../toast";
 import { FooterControls } from "./controls/footer-controls";
 
 interface ComposerMatch {
@@ -71,10 +72,12 @@ const matchingContextItems = (
 
 const ComposerView = ({
   contextItems,
+  copyNotice,
   selected,
   workspace,
 }: {
   contextItems: string[];
+  copyNotice: number;
   selected?: RenderedThreadDetail;
   workspace?: string;
 }): React.JSX.Element => {
@@ -288,6 +291,9 @@ const ComposerView = ({
   );
   return (
     <footer>
+      {copyNotice ? (
+        <Toast key={copyNotice} message="copied to clipboard" />
+      ) : null}
       <textarea
         id="composer"
         ref={box}
