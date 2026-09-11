@@ -41,6 +41,7 @@ const threadState = (id: string, drafts: string[]): HostToWebviewMessage => ({
     workspace: "/workspace",
   },
   type: "state",
+  workspaceActivity: {},
 });
 
 const renderApp = async (): Promise<() => Promise<void>> => {
@@ -208,7 +209,7 @@ describe("React webview", () => {
     await unmount();
   });
 
-  test("shows each Workspace color and routes Workspace actions", async () => {
+  test("shows each Workspace color and synchronized activity, then routes actions", async () => {
     const unmount = await renderApp();
     await act(() => {
       window.dispatchEvent(
@@ -238,6 +239,13 @@ describe("React webview", () => {
             },
             threads: { attentionCount: 0, threads: [] },
             type: "state",
+            workspaceActivity: {
+              "/worktrees/project-feature": {
+                activeThreads: 1,
+                attentionThreads: 1,
+                indicator: "waiting",
+              },
+            },
           } satisfies HostToWebviewMessage,
         })
       );
@@ -249,7 +257,10 @@ describe("React webview", () => {
     const close = document.querySelector<HTMLButtonElement>(
       '[aria-label="Close Workspace"]'
     );
-    if (!dot || !create || !close) {
+    const activity = document.querySelector<HTMLElement>(
+      '[aria-label="project-feature: Waiting for user input; 1 active · 1 needs attention"]'
+    );
+    if (!dot || !create || !close || !activity) {
       throw new Error("Missing Workspace controls");
     }
     postMessage.mockClear();
@@ -260,10 +271,13 @@ describe("React webview", () => {
     });
 
     expect({
+      activity: activity.className,
       fill: dot.style.backgroundColor,
       message: postMessage.mock.calls,
+      meta: document.querySelector("#project-list .meta")?.textContent,
       ring: dot.style.boxShadow,
     }).toStrictEqual({
+      activity: "thread-status waiting",
       fill: "rgb(14, 28, 20)",
       message: [
         [{ path: "/project", type: "newWorkspace" }],
@@ -274,6 +288,7 @@ describe("React webview", () => {
           },
         ],
       ],
+      meta: "worktree  1 active · 1 needs attention",
       ring: "0 0 0 1px #50a072",
     });
     await unmount();
@@ -321,6 +336,7 @@ describe("React webview", () => {
         workspace: "/workspace",
       },
       type: "state",
+      workspaceActivity: {},
     };
     await act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
@@ -450,6 +466,7 @@ describe("React webview", () => {
               workspace: "/workspace",
             },
             type: "state",
+            workspaceActivity: {},
           } satisfies HostToWebviewMessage,
         })
       );
@@ -571,6 +588,7 @@ describe("React webview", () => {
               workspace: "/workspace",
             },
             type: "state",
+            workspaceActivity: {},
           } satisfies HostToWebviewMessage,
         })
       );
@@ -684,6 +702,7 @@ describe("React webview", () => {
         workspace: "/workspace",
       },
       type: "state",
+      workspaceActivity: {},
     };
     await act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
@@ -770,6 +789,7 @@ describe("React webview", () => {
         workspace: "/workspace",
       },
       type: "state",
+      workspaceActivity: {},
     };
     await act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
@@ -879,6 +899,7 @@ describe("React webview", () => {
         workspace: "/workspace",
       },
       type: "state",
+      workspaceActivity: {},
     };
     await act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));

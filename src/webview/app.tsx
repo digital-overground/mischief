@@ -12,6 +12,7 @@ const initialState: Extract<HostToWebviewMessage, { type: "state" }> = {
   projects: { projects: [], ungrouped: [] },
   threads: { attentionCount: 0, threads: [] },
   type: "state",
+  workspaceActivity: {},
 };
 
 export const App = (): React.JSX.Element => {
@@ -91,7 +92,12 @@ export const App = (): React.JSX.Element => {
     <>
       <PaneLayout
         onExitThreadMaximize={exitThreadMaximize}
-        projects={<ProjectsPane snapshot={snapshot.projects} />}
+        projects={
+          <ProjectsPane
+            snapshot={snapshot.projects}
+            workspaceActivity={snapshot.workspaceActivity}
+          />
+        }
         threadMaximized={threadMaximized}
         threads={<ThreadsPane snapshot={snapshot.threads} />}
         thread={

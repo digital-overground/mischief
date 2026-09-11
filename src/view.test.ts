@@ -37,6 +37,11 @@ vi.mock(
     }) as never
 );
 
+const profileDatabase = () => ({
+  onChange: vi.fn<() => void>(),
+  snapshot: () => ({ workspaces: [] }),
+});
+
 describe("view provider", () => {
   test("focuses Mischief and starts a Thread in a newly created Workspace", async () => {
     vscode.executeCommand.mockClear();
@@ -75,6 +80,7 @@ describe("view provider", () => {
         threads: [],
         ...(active ? { workspace: active } : {}),
       }),
+      workspaceActivity: () => ({}),
     };
     const storage = {
       get: () => pending,
@@ -89,7 +95,8 @@ describe("view provider", () => {
       projects as never,
       threads as never,
       { fsPath: process.cwd() } as never,
-      storage as never
+      storage as never,
+      profileDatabase() as never
     );
 
     await provider.initialize(folder);
@@ -159,12 +166,14 @@ describe("view provider", () => {
         },
         threads: [],
       }),
+      workspaceActivity: () => ({}),
     };
     const provider = new MischiefView(
       {} as never,
       threads as never,
       { fsPath: process.cwd() } as never,
-      {} as never
+      {} as never,
+      profileDatabase() as never
     );
     await provider.resolveWebviewView({
       onDidDispose: vi.fn<() => void>(),
@@ -246,6 +255,7 @@ describe("view provider", () => {
           },
         ],
       }),
+      workspaceActivity: () => ({}),
     };
     const provider = new MischiefView(
       {} as never,
@@ -253,7 +263,8 @@ describe("view provider", () => {
       {
         fsPath: process.cwd(),
       } as never,
-      {} as never
+      {} as never,
+      profileDatabase() as never
     );
 
     await provider.resolveWebviewView(view as never);
@@ -278,6 +289,88 @@ describe("view provider", () => {
     }).toStrictEqual({ csp: true, placeholders: false, uris: true });
   });
 
+  test("posts synchronized Workspace and Thread activity after a database change", async () => {
+    const postMessage = vi.fn<(message: unknown) => void>();
+    let databaseChanged: (() => void) | undefined;
+    let workspaces: unknown[] = [];
+    const projectsSnapshot = {
+      projects: [],
+      ungrouped: [
+        {
+          ahead: 0,
+          behind: 0,
+          changes: 0,
+          current: false,
+          linked: false,
+          name: "remote",
+          path: "/remote",
+        },
+      ],
+    };
+    const projects = {
+      refresh: vi.fn<() => Promise<typeof projectsSnapshot>>(() =>
+        Promise.resolve(projectsSnapshot)
+      ),
+    };
+    const threads = {
+      onChange: vi.fn<() => void>(),
+      snapshot: () => ({ attentionCount: 0, threads: [] }),
+      workspaceActivity: () => ({
+        "/remote": {
+          activeThreads: 1,
+          attentionThreads: 1,
+          indicator: "waiting",
+        },
+      }),
+    };
+    const database = {
+      onChange: (listener: () => void) => {
+        databaseChanged = listener;
+      },
+      snapshot: () => ({ workspaces }),
+    };
+    const provider = new MischiefView(
+      projects as never,
+      threads as never,
+      { fsPath: process.cwd() } as never,
+      {} as never,
+      database as never
+    );
+    await provider.resolveWebviewView({
+      onDidDispose: vi.fn<() => void>(),
+      webview: {
+        asWebviewUri: (uri: { fsPath: string }) => ({
+          toString: () => `webview:${uri.fsPath}`,
+        }),
+        cspSource: "webview-csp",
+        html: "",
+        onDidReceiveMessage: vi.fn<() => void>(),
+        options: {},
+        postMessage,
+      },
+    } as never);
+    postMessage.mockClear();
+
+    workspaces = [{ path: "/remote", status: "active" }];
+    databaseChanged?.();
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projects: projectsSnapshot,
+          type: "state",
+          workspaceActivity: {
+            "/remote": {
+              activeThreads: 1,
+              attentionThreads: 1,
+              indicator: "waiting",
+            },
+          },
+        })
+      );
+    });
+  });
+
   test("persists Workspace color assignment from Settings", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     let receive: ((message: unknown) => void) | undefined;
@@ -291,9 +384,11 @@ describe("view provider", () => {
       {
         onChange: vi.fn<() => void>(),
         snapshot: () => ({ attentionCount: 0, threads: [] }),
+        workspaceActivity: () => ({}),
       } as never,
       { fsPath: process.cwd() } as never,
-      {} as never
+      {} as never,
+      profileDatabase() as never
     );
     await provider.resolveWebviewView({
       onDidDispose: vi.fn<() => void>(),
@@ -361,6 +456,7 @@ describe("view provider", () => {
         },
         threads: [],
       }),
+      workspaceActivity: () => ({}),
     };
     const provider = new MischiefView(
       {} as never,
@@ -368,7 +464,8 @@ describe("view provider", () => {
       {
         fsPath: process.cwd(),
       } as never,
-      {} as never
+      {} as never,
+      profileDatabase() as never
     );
 
     await provider.resolveWebviewView(view as never);

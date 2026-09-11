@@ -76,7 +76,8 @@ export const activate = async (
     projects,
     threads,
     context.extensionUri,
-    context.globalState
+    context.globalState,
+    database
   );
   context.subscriptions.push(output, {
     dispose: () => {

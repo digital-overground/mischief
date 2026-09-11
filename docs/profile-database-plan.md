@@ -226,7 +226,9 @@ Move durable Thread registrations and per-Workspace selections behind the databa
 
 ### Phase 5: UI polling
 
-Subscribe MischiefView to database changes and render the same active Workspaces and Thread statuses in every open Instance. Keep `Workspace.current` local to each window.
+Subscribe MischiefView to database changes and render the same active Workspaces and aggregate Thread activity in every open Instance. Keep `Workspace.current` local to each window and keep the Threads pane scoped to that current Workspace.
+
+Each Workspace row shows the highest-priority Thread indicator using `error`, `waiting`, `running`, unread `completed`, then `idle` precedence. It also shows counts for active (`running` or `waiting`) and attention (`waiting`, `error`, or unread) Threads. Serialize Workspace refreshes so overlapping polls cannot render an older snapshot last.
 
 ### Phase 6: Final verification
 
@@ -239,7 +241,7 @@ Run focused tests after every slice, then `pnpm check`. Review the complete diff
 - Projects are derived by grouping active Git Workspaces by canonical Project root.
 - Untracked Workspaces remain under `Ungrouped`.
 - Any Instance can mark an active Workspace inactive; only the current Workspace's Instance can update its Threads and selected Thread.
-- Thread status remains `idle`, `running`, `waiting`, or `error`.
+- Thread status remains `idle`, `running`, `waiting`, or `error`, and every Workspace row renders its synchronized aggregate activity.
 - No Instance overwrites another Workspace's Threads.
 - ACP transcript history is not copied into the database.
 - Profile Database imports no `vscode` module.

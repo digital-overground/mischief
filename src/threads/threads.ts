@@ -184,6 +184,20 @@ export type ThreadIndicator =
   | "idle"
   | "error";
 
+export interface WorkspaceActivity {
+  activeThreads: number;
+  attentionThreads: number;
+  indicator: ThreadIndicator;
+}
+
+const INDICATOR_PRIORITY: Record<ThreadIndicator, number> = {
+  active: 2,
+  completed: 3,
+  error: 0,
+  idle: 4,
+  waiting: 1,
+};
+
 export interface TranscriptItem {
   id: string;
   kind:
@@ -408,6 +422,34 @@ export class Threads {
   onChange(listener: (change?: ThreadsChange) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  workspaceActivity(): Readonly<Record<string, WorkspaceActivity>> {
+    const activities: Record<string, WorkspaceActivity> = {};
+    for (const thread of this.database.snapshot().threads) {
+      const indicator = indicatorFor(thread.status, Boolean(thread.unread));
+      let activity = activities[thread.workspace];
+      if (!activity) {
+        activity = {
+          activeThreads: 0,
+          attentionThreads: 0,
+          indicator,
+        };
+        activities[thread.workspace] = activity;
+      }
+      if (
+        INDICATOR_PRIORITY[indicator] < INDICATOR_PRIORITY[activity.indicator]
+      ) {
+        activity.indicator = indicator;
+      }
+      if (indicator === "active" || indicator === "waiting") {
+        activity.activeThreads += 1;
+      }
+      if (indicatorNeedsAttention(indicator)) {
+        activity.attentionThreads += 1;
+      }
+    }
+    return activities;
   }
 
   async newThread(): Promise<void> {

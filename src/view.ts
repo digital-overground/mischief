@@ -3,6 +3,10 @@ import path from "node:path";
 import MarkdownIt from "markdown-it";
 import * as vscode from "vscode";
 
+import type {
+  DatabaseWorkspace,
+  ProfileDatabase,
+} from "./profile-database/profile-database";
 import { normalizeWorkspaceName } from "./projects/projects";
 import type {
   Projects,
@@ -33,6 +37,18 @@ const workspaceColorsEnabled = (): boolean =>
     .getConfiguration("mischief")
     .get<boolean>("assignWorkspaceColors", true);
 const markdown = new MarkdownIt({ breaks: true, html: false, linkify: true });
+
+const sameWorkspaces = (
+  left: readonly DatabaseWorkspace[],
+  right: readonly DatabaseWorkspace[]
+): boolean =>
+  left.length === right.length &&
+  left.every(
+    (workspace, index) =>
+      workspace.path === right[index]?.path &&
+      workspace.projectRoot === right[index]?.projectRoot &&
+      workspace.status === right[index]?.status
+  );
 
 const renderTranscriptItem = (
   item: TranscriptItem
@@ -103,6 +119,9 @@ const interactionResponse = (
 export class MischiefView implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private projectsSnapshot: ProjectsSnapshot = { projects: [], ungrouped: [] };
+  private readonly database: ProfileDatabase;
+  private databaseWorkspaces: readonly DatabaseWorkspace[];
+  private profileRefresh = Promise.resolve();
   private readonly extensionUri: vscode.Uri;
   private readonly projects: Projects;
   private readonly storage: Pick<vscode.Memento, "get" | "update">;
@@ -112,12 +131,16 @@ export class MischiefView implements vscode.WebviewViewProvider {
     projects: Projects,
     threads: Threads,
     extensionUri: vscode.Uri,
-    storage: Pick<vscode.Memento, "get" | "update">
+    storage: Pick<vscode.Memento, "get" | "update">,
+    database: ProfileDatabase
   ) {
     this.projects = projects;
     this.threads = threads;
     this.extensionUri = extensionUri;
     this.storage = storage;
+    this.database = database;
+    this.databaseWorkspaces = database.snapshot().workspaces;
+    database.onChange(() => this.databaseChanged());
     threads.onChange((change) => {
       if (change?.type === "transcript") {
         this.renderTranscript(change);
@@ -283,6 +306,24 @@ export class MischiefView implements vscode.WebviewViewProvider {
     } else if (!current && active) {
       await this.threads.closeWorkspace();
     }
+  }
+
+  private databaseChanged(): void {
+    const { workspaces } = this.database.snapshot();
+    if (sameWorkspaces(this.databaseWorkspaces, workspaces)) {
+      this.render();
+      return;
+    }
+    this.databaseWorkspaces = workspaces;
+    const previous = this.profileRefresh;
+    this.profileRefresh = MischiefView.run(
+      (async () => {
+        await previous;
+        await this.setProjects(this.projects.refresh());
+        await this.syncThreads();
+        this.render();
+      })()
+    );
   }
 
   private async handleMessage(message: unknown): Promise<void> {
@@ -653,6 +694,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
       projects: this.projectsSnapshot,
       threads,
       type: "state",
+      workspaceActivity: this.threads.workspaceActivity(),
     } satisfies HostToWebviewMessage);
   }
 }

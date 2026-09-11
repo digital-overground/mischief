@@ -5,6 +5,7 @@ import type {
   ThreadInteractionResponse,
   ThreadsSnapshot,
   TranscriptItem,
+  WorkspaceActivity,
 } from "../threads/threads";
 
 export interface RenderedTranscriptItem extends TranscriptItem {
@@ -28,6 +29,7 @@ export type HostToWebviewMessage =
       font: string;
       projects: ProjectsSnapshot;
       threads: RenderedThreadsSnapshot;
+      workspaceActivity: Readonly<Record<string, WorkspaceActivity>>;
     }
   | {
       type: "transcript";

@@ -3,7 +3,9 @@ import type {
   ProjectsSnapshot,
   Workspace,
 } from "../../projects/projects";
+import type { WorkspaceActivity } from "../../threads/threads";
 import { postMessage } from "../bridge";
+import { indicatorLabel, StatusIndicator } from "../threads/threads-pane";
 
 const IconButton = ({
   children,
@@ -42,9 +44,21 @@ const visibleColor = (color: string): string => {
     .join("")}`;
 };
 
+const activityMeta = (activity: WorkspaceActivity): string =>
+  [
+    activity.activeThreads ? `${activity.activeThreads} active` : "",
+    activity.attentionThreads
+      ? `${activity.attentionThreads} ${activity.attentionThreads === 1 ? "needs" : "need"} attention`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" · ") || "idle";
+
 const WorkspaceRow = ({
+  activity,
   workspace,
 }: {
+  activity?: WorkspaceActivity;
   workspace: Workspace;
 }): React.JSX.Element => (
   <div className={`row${workspace.current ? " selected" : ""}`}>
@@ -65,6 +79,12 @@ const WorkspaceRow = ({
           }}
         />
       ) : null}
+      {activity ? (
+        <StatusIndicator
+          kind={activity.indicator}
+          label={`${workspace.name}: ${indicatorLabel(activity.indicator)}; ${activityMeta(activity)}`}
+        />
+      ) : null}
       <span className="name">{workspace.name}</span>
       <span className="meta">
         {[
@@ -73,6 +93,7 @@ const WorkspaceRow = ({
           workspace.changes ? `✎${workspace.changes}` : "",
           workspace.ahead ? `↑${workspace.ahead}` : "",
           workspace.behind ? `↓${workspace.behind}` : "",
+          activity ? activityMeta(activity) : "",
         ]
           .filter(Boolean)
           .join("  ")}
@@ -100,7 +121,13 @@ const WorkspaceRow = ({
   </div>
 );
 
-const ProjectGroup = ({ project }: { project: Project }): React.JSX.Element => (
+const ProjectGroup = ({
+  project,
+  workspaceActivity,
+}: {
+  project: Project;
+  workspaceActivity: Readonly<Record<string, WorkspaceActivity>>;
+}): React.JSX.Element => (
   <>
     <div className="group-row">
       <span className="name">{project.name}</span>
@@ -114,15 +141,21 @@ const ProjectGroup = ({ project }: { project: Project }): React.JSX.Element => (
       </IconButton>
     </div>
     {project.workspaces.map((workspace) => (
-      <WorkspaceRow workspace={workspace} key={workspace.path} />
+      <WorkspaceRow
+        activity={workspaceActivity[workspace.path]}
+        workspace={workspace}
+        key={workspace.path}
+      />
     ))}
   </>
 );
 
 export const ProjectsPane = ({
   snapshot,
+  workspaceActivity,
 }: {
   snapshot: ProjectsSnapshot;
+  workspaceActivity: Readonly<Record<string, WorkspaceActivity>>;
 }): React.JSX.Element => (
   <section id="projects">
     <header>
@@ -142,13 +175,21 @@ export const ProjectsPane = ({
     </header>
     <div className="content" id="project-list">
       {snapshot.projects.map((project) => (
-        <ProjectGroup project={project} key={project.root} />
+        <ProjectGroup
+          project={project}
+          workspaceActivity={workspaceActivity}
+          key={project.root}
+        />
       ))}
       {snapshot.ungrouped.length ? (
         <>
           <div className="group-row">Ungrouped</div>
           {snapshot.ungrouped.map((workspace) => (
-            <WorkspaceRow workspace={workspace} key={workspace.path} />
+            <WorkspaceRow
+              activity={workspaceActivity[workspace.path]}
+              workspace={workspace}
+              key={workspace.path}
+            />
           ))}
         </>
       ) : null}

@@ -276,6 +276,44 @@ describe("threads module", () => {
     return threads;
   };
 
+  test("summarizes synchronized Thread activity by Workspace", async () => {
+    const createdAt = "2026-09-11T12:00:00.000Z";
+    const statuses = [
+      { id: "10000000-0000-4000-8000-000000000001", status: "running" },
+      { id: "10000000-0000-4000-8000-000000000002", status: "waiting" },
+      { id: "10000000-0000-4000-8000-000000000003", status: "error" },
+      {
+        id: "10000000-0000-4000-8000-000000000004",
+        status: "idle",
+        unread: true,
+      },
+      { id: "10000000-0000-4000-8000-000000000005", status: "idle" },
+    ] as const;
+    await Promise.all(
+      statuses.map((status) =>
+        database.apply({
+          thread: {
+            ...status,
+            createdAt,
+            name: status.id,
+            updatedAt: createdAt,
+            workspace: "/workspace",
+          },
+          type: "putThread",
+        })
+      )
+    );
+    const threads = createThreads(new FakeAgent().factory);
+
+    expect(threads.workspaceActivity()).toStrictEqual({
+      "/workspace": {
+        activeThreads: 2,
+        attentionThreads: 3,
+        indicator: "error",
+      },
+    });
+  });
+
   test("sends a pasted image without requiring text", async () => {
     const agent = new FakeAgent();
     const threads = createThreads(agent.factory);
