@@ -226,7 +226,7 @@ describe("React webview", () => {
                       behind: 0,
                       changes: 0,
                       color: "#0e1c14",
-                      current: true,
+                      current: false,
                       linked: true,
                       name: "project-feature",
                       path: "/worktrees/project-feature",

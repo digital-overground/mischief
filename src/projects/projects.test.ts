@@ -83,15 +83,15 @@ describe("projects module", () => {
     expect(reopened.ungrouped).toHaveLength(1);
   });
 
-  test("another window cannot make a Workspace inactive", async () => {
+  test("another window can make an active Workspace inactive", async () => {
     const folder = await temporaryFolder();
     const owner = await createProjects(folder);
     const other = await createProjects();
     await owner.open(folder);
 
-    await expect(other.remove(folder)).rejects.toThrow("own window");
-    const snapshot = await owner.refresh();
-    expect(snapshot.ungrouped).toHaveLength(1);
+    const snapshot = await other.remove(folder);
+
+    expect(snapshot.ungrouped).toStrictEqual([]);
   });
 
   test("opening a folder adds and marks its Workspace as current", async () => {

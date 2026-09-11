@@ -500,14 +500,14 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   private async deactivateWorkspace(candidate: string): Promise<void> {
-    const workspace = this.workspaces().find(
-      (item) => item.path === candidate && item.current
-    );
+    const workspace = this.workspaces().find((item) => item.path === candidate);
     if (!workspace) {
       return;
     }
     await this.setProjects(this.projects.remove(candidate));
-    await this.threads.closeWorkspace();
+    if (workspace.current) {
+      await this.threads.closeWorkspace();
+    }
     this.render();
   }
 

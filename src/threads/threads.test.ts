@@ -1,5 +1,10 @@
-import { describe, expect, test } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
+import { ProfileDatabase } from "../profile-database/profile-database";
 import { Threads } from "./threads";
 import type {
   AgentConnection,
@@ -9,7 +14,6 @@ import type {
   PromptImage,
   ThreadConfigOption,
   ThreadsChange,
-  ThreadsStorage,
 } from "./threads";
 
 interface Deferred {
@@ -26,18 +30,6 @@ const deferred = (): Deferred => {
   return {
     promise,
     resolve: () => resolver?.(),
-  };
-};
-
-const memoryStorage = (): ThreadsStorage => {
-  const values = new Map<string, unknown>();
-  return {
-    get: <T>(key: string, fallback: T): T =>
-      (values.get(key) as T | undefined) ?? fallback,
-    update: (key: string, value: unknown): Promise<void> => {
-      values.set(key, value);
-      return Promise.resolve();
-    },
   };
 };
 
@@ -257,9 +249,36 @@ class FakeAgent {
 }
 
 describe("threads module", () => {
+  let database: ProfileDatabase;
+  let profileDirectory: string;
+  let instances: Threads[];
+
+  beforeEach(async () => {
+    profileDirectory = await mkdtemp(path.join(tmpdir(), "mischief-threads-"));
+    database = await ProfileDatabase.open({
+      currentWorkspace: "/workspace",
+      instanceId: "00000000-0000-4000-8000-000000000001",
+      log: vi.fn<(message: string) => void>(),
+      profileDirectory,
+    });
+    instances = [];
+  });
+
+  afterEach(async () => {
+    await Promise.all(instances.map((threads) => threads.dispose()));
+    await database.dispose();
+    await rm(profileDirectory, { force: true, recursive: true });
+  });
+
+  const createThreads = (factory: AgentConnectionFactory): Threads => {
+    const threads = new Threads(database, factory);
+    instances.push(threads);
+    return threads;
+  };
+
   test("sends a pasted image without requiring text", async () => {
     const agent = new FakeAgent();
-    const threads = new Threads(memoryStorage(), agent.factory);
+    const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
 
     await threads.prompt("", [
@@ -278,7 +297,7 @@ describe("threads module", () => {
   });
 
   test("a user-renamed Thread ignores later automatic titles", async () => {
-    const threads = new Threads(memoryStorage(), new FakeAgent().factory);
+    const threads = createThreads(new FakeAgent().factory);
     await threads.openWorkspace("/workspace");
     await threads.prompt("Name me");
     const id = threads.snapshot().selected?.id;
@@ -292,7 +311,7 @@ describe("threads module", () => {
   test("closing a Workspace cancels its running Threads and hides them", async () => {
     const agent = new FakeAgent();
     agent.holdPrompts = true;
-    const threads = new Threads(memoryStorage(), agent.factory);
+    const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
     const prompting = threads.prompt("Keep running");
     await agent.firstPromptStarted;
@@ -306,9 +325,24 @@ describe("threads module", () => {
     });
   });
 
+  test("removing a running Thread cannot resurrect its registration", async () => {
+    const agent = new FakeAgent();
+    agent.holdPrompts = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    const prompting = threads.prompt("Remove me");
+    await agent.firstPromptStarted;
+    const id = threads.snapshot().selected?.id;
+
+    await threads.remove(id ?? "");
+    await prompting;
+
+    expect(database.snapshot().threads).toStrictEqual([]);
+    expect(threads.snapshot().threads).toStrictEqual([]);
+  });
+
   test("Threads stay newest-first and restore the last selection", async () => {
-    const storage = memoryStorage();
-    const threads = new Threads(storage, new FakeAgent().factory);
+    const threads = createThreads(new FakeAgent().factory);
     await threads.openWorkspace("/workspace");
     await threads.prompt("First");
     const firstId = threads.snapshot().selected?.id;
@@ -321,7 +355,7 @@ describe("threads module", () => {
     );
     await threads.select(firstId ?? "");
 
-    const restored = new Threads(storage, new FakeAgent().factory);
+    const restored = createThreads(new FakeAgent().factory);
     await restored.openWorkspace("/workspace");
     expect(restored.snapshot().selected?.id).toBe(firstId);
 
@@ -341,7 +375,7 @@ describe("threads module", () => {
         label: "Launch Pi",
       },
     });
-    const threads = new Threads(memoryStorage(), agent.factory);
+    const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
 
     await threads.prompt("Hello");
@@ -367,7 +401,7 @@ describe("threads module", () => {
         type: "select",
       },
     ];
-    const threads = new Threads(memoryStorage(), agent.factory);
+    const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
 
     await threads.newThread();
@@ -381,8 +415,7 @@ describe("threads module", () => {
   });
 
   test("new empty Threads are durable and can be added repeatedly", async () => {
-    const storage = memoryStorage();
-    const threads = new Threads(storage, new FakeAgent().factory);
+    const threads = createThreads(new FakeAgent().factory);
     await threads.openWorkspace("/workspace");
     await threads.prompt("Keep me");
 
@@ -399,14 +432,14 @@ describe("threads module", () => {
         { name: "Fix tests" },
       ],
     });
-    const restored = new Threads(storage, new FakeAgent().factory);
+    const restored = createThreads(new FakeAgent().factory);
     await restored.openWorkspace("/workspace");
     expect(restored.snapshot().selected?.id).toBe(secondId);
   });
 
   test("forks before a user message and restores it as an editable draft", async () => {
     const agent = new FakeAgent();
-    const threads = new Threads(memoryStorage(), agent.factory);
+    const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
     await threads.prompt("Fork from here");
     const message = threads
@@ -435,7 +468,7 @@ describe("threads module", () => {
 
   test("rolls back before the selected user message and restores its draft", async () => {
     const agent = new FakeAgent();
-    const threads = new Threads(memoryStorage(), agent.factory);
+    const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
     await threads.prompt("Restore me");
     await threads.prompt("Later message");
@@ -463,7 +496,7 @@ describe("threads module", () => {
   test("stopping a running Thread preserves output and restores queued prompts as drafts", async () => {
     const agent = new FakeAgent();
     agent.holdPrompts = true;
-    const threads = new Threads(memoryStorage(), agent.factory);
+    const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
     const changes: (ThreadsChange | undefined)[] = [];
     threads.onChange((change) => changes.push(change));
@@ -511,7 +544,7 @@ describe("threads module", () => {
   test("queued steering messages can be removed or sent immediately", async () => {
     const agent = new FakeAgent();
     agent.holdPrompts = true;
-    const threads = new Threads(memoryStorage(), agent.factory);
+    const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
 
     const first = threads.prompt("First");
@@ -542,7 +575,7 @@ describe("threads module", () => {
   test("ACP thoughts, tools, plans, and configuration update the Thread", async () => {
     const agent = new FakeAgent();
     agent.richUpdates = true;
-    const threads = new Threads(memoryStorage(), agent.factory);
+    const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
 
     await threads.prompt("Inspect it");
@@ -586,7 +619,7 @@ describe("threads module", () => {
     const agent = new FakeAgent();
     agent.richUpdates = true;
     agent.completePlan = true;
-    const threads = new Threads(memoryStorage(), agent.factory);
+    const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
 
     await threads.prompt("Inspect it");
@@ -606,7 +639,7 @@ describe("threads module", () => {
 
   test("replaces advertised commands, including with an empty list", async () => {
     const agent = new FakeAgent();
-    const threads = new Threads(memoryStorage(), agent.factory);
+    const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
     await threads.newThread();
 
@@ -625,14 +658,13 @@ describe("threads module", () => {
   });
 
   test("context usage survives a Thread reload", async () => {
-    const storage = memoryStorage();
     const agent = new FakeAgent();
     agent.richUpdates = true;
-    const threads = new Threads(storage, agent.factory);
+    const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
     await threads.prompt("Inspect it");
 
-    const restored = new Threads(storage, new FakeAgent().factory);
+    const restored = createThreads(new FakeAgent().factory);
     await restored.openWorkspace("/workspace");
 
     expect(restored.snapshot().selected?.usage).toStrictEqual({
@@ -644,7 +676,7 @@ describe("threads module", () => {
   test("elicitation forms wait for an inline Thread response", async () => {
     const agent = new FakeAgent();
     agent.askElicitation = true;
-    const threads = new Threads(memoryStorage(), agent.factory);
+    const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
 
     const prompting = threads.prompt("Choose a path");
@@ -678,7 +710,7 @@ describe("threads module", () => {
   test("permission requests wait for an inline Thread response", async () => {
     const agent = new FakeAgent();
     agent.askPermission = true;
-    const threads = new Threads(memoryStorage(), agent.factory);
+    const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
 
     const prompting = threads.prompt("Run the tests");
@@ -703,6 +735,9 @@ describe("threads module", () => {
         },
       ],
     });
+    await vi.waitFor(() => {
+      expect(database.snapshot().threads[0]?.status).toBe("waiting");
+    });
     threads.respond(interaction?.id ?? "", {
       action: "select",
       optionId: "yes",
@@ -710,6 +745,7 @@ describe("threads module", () => {
     await prompting;
 
     expect(agent.permissionResponse).toStrictEqual({ optionId: "yes" });
+    expect(database.snapshot().threads[0]?.status).toBe("idle");
     expect(threads.snapshot()).toMatchObject({
       attentionCount: 0,
       selected: { status: "idle" },
@@ -720,7 +756,7 @@ describe("threads module", () => {
   test("completed background Threads stay green until viewed", async () => {
     const agent = new FakeAgent();
     agent.holdPrompts = true;
-    const threads = new Threads(memoryStorage(), agent.factory);
+    const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
 
     const firstPrompt = threads.prompt("First");
@@ -750,14 +786,13 @@ describe("threads module", () => {
   });
 
   test("opening a durable Thread restores its transcript from ACP", async () => {
-    const storage = memoryStorage();
-    const original = new Threads(storage, new FakeAgent().factory);
+    const original = createThreads(new FakeAgent().factory);
     await original.openWorkspace("/workspace");
     await original.prompt("Restore me");
 
     const loadingAgent = new FakeAgent();
     loadingAgent.replayOnLoad = true;
-    const restored = new Threads(storage, loadingAgent.factory);
+    const restored = createThreads(loadingAgent.factory);
     await restored.openWorkspace("/workspace");
 
     expect(restored.snapshot().selected?.items).toMatchObject([
@@ -772,7 +807,7 @@ describe("threads module", () => {
 
     const forkingAgent = new FakeAgent();
     forkingAgent.replayOnLoad = true;
-    const forking = new Threads(storage, forkingAgent.factory);
+    const forking = createThreads(forkingAgent.factory);
     await forking.openWorkspace("/workspace");
     await forking.fork("user:pi-user-1");
     expect(forkingAgent.forkCalls).toStrictEqual([
@@ -785,10 +820,9 @@ describe("threads module", () => {
   });
 
   test("a failed first prompt remains durable and can be retried", async () => {
-    const storage = memoryStorage();
     const failingAgent = new FakeAgent();
     failingAgent.failCreate = true;
-    const threads = new Threads(storage, failingAgent.factory);
+    const threads = createThreads(failingAgent.factory);
     await threads.openWorkspace("/workspace");
 
     await threads.prompt("Try again");
@@ -798,7 +832,7 @@ describe("threads module", () => {
       threads: [{ status: "error" }],
     });
 
-    const recovered = new Threads(storage, new FakeAgent().factory);
+    const recovered = createThreads(new FakeAgent().factory);
     await recovered.openWorkspace("/workspace");
     await recovered.retry();
 
@@ -812,9 +846,8 @@ describe("threads module", () => {
   });
 
   test("the first prompt registers a Thread and streams its transcript", async () => {
-    const storage = memoryStorage();
     const agent = new FakeAgent();
-    const threads = new Threads(storage, agent.factory);
+    const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
 
     await threads.prompt("Fix the tests");

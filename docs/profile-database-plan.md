@@ -6,7 +6,7 @@
 
 Give every Mischief window in one VS Code profile the same Project, Workspace, and Thread data without a broker process.
 
-Each window opens the same small file database beneath `ExtensionContext.globalStorageUri`. The window that owns a Workspace writes that Workspace and its Threads. Other windows poll and read.
+Each window opens the same small file database beneath `ExtensionContext.globalStorageUri`. Any window may update Workspace visibility. The window using a Workspace writes its Threads and selected Thread; other windows poll and read.
 
 Agent processes still belong to the VS Code window where their Workspace is open. Closing that window stops its running turns.
 
@@ -24,7 +24,7 @@ A Workspace is a concrete folder where Threads run.
 - An untracked Workspace stores only its canonical path.
 - `active` Workspaces are shown in the UI.
 - `inactive` Workspaces remain in the database but are hidden.
-- Only the Instance with that Workspace currently open may mark it inactive.
+- Any Instance may mark an active Workspace inactive.
 
 ### Thread
 
@@ -36,7 +36,7 @@ An Instance is one running Mischief extension host in one VS Code window. Its cu
 
 ## File layout
 
-Use one independently replaceable JSON file per Workspace or Thread:
+Use one independently replaceable JSON file per Workspace, Thread, or Workspace selection:
 
 ```text
 <globalStorageUri>/profile-db-v1/
@@ -44,6 +44,8 @@ Use one independently replaceable JSON file per Workspace or Thread:
     <sha256-workspace-path>.json
   threads/
     <thread-id>.json
+  selections/
+    <sha256-workspace-path>.json
 ```
 
 Projects are derived from Workspace records, so there is no `projects/` directory.
@@ -70,7 +72,7 @@ interface WorkspaceRecord {
 - `writtenAt` is `Date.now()`, an integer Unix timestamp in milliseconds.
 - Opening or explicitly adding a Workspace writes `active`.
 - Cleanly closing the owning window writes `inactive` best effort.
-- A reader never writes another Workspace inactive.
+- Any Instance may write a Workspace `inactive`.
 - Missing folders are omitted from the UI without changing their records.
 
 ### Thread record
@@ -101,6 +103,21 @@ interface ThreadRecord {
 - Removing a Thread removes it from Mischief without deleting ACP/Pi history.
 - Transcript items, prompt queues, drafts, commands, and live ACP connections stay in memory or ACP storage.
 
+### Selection record
+
+```ts
+interface SelectionRecord {
+  version: 1;
+  workspace: string;
+  threadId?: string;
+  writtenAt: number;
+}
+```
+
+- Only the Instance whose current Workspace equals `workspace` may write the selection.
+- Removing the selected Thread writes its replacement ID or an explicitly empty selection.
+- A missing or invalid selected Thread falls back to the newest Thread.
+
 ## Database interface
 
 Keep file layout, validation, polling, and write ordering behind one deep module:
@@ -125,6 +142,7 @@ The observable snapshot grows only when a vertical slice needs another entity:
 interface ProfileDatabaseSnapshot {
   workspaces: readonly WorkspaceRecord[];
   threads: readonly ThreadRecord[];
+  selections: readonly SelectionRecord[];
 }
 ```
 
@@ -140,11 +158,7 @@ All records use temporary-file replacement:
 
 Readers validate every file and keep their previous snapshot after an I/O failure. Arrays are sorted deterministically, and previously returned snapshots are never mutated.
 
-For the same record, a reader accepts the greatest `writtenAt`. Equal timestamps accept the file currently on disk. Millisecond timestamps are sufficient because Workspace and Thread writes have one logical owner. Add stronger revision numbers only if real conflicting writers appear.
-
-```ts
-// ponytail: one writer per Workspace is enough; add leases only if duplicate owning windows become supported
-```
+For the same record, a reader accepts the greatest `writtenAt`. Equal timestamps accept the file currently on disk. Millisecond timestamps are sufficient: Workspace status uses last-write-wins, and Threads have one logical owner. Add stronger revision numbers only if real conflicts appear.
 
 ## Polling
 
@@ -159,13 +173,13 @@ Do not add `fs.watch`, sockets, a server, a daemon, a database dependency, or a 
 ## Ownership rules
 
 - An Instance may activate a Workspace when the user opens or adds it.
-- Only the Instance with that Workspace currently open may mark it inactive.
-- Only that Instance may create, update, or remove its Thread records.
+- Any Instance may mark an active Workspace inactive.
+- Only the Instance with that Workspace currently open may create, update, or remove its Thread records or selected Thread.
 - Every other Instance only reads those records.
 - A Project is shown whenever at least one of its Workspaces is active.
 - An inactive Workspace is not shown.
 
-The first version assumes VS Code does not open the same Workspace in two windows. If that becomes possible, add an ownership lease rather than guessing between writers.
+For Thread writes, the first version assumes VS Code does not open the same Workspace in two windows. If that becomes possible, add an ownership lease rather than guessing between Thread writers.
 
 ## Migration
 
@@ -173,7 +187,7 @@ Migration reads the old aggregate values once after the new database opens succe
 
 - Existing Git roots are discovered into active Git Workspace records.
 - Existing untracked folders become active untracked Workspace records.
-- Existing Thread registrations become Thread records for their Workspace.
+- Existing Thread registrations and per-Workspace selections become Thread and selection records.
 - Old values remain untouched for rollback.
 - A version marker is written only after the import succeeds.
 - Existing `profile-db-v1` records always win over old values.
@@ -200,16 +214,15 @@ Through `Projects`, prove that active Git and untracked Workspaces render correc
 
 Remove the old aggregate Projects storage after migration is ready.
 
-### Phase 3: Workspace ownership and migration
+### Phase 3: Workspace status and migration
 
-- Prove a non-owning Instance cannot mark a Workspace inactive.
-- Prove the owning Instance can mark its current Workspace inactive.
+- Prove any Instance can mark an active Workspace inactive.
 - Import the old visible Project and untracked Workspace paths exactly once.
 - Wire startup and clean disposal.
 
-### Phase 4: Thread records and migration
+### Phase 4: Thread records, selections, and migration
 
-Move durable Thread registrations behind the database. Preserve every existing durable field, selection behavior, ACP restoration, and the current Thread status values. Enforce that only the owning Workspace Instance writes them.
+Move durable Thread registrations and per-Workspace selections behind the database. Preserve every existing durable field, selection behavior, ACP restoration, and the current Thread status values. Enforce that only the owning Workspace Instance writes them.
 
 ### Phase 5: UI polling
 
@@ -225,7 +238,7 @@ Run focused tests after every slice, then `pnpm check`. Review the complete diff
 - Active Workspaces are shown; inactive Workspaces are hidden.
 - Projects are derived by grouping active Git Workspaces by canonical Project root.
 - Untracked Workspaces remain under `Ungrouped`.
-- Only the current Workspace's Instance can mark it inactive or update its Threads.
+- Any Instance can mark an active Workspace inactive; only the current Workspace's Instance can update its Threads and selected Thread.
 - Thread status remains `idle`, `running`, `waiting`, or `error`.
 - No Instance overwrites another Workspace's Threads.
 - ACP transcript history is not copied into the database.

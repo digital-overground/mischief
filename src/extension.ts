@@ -15,7 +15,10 @@ import { MischiefView, registerMischiefView } from "./view";
 
 const PROJECTS_KEY = "mischief.projects";
 const PROJECTS_VERSION_KEY = "mischief.profileDatabaseProjectsVersion";
+const THREADS_KEY = "mischief.threads";
+const THREADS_VERSION_KEY = "mischief.profileDatabaseThreadsVersion";
 let database: ProfileDatabase | undefined;
+let activeThreads: Threads | undefined;
 
 const agentLaunch = (context: vscode.ExtensionContext): AgentLaunch => {
   const env = { MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT: "true" };
@@ -58,17 +61,28 @@ export const activate = async (
     );
     await context.globalState.update(PROJECTS_VERSION_KEY, 1);
   }
+  if (context.globalState.get<number>(THREADS_VERSION_KEY, 0) < 1) {
+    await database.importPreviousThreads(
+      context.globalState.get<unknown>(THREADS_KEY)
+    );
+    await context.globalState.update(THREADS_VERSION_KEY, 1);
+  }
   const threads = new Threads(
-    context.globalState,
+    database,
     acpConnectionFactory(agentLaunch(context), log)
   );
+  activeThreads = threads;
   const view = new MischiefView(
     projects,
     threads,
     context.extensionUri,
     context.globalState
   );
-  context.subscriptions.push(output, { dispose: () => threads.dispose() });
+  context.subscriptions.push(output, {
+    dispose: () => {
+      void threads.dispose();
+    },
+  });
   registerMischiefView(context, view);
 
   context.subscriptions.push(
@@ -100,6 +114,8 @@ export const activate = async (
 };
 
 export const deactivate = async (): Promise<void> => {
+  await activeThreads?.dispose();
+  activeThreads = undefined;
   await database?.dispose();
   database = undefined;
 };

@@ -89,16 +89,14 @@ const WorkspaceRow = ({
         ＋
       </IconButton>
     ) : null}
-    {workspace.current ? (
-      <IconButton
-        title="Close Workspace"
-        onClick={() =>
-          postMessage({ path: workspace.path, type: "deactivateWorkspace" })
-        }
-      >
-        ×
-      </IconButton>
-    ) : null}
+    <IconButton
+      title="Close Workspace"
+      onClick={() =>
+        postMessage({ path: workspace.path, type: "deactivateWorkspace" })
+      }
+    >
+      ×
+    </IconButton>
   </div>
 );
 

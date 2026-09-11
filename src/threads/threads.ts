@@ -1,14 +1,13 @@
 import { randomUUID } from "node:crypto";
 
+import type {
+  DatabaseThread,
+  ProfileDatabase,
+  ProfileDatabaseChange,
+} from "../profile-database/profile-database";
 import { archiveCompletedPlan, reduceTranscript } from "./transcript";
 
-const STORAGE_KEY = "mischief.threads";
 const STREAMING_IDLE_MS = 300;
-
-export interface ThreadsStorage {
-  get: <T>(key: string, fallback: T) => T;
-  update: (key: string, value: unknown) => PromiseLike<void>;
-}
 
 export interface ThreadConfigChoice {
   value: string;
@@ -308,17 +307,13 @@ interface StoredThread {
   name: string;
   createdAt: string;
   updatedAt: string;
+  status: ThreadStatus;
   error?: string;
   retryText?: string;
   authentication?: TerminalAuthentication;
   manualName?: boolean;
   unread?: boolean;
   usage?: ThreadUsage;
-}
-
-interface StoredThreads {
-  threads: StoredThread[];
-  selected: Record<string, string>;
 }
 
 interface Runtime {
@@ -365,14 +360,14 @@ const stopStreaming = (runtime: Runtime): void => {
 // These helpers are assigned after the class declaration.
 // oxlint-disable prefer-const
 let errorMessage: (error: unknown) => string;
-let readStored: (storage: ThreadsStorage) => StoredThreads;
 let updateQueue: (runtime: Runtime) => void;
 // oxlint-enable prefer-const
 
 export class Threads {
   private readonly createConnection: AgentConnectionFactory;
-  private readonly storage: ThreadsStorage;
-  private readonly stored: StoredThreads;
+  private readonly database: ProfileDatabase;
+  private stored: StoredThread[];
+  private persistence = Promise.resolve();
   private readonly runtimes = new Map<string, Runtime>();
   private readonly listeners = new Set<(change?: ThreadsChange) => void>();
   private workspace?: string;
@@ -381,19 +376,24 @@ export class Threads {
   private draft = false;
 
   constructor(
-    storage: ThreadsStorage,
+    database: ProfileDatabase,
     createConnection: AgentConnectionFactory
   ) {
     this.createConnection = createConnection;
-    this.storage = storage;
-    this.stored = readStored(storage);
+    this.database = database;
+    this.stored = database.snapshot().threads.map(Threads.copyRecord);
   }
 
   async openWorkspace(workspace: string): Promise<ThreadsSnapshot> {
     this.workspace = workspace;
     this.viewedId = undefined;
+    this.stored = this.database.snapshot().threads.map(Threads.copyRecord);
     const records = this.records();
-    const selected = this.stored.selected[workspace];
+    const selected = this.database
+      .snapshot()
+      .selections.find(
+        (selection) => selection.workspace === workspace
+      )?.threadId;
     this.selectedId = records.some((record) => record.id === selected)
       ? selected
       : records[0]?.id;
@@ -419,16 +419,16 @@ export class Threads {
       createdAt: now,
       id: randomUUID(),
       name: "New Thread",
+      status: "idle",
       updatedAt: now,
       workspace: this.workspace,
     };
-    this.stored.threads.unshift(record);
-    this.stored.selected[this.workspace] = record.id;
+    this.stored.unshift(record);
     this.selectedId = record.id;
     this.viewedId = record.id;
     record.unread = false;
     this.draft = false;
-    await this.persist();
+    await this.register(record);
     this.emit();
     await this.createSession(record, this.runtime(record));
   }
@@ -442,8 +442,8 @@ export class Threads {
     this.viewedId = id;
     record.unread = false;
     this.draft = false;
-    this.stored.selected[record.workspace] = id;
-    await this.persist();
+    await this.persist(record);
+    await this.selectThread(record.workspace, id);
     this.emit();
     await this.load(record);
   }
@@ -459,26 +459,18 @@ export class Threads {
     }
     this.runtimes.get(id)?.connection.dispose();
     this.runtimes.delete(id);
-    this.stored.threads = this.stored.threads.filter(
-      (thread) => thread.id !== id
-    );
+    this.stored = this.stored.filter((thread) => thread.id !== id);
+    await this.apply({ id, type: "removeThread" });
 
     if (this.selectedId === id) {
       const [next] = this.records();
       this.selectedId = next?.id;
       this.viewedId = next?.id;
       this.draft = !next;
-      if (next) {
-        this.stored.selected[record.workspace] = next.id;
-      } else {
-        Reflect.deleteProperty(this.stored.selected, record.workspace);
-      }
-      await this.persist();
+      await this.selectThread(record.workspace, next?.id);
       if (next) {
         await this.load(next);
       }
-    } else {
-      await this.persist();
     }
     this.emit();
   }
@@ -494,7 +486,7 @@ export class Threads {
     }
     record.name = title;
     record.manualName = true;
-    await this.persist();
+    await this.persist(record);
     this.emit();
   }
 
@@ -563,14 +555,14 @@ export class Threads {
         id: randomUUID(),
         name: "New Thread",
         retryText: message,
+        status: "idle",
         updatedAt: now,
         workspace: this.workspace,
       };
-      this.stored.threads.unshift(record);
-      this.stored.selected[this.workspace] = record.id;
+      this.stored.unshift(record);
       this.selectedId = record.id;
       this.draft = false;
-      registration = this.persist();
+      registration = this.register(record);
     }
 
     this.viewedId = record.id;
@@ -593,7 +585,7 @@ export class Threads {
     record.error = undefined;
     record.authentication = undefined;
     record.updatedAt = new Date().toISOString();
-    void this.persist();
+    void this.persist(record);
     this.emit();
 
     if (runtime.pending.length === 1) {
@@ -659,7 +651,7 @@ export class Threads {
         record.unread = this.viewedId !== record.id;
       }
     }
-    await this.persist();
+    await this.persist(record);
     this.emit();
     const [next] = runtime.pending;
     const nextItem = next
@@ -731,10 +723,12 @@ export class Threads {
   }
 
   respond(id: string, response: ThreadInteractionResponse): void {
-    const runtime = [...this.runtimes.values()].find(
-      (item) => item.interaction?.id === id
+    const active = [...this.runtimes.entries()].find(
+      ([, runtime]) => runtime.interaction?.id === id
     );
-    if (!runtime?.interaction) {
+    const runtime = active?.[1];
+    const record = active ? this.findRecord(active[0]) : undefined;
+    if (!runtime?.interaction || !record) {
       return;
     }
 
@@ -754,6 +748,7 @@ export class Threads {
       runtime.interaction = undefined;
       stopStreaming(runtime);
       runtime.status = "running";
+      void this.persist(record);
       this.emit();
       resolve(selected);
       return;
@@ -772,6 +767,7 @@ export class Threads {
       runtime.interaction = undefined;
       stopStreaming(runtime);
       runtime.status = "running";
+      void this.persist(record);
       this.emit();
       resolve(result);
     }
@@ -786,7 +782,7 @@ export class Threads {
       return;
     }
     await Threads.cancelRuntime(record, runtime);
-    await this.persist();
+    await this.persist(record);
     this.emit();
   }
 
@@ -816,14 +812,14 @@ export class Threads {
       id: randomUUID(),
       name: `${record.name} (fork)`,
       sessionId: setup.sessionId,
+      status: "idle",
       updatedAt: now,
       workspace: record.workspace,
     };
-    this.stored.threads.unshift(fork);
-    this.stored.selected[record.workspace] = fork.id;
+    this.stored.unshift(fork);
     this.selectedId = fork.id;
     this.viewedId = fork.id;
-    await this.persist();
+    await this.register(fork);
     await this.load(fork);
     const forkRuntime = this.runtimes.get(fork.id);
     if (forkRuntime && message.text) {
@@ -856,6 +852,7 @@ export class Threads {
     }
     record.error = undefined;
     record.authentication = undefined;
+    await this.persist(record);
     this.emit();
   }
 
@@ -871,6 +868,7 @@ export class Threads {
           return;
         }
         await Threads.cancelRuntime(record, runtime);
+        await this.persist(record);
         runtime.connection.dispose();
         this.runtimes.delete(record.id);
       })
@@ -894,7 +892,7 @@ export class Threads {
       return;
     }
     record.unread = false;
-    void this.persist();
+    void this.persist(record);
     this.emit();
   }
 
@@ -915,9 +913,7 @@ export class Threads {
 
   snapshot(): ThreadsSnapshot {
     const threads = this.records().map((record) => {
-      const status =
-        this.runtimes.get(record.id)?.status ??
-        (record.error ? "error" : "idle");
+      const status = this.runtimes.get(record.id)?.status ?? record.status;
       const indicator = indicatorFor(status, Boolean(record.unread));
       return {
         createdAt: record.createdAt,
@@ -984,19 +980,16 @@ export class Threads {
       ...(runtime?.interaction ? { interaction: runtime.interaction } : {}),
       items,
       name: record.name,
-      status: runtime?.status ?? (record.error ? "error" : "idle"),
+      status: runtime?.status ?? record.status,
       steering:
         runtime?.pending.slice(1).map(({ id, text }) => ({ id, text })) ?? [],
       streaming: Boolean(runtime?.streaming),
     };
   }
 
-  dispose(): void {
-    for (const runtime of this.runtimes.values()) {
-      stopStreaming(runtime);
-      runtime.connection.dispose();
-    }
-    this.runtimes.clear();
+  async dispose(): Promise<void> {
+    await this.closeWorkspace();
+    await this.persistence;
     this.listeners.clear();
   }
 
@@ -1067,7 +1060,7 @@ export class Threads {
     } finally {
       runtime.setup = undefined;
     }
-    await this.persist();
+    await this.persist(record);
     this.emit();
   }
 
@@ -1086,15 +1079,14 @@ export class Threads {
       runtime.status = "idle";
       record.error = undefined;
       record.authentication = undefined;
-      this.emit();
     } catch (error) {
       stopStreaming(runtime);
       runtime.status = "error";
       record.error = errorMessage(error);
       record.authentication = agentAuthentication(error);
-      await this.persist();
-      this.emit();
     }
+    await this.persist(record);
+    this.emit();
   }
 
   private runtime(record: StoredThread): Runtime {
@@ -1115,7 +1107,7 @@ export class Threads {
             stopStreaming(active);
             active.status = "error";
           }
-          void this.persist();
+          void this.persist(record);
           this.emit();
         },
         permission: (request) => this.handlePermission(record, request),
@@ -1124,7 +1116,7 @@ export class Threads {
       drafts: [],
       items: [],
       pending: [],
-      status: record.error ? "error" : "idle",
+      status: record.status,
       streaming: false,
     };
     this.runtimes.set(record.id, runtime);
@@ -1147,6 +1139,7 @@ export class Threads {
       message: request.message,
       options: request.options,
     };
+    void this.persist(record);
     this.emit();
     // oxlint-disable-next-line promise/avoid-new
     return new Promise((resolve) => {
@@ -1171,6 +1164,7 @@ export class Threads {
       kind: "elicitation",
       message: request.message,
     };
+    void this.persist(record);
     this.emit();
     // oxlint-disable-next-line promise/avoid-new
     return new Promise((resolve) => {
@@ -1197,7 +1191,7 @@ export class Threads {
     if (update.type === "usage") {
       runtime.usage = update.usage;
       record.usage = update.usage;
-      void this.persist();
+      void this.persist(record);
     } else if (update.type === "commands") {
       runtime.commands = update.commands;
     } else if (update.type === "config") {
@@ -1209,7 +1203,7 @@ export class Threads {
       if (update.updatedAt) {
         record.updatedAt = update.updatedAt;
       }
-      void this.persist();
+      void this.persist(record);
     }
     this.emit(
       item && !archivedPlan
@@ -1224,13 +1218,13 @@ export class Threads {
   }
 
   private records(): StoredThread[] {
-    return this.stored.threads
+    return this.stored
       .filter((record) => record.workspace === this.workspace)
       .toSorted((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   private findRecord(id: string): StoredThread | undefined {
-    return this.stored.threads.find((record) => record.id === id);
+    return this.stored.find((record) => record.id === id);
   }
 
   private selectedRuntime(): Runtime | undefined {
@@ -1245,8 +1239,62 @@ export class Threads {
     return record;
   }
 
-  private persist(): PromiseLike<void> {
-    return this.storage.update(STORAGE_KEY, this.stored);
+  private static copyRecord(record: DatabaseThread): StoredThread {
+    return {
+      ...record,
+      ...(record.authentication
+        ? {
+            authentication: {
+              ...record.authentication,
+              args: [...record.authentication.args],
+              ...(record.authentication.env
+                ? { env: { ...record.authentication.env } }
+                : {}),
+            },
+          }
+        : {}),
+      ...(record.usage ? { usage: { ...record.usage } } : {}),
+    };
+  }
+
+  private apply(change: ProfileDatabaseChange): Promise<void> {
+    const previous = this.persistence;
+    const operation = (async () => {
+      await previous;
+      await this.database.apply(change);
+    })();
+    this.persistence = (async () => {
+      try {
+        await operation;
+      } catch {
+        // Keep later independent writes available after one failed write.
+      }
+    })();
+    return operation;
+  }
+
+  private persist(record: StoredThread): Promise<void> {
+    if (!this.stored.includes(record)) {
+      return Promise.resolve();
+    }
+    record.status = this.runtimes.get(record.id)?.status ?? record.status;
+    return this.apply({
+      thread: Threads.copyRecord(record),
+      type: "putThread",
+    });
+  }
+
+  private async register(record: StoredThread): Promise<void> {
+    await this.persist(record);
+    await this.selectThread(record.workspace, record.id);
+  }
+
+  private selectThread(workspace: string, threadId?: string): Promise<void> {
+    return this.apply({
+      ...(threadId ? { threadId } : {}),
+      type: "selectThread",
+      workspace,
+    });
   }
 
   private emit(change?: ThreadsChange): void {
@@ -1264,17 +1312,6 @@ updateQueue = (runtime: Runtime): void => {
     }
     item.queued = index || undefined;
   }
-};
-
-readStored = (storage: ThreadsStorage): StoredThreads => {
-  const value = storage.get<Partial<StoredThreads>>(STORAGE_KEY, {});
-  return {
-    selected:
-      value.selected && typeof value.selected === "object"
-        ? value.selected
-        : {},
-    threads: Array.isArray(value.threads) ? value.threads : [],
-  };
 };
 
 errorMessage = (error: unknown): string =>

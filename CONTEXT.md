@@ -12,7 +12,7 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 
 **Agent**: An ACP-speaking executable that runs Threads. MagPi ACP is the default Agent. _Avoid_: Model, provider, session.
 
-**Workspace status**: Whether a Workspace is `active` and shown or `inactive` and hidden. Only the Mischief Instance with that Workspace open may make it inactive.
+**Workspace status**: Whether a Workspace is `active` and shown or `inactive` and hidden. Any Mischief Instance may change it.
 
 **ACP session**: The protocol-level runtime/session identified by an ACP Agent. It is an implementation detail behind a Mischief Thread. _Avoid_: Thread when speaking about the user's domain.
 
@@ -31,7 +31,7 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 
 - Opening or adding a folder activates that exact Workspace. Git discovery associates it with its canonical-root Project; a non-Git folder becomes an untracked Workspace under `Ungrouped`.
 - Projects are derived from their Workspaces rather than activated or removed independently. A Project is shown while it has at least one active Workspace.
-- Only the Mischief Instance with a Workspace currently open may make that Workspace inactive. Making one Workspace inactive does not affect its siblings.
+- Any Mischief Instance may make an active Workspace inactive. Making one Workspace inactive does not affect its siblings.
 - Active Workspaces are shown; inactive Workspaces are hidden. Changing status does not delete Threads or ACP/Pi history.
 - A Project is keyed by its exact canonical Git-root path; an untracked Workspace is keyed by its exact canonical folder path. Separate clones never join the same Project based on GitHub or another remote origin.
 - Newly-created linked worktrees are associated with the same Project when discovered. Deleted or missing folders are omitted from the UI without another Instance rewriting their status.
