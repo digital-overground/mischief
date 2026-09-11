@@ -13,7 +13,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
 
 import type { ProjectsStorage } from "./projects";
-import { Projects } from "./projects";
+import { issueWorkspaceName, Projects } from "./projects";
 
 const exec = promisify(execFile);
 const temporaryFolders: string[] = [];
@@ -27,6 +27,11 @@ const temporaryFolder = async (): Promise<string> => {
 
 const git = async (cwd: string, ...args: string[]): Promise<void> => {
   await exec("git", ["-C", cwd, ...args]);
+};
+
+const gitOutput = async (cwd: string, ...args: string[]): Promise<string> => {
+  const { stdout } = await exec("git", ["-C", cwd, ...args]);
+  return stdout.trim();
 };
 
 const fakeGitHubCli = async (cwd: string, output: string): Promise<void> => {
@@ -193,6 +198,91 @@ describe("projects module", () => {
     );
   });
 
+  test.each([
+    [123, "Improve Workspace creation", "issue-123_improve-workspace-creation"],
+    [2, "Fix API / branch... creation!", "issue-2_fix-api-branch-creation"],
+    [3, "MIXED case", "issue-3_mixed-case"],
+    [4, "!!!", "issue-4"],
+    [
+      123,
+      "abcdefghijklmnopqrstuvwxyz 1234567890 extra",
+      "issue-123_abcdefghijklmnopqrstuvwxyz-1234567890-ex",
+    ],
+    [
+      7,
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa more",
+      "issue-7_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ],
+  ])(
+    "generates the issue Workspace name for #%i",
+    (number, title, expected) => {
+      expect(
+        issueWorkspaceName({ number, title, url: "https://example.test/issue" })
+      ).toBe(expected);
+    }
+  );
+
+  test("lists current, local, and remote-only source branches", async () => {
+    const parent = await temporaryFolder();
+    const root = path.join(parent, "mischief");
+    await git(parent, "init", "--initial-branch=main", root);
+    await git(root, "config", "user.email", "mischief@example.test");
+    await git(root, "config", "user.name", "Mischief Test");
+    await git(root, "commit", "--allow-empty", "--message=initial");
+    const initial = await gitOutput(root, "rev-parse", "HEAD");
+    await git(root, "branch", "zebra", initial);
+    await git(root, "branch", "alpha", initial);
+    await git(root, "commit", "--allow-empty", "--message=local-main");
+    const tree = await gitOutput(root, "rev-parse", `${initial}^{tree}`);
+    const remoteMain = await gitOutput(
+      root,
+      "commit-tree",
+      tree,
+      "-p",
+      initial,
+      "-m",
+      "remote-main"
+    );
+    await git(root, "update-ref", "refs/remotes/origin/main", remoteMain);
+    await git(root, "update-ref", "refs/remotes/origin/release", initial);
+    await git(
+      root,
+      "symbolic-ref",
+      "refs/remotes/origin/HEAD",
+      "refs/remotes/origin/main"
+    );
+    const projects = new Projects(new MemoryStorage());
+    await projects.add(root);
+
+    await expect(projects.sourceBranches(root)).resolves.toStrictEqual([
+      {
+        ahead: 1,
+        behind: 1,
+        current: true,
+        name: "main",
+        remoteOnly: false,
+      },
+      { current: false, name: "alpha", remoteOnly: false },
+      { current: false, name: "zebra", remoteOnly: false },
+      { current: false, name: "origin/release", remoteOnly: true },
+    ]);
+  });
+
+  test("lists a local-only source in a Project without origin refs", async () => {
+    const parent = await temporaryFolder();
+    const root = path.join(parent, "mischief");
+    await git(parent, "init", "--initial-branch=main", root);
+    await git(root, "config", "user.email", "mischief@example.test");
+    await git(root, "config", "user.name", "Mischief Test");
+    await git(root, "commit", "--allow-empty", "--message=initial");
+    const projects = new Projects(new MemoryStorage());
+    await projects.add(root);
+
+    await expect(projects.sourceBranches(root)).resolves.toStrictEqual([
+      { current: true, name: "main", remoteOnly: false },
+    ]);
+  });
+
   test("creates a normalized branch in the sibling worktrees directory", async () => {
     const parent = await temporaryFolder();
     const root = path.join(parent, "mischief");
@@ -228,6 +318,38 @@ describe("projects module", () => {
         path: expected,
       })
     );
+  });
+
+  test("creates a Workspace from the selected source branch", async () => {
+    const parent = await temporaryFolder();
+    const root = path.join(parent, "mischief");
+    await git(parent, "init", "--initial-branch=main", root);
+    await git(root, "config", "user.email", "mischief@example.test");
+    await git(root, "config", "user.name", "Mischief Test");
+    await git(root, "commit", "--allow-empty", "--message=selected-source");
+    const selectedCommit = await gitOutput(root, "rev-parse", "HEAD");
+    await git(root, "branch", "selected", selectedCommit);
+    await git(root, "commit", "--allow-empty", "--message=current-head");
+    const projects = new Projects(new MemoryStorage());
+    await projects.add(root);
+
+    const workspace = await projects.createWorkspace(
+      root,
+      "From Selected",
+      "selected"
+    );
+
+    expect({
+      branch: await gitOutput(workspace, "branch", "--show-current"),
+      commit: await gitOutput(workspace, "rev-parse", "HEAD"),
+      workspace,
+    }).toStrictEqual({
+      branch: "from-selected",
+      commit: selectedCommit,
+      workspace: await realpath(
+        path.join(parent, "worktrees", "mischief-from-selected")
+      ),
+    });
   });
 
   test("adding a Git Workspace discovers its Project and linked Workspaces", async () => {

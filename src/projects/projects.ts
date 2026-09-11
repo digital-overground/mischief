@@ -1,8 +1,15 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 
-import { createGitWorkspace, discoverGitProject } from "./git";
+import {
+  createGitWorkspace,
+  discoverGitProject,
+  sourceBranches as listGitSourceBranches,
+} from "./git";
+import type { GitSourceBranch } from "./git";
 import { listOpenGitHubIssues } from "./github";
+
+export type { GitSourceBranch } from "./git";
 
 const STORAGE_KEY = "mischief.projects";
 
@@ -42,6 +49,17 @@ export interface GitHubIssue {
   title: string;
   url: string;
 }
+
+export const issueWorkspaceName = (issue: GitHubIssue): string => {
+  const title = issue.title
+    .toLowerCase()
+    .replaceAll(/[^\p{L}\p{N}]+/gu, "-")
+    .replaceAll(/^-|-$/gu, "");
+  const name = title
+    ? `issue-${issue.number}_${title}`
+    : `issue-${issue.number}`;
+  return name.slice(0, 50).replace(/-$/u, "");
+};
 
 interface StoredProjects {
   roots: string[];
@@ -104,7 +122,19 @@ export class Projects {
     return listOpenGitHubIssues(root);
   }
 
-  async createWorkspace(projectRoot: string, name: string): Promise<string> {
+  async sourceBranches(projectRoot: string): Promise<GitSourceBranch[]> {
+    const root = await realpath(projectRoot);
+    if (!this.readStored().roots.includes(root)) {
+      throw new Error("Project is not managed by Mischief");
+    }
+    return listGitSourceBranches(root);
+  }
+
+  async createWorkspace(
+    projectRoot: string,
+    name: string,
+    sourceRef?: string
+  ): Promise<string> {
     const root = await realpath(projectRoot);
     if (!this.readStored().roots.includes(root)) {
       throw new Error("Project is not managed by Mischief");
@@ -113,7 +143,7 @@ export class Projects {
     if (!branch || /[/\\]/u.test(branch)) {
       throw new Error("Enter a Workspace name without slashes");
     }
-    return createGitWorkspace(root, branch);
+    return createGitWorkspace(root, branch, sourceRef);
   }
 
   async remove(folder: string): Promise<ProjectsSnapshot> {
