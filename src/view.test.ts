@@ -105,6 +105,38 @@ describe("view provider", () => {
     });
   });
 
+  test("creates a Thread after transcript setup completes", async () => {
+    const newThread = vi.fn<() => Promise<void>>(() => Promise.resolve());
+    const setupComplete = new Map<
+      string,
+      { id: string; message: string }
+    >().get("complete");
+    const provider = new MischiefView(
+      {} as never,
+      { newThread, onChange: vi.fn<() => void>() } as never,
+      { fsPath: process.cwd() } as never,
+      {} as never,
+      {
+        advance: () => Promise.resolve(setupComplete),
+        prompt: () => ({
+          id: "node",
+          message: "Node.js was not detected. Press Enter to continue.",
+        }),
+      }
+    );
+
+    await provider.newThread();
+    expect(newThread).not.toHaveBeenCalled();
+
+    await (
+      provider as unknown as {
+        continueSetup: (selected: string[]) => Promise<void>;
+      }
+    ).continueSetup([]);
+
+    expect(newThread).toHaveBeenCalledOnce();
+  });
+
   test("static webview shell loads the React bundle", () => {
     const html = readFileSync("media/webview.html", "utf-8");
     const style = readFileSync("media/webview.css", "utf-8");

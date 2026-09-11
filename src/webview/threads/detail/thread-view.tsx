@@ -1,8 +1,9 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { postMessage } from "../../bridge";
 import { SvgIcon } from "../../icon";
 import type {
+  RenderedSetupStep,
   RenderedThreadsSnapshot,
   RenderedTranscriptItem,
 } from "../../protocol";
@@ -22,12 +23,14 @@ const Processing = (): React.JSX.Element => (
 export const ThreadView = ({
   contextItems,
   onToggleMaximized,
+  setup,
   snapshot,
   threadMaximized,
   transcript,
 }: {
   contextItems: string[];
   onToggleMaximized: () => void;
+  setup?: RenderedSetupStep;
   snapshot: RenderedThreadsSnapshot;
   threadMaximized: boolean;
   transcript: {
@@ -39,8 +42,14 @@ export const ThreadView = ({
   const chat = useRef<HTMLDivElement>(null);
   const previousThread = useRef<string | null>(null);
   const [copyNotice, setCopyNotice] = useState(0);
+  const [selectedSetupOptions, setSelectedSetupOptions] = useState<string[]>(
+    []
+  );
   const shouldStick = useRef(true);
-  const { selected } = snapshot;
+  const selected = setup ? undefined : snapshot.selected;
+  useEffect(() => {
+    setSelectedSetupOptions(setup?.options?.map(({ id }) => id) ?? []);
+  }, [setup?.id, setup?.options]);
   const transcriptItems =
     transcript.threadId === selected?.id ? transcript.items : noTranscriptItems;
   const changed = previousThread.current !== selected?.id;
@@ -65,7 +74,7 @@ export const ThreadView = ({
     <section id="thread">
       <header id="thread-header">
         <span className="heading" id="thread-title">
-          {selected?.name || "Thread"}
+          {setup ? "Setup" : selected?.name || "Thread"}
         </span>
         <button
           className="icon"
@@ -103,8 +112,17 @@ export const ThreadView = ({
         <Transcript
           onCopied={() => setCopyNotice((notice) => notice + 1)}
           selected={selected}
+          onSetupOptionChange={(id, checked) =>
+            setSelectedSetupOptions((current) =>
+              checked
+                ? [...new Set([...current, id])]
+                : current.filter((candidate) => candidate !== id)
+            )
+          }
+          selectedSetupOptions={selectedSetupOptions}
+          setup={setup}
           streamedItems={transcriptItems}
-          key={selected?.id ?? "none"}
+          key={setup ? "setup" : (selected?.id ?? "none")}
         />
         {selected?.status === "running" && !streaming ? <Processing /> : null}
         <div id="notice">{selected?.error || ""}</div>
@@ -134,6 +152,8 @@ export const ThreadView = ({
         contextItems={contextItems}
         copyNotice={copyNotice}
         selected={selected}
+        setup={Boolean(setup)}
+        setupSelected={selectedSetupOptions}
         workspace={snapshot.workspace}
       />
     </section>

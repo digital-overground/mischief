@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { postMessage } from "../../bridge";
 import { Icon } from "../../icon";
 import type {
+  RenderedSetupStep,
   RenderedThreadDetail,
   RenderedTranscriptItem,
 } from "../../protocol";
@@ -201,11 +202,17 @@ const TranscriptNodes = memo(
 
 export const Transcript = ({
   onCopied,
+  onSetupOptionChange,
   selected,
+  selectedSetupOptions,
+  setup,
   streamedItems,
 }: {
   onCopied: () => void;
+  onSetupOptionChange: (id: string, checked: boolean) => void;
   selected?: RenderedThreadDetail;
+  selectedSetupOptions: string[];
+  setup?: RenderedSetupStep;
   streamedItems: RenderedTranscriptItem[];
 }): React.JSX.Element => {
   const onTranscriptHighlight = async (): Promise<void> => {
@@ -227,7 +234,28 @@ export const Transcript = ({
   );
   const tailWasUpdated = streamed.some((item) => item.id === tail?.id);
   let content: ReactNode;
-  if (!selected) {
+  if (setup) {
+    content = (
+      <>
+        <TranscriptNodes items={[setup.item]} />
+        {setup.options?.map((option) => (
+          <label className="settings-option setup-option" key={option.id}>
+            <input
+              type="checkbox"
+              checked={selectedSetupOptions.includes(option.id)}
+              onChange={(event) =>
+                onSetupOptionChange(option.id, event.currentTarget.checked)
+              }
+            />
+            <span>
+              <span className="settings-name">{option.label}</span>
+              <span className="settings-description">{option.description}</span>
+            </span>
+          </label>
+        ))}
+      </>
+    );
+  } else if (!selected) {
     content = <div className="empty">Select a managed Workspace.</div>;
   } else if (history.length || tail || streamed.length) {
     content = (
