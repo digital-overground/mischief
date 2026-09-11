@@ -12,13 +12,30 @@ Project
     Thread
 ```
 
+## Requirements
+
+Install these on the machine where the VS Code extension host runs:
+
+- [VS Code desktop](https://code.visualstudio.com/) 1.85 or newer.
+- [Node.js](https://nodejs.org/) 22 or newer. `npm` is included with Node.js.
+- [Pi](https://github.com/earendil-works/pi-mono), installed as `pi` on `PATH` and configured with a model provider.
+- [MagPi ACP](https://github.com/kylehumphrey-ao/magpi-acp), installed as `magpi-acp` on `PATH` or selected with the `mischief.magpiAcpPath` setting.
+
+[Git](https://git-scm.com/) is required for Git Projects, linked worktree discovery, status, and worktree creation. Without Git, Mischief can still manage folders as ungrouped Workspaces.
+
+When using Remote SSH, Dev Containers, or WSL, install Node.js, Pi, MagPi ACP, and Git in that remote environment because Mischief runs there.
+
+Before creating a Thread, Mischief checks for Node.js, Git, Pi, and MagPi ACP in the transcript. Press Enter to open the Node.js or Git installation page, or to install Pi and MagPi ACP in a visible terminal. After each step finishes, return to the transcript and press Enter to check again.
+
+Mischief then offers four recommended Pi add-ons: Todo, Ask User, Ponytail, and Matt Pocock Skills. All are selected by default; deselect anything you do not want, then press Enter to install the selection.
+
 ## GitHub issue Workspaces
 
 Starting a Workspace from a GitHub issue requires the GitHub CLI (`gh`). Authenticate with `gh auth login`; private repositories require an authenticated CLI session. Use `gh auth refresh` when credentials expire.
 
 ## Development
 
-Requires Node.js 20+ and pnpm.
+Development additionally requires pnpm.
 
 ```text
 pnpm install

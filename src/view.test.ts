@@ -745,6 +745,41 @@ describe("view provider", () => {
     }
   );
 
+  test("creates and seeds a Thread after transcript setup completes", async () => {
+    const newThread = vi.fn<() => Promise<void>>(() => Promise.resolve());
+    const prompt = vi.fn<() => Promise<void>>(() => Promise.resolve());
+    const setupComplete = new Map<
+      string,
+      { id: string; message: string }
+    >().get("complete");
+    const provider = new MischiefView(
+      {} as never,
+      { newThread, onChange: vi.fn<() => void>(), prompt } as never,
+      { fsPath: process.cwd() } as never,
+      {} as never,
+      {
+        advance: () => Promise.resolve(setupComplete),
+        prompt: () => ({
+          id: "node",
+          message: "Node.js was not detected. Press Enter to continue.",
+        }),
+      }
+    );
+
+    await provider.newThread(true, "Read issue");
+    expect(newThread).not.toHaveBeenCalled();
+    expect(prompt).not.toHaveBeenCalled();
+
+    await (
+      provider as unknown as {
+        continueSetup: (selected: string[]) => Promise<void>;
+      }
+    ).continueSetup([]);
+
+    expect(newThread).toHaveBeenCalledOnce();
+    expect(prompt).toHaveBeenCalledExactlyOnceWith("Read issue");
+  });
+
   test("static webview shell loads the React bundle", () => {
     const html = readFileSync("media/webview.html", "utf-8");
     const style = readFileSync("media/webview.css", "utf-8");
@@ -773,7 +808,7 @@ describe("view provider", () => {
       /#thread \{[^}]*min-width: 0;[^}]*overflow: hidden;/u
     );
     expect(style).toMatch(
-      /#chat \* \{[^}]*min-width: 0;[^}]*max-width: 100%;/u
+      /#configs \{[^}]*overflow-x: auto;[^}]*scrollbar-width: none;[\s\S]*#chat \* \{[^}]*min-width: 0;[^}]*max-width: 100%;/u
     );
     expect(style).toMatch(
       /\.markdown pre \{[^}]*overflow-x: hidden;[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/u

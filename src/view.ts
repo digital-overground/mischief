@@ -25,7 +25,7 @@ import type {
   TranscriptItem,
 } from "./threads/threads";
 import { webviewHtml } from "./webview";
-import type { HostToWebviewMessage } from "./webview/protocol";
+import type { HostToWebviewMessage, SetupStep } from "./webview/protocol";
 import {
   assignWorkspaceColors,
   ensureWorkspaceColors,
@@ -124,10 +124,19 @@ const interactionResponse = (
   }
   return undefined;
 };
+
+export interface ThreadSetup {
+  advance: (selected: string[]) => Promise<SetupStep | undefined>;
+  prompt: () => SetupStep | undefined;
+}
+
 export class MischiefView implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private projectsSnapshot: ProjectsSnapshot = { projects: [], ungrouped: [] };
+  private setupPrompt?: string;
+  private setupStep?: SetupStep;
   private readonly extensionUri: vscode.Uri;
+  private readonly setup?: ThreadSetup;
   private readonly projects: Projects;
   private readonly storage: ProjectsStorage;
   private readonly threads: Threads;
@@ -136,12 +145,14 @@ export class MischiefView implements vscode.WebviewViewProvider {
     projects: Projects,
     threads: Threads,
     extensionUri: vscode.Uri,
-    storage: ProjectsStorage
+    storage: ProjectsStorage,
+    setup?: ThreadSetup
   ) {
     this.projects = projects;
     this.threads = threads;
     this.extensionUri = extensionUri;
     this.storage = storage;
+    this.setup = setup;
     threads.onChange((change) => {
       if (change?.type === "transcript") {
         this.renderTranscript(change);
@@ -389,10 +400,16 @@ export class MischiefView implements vscode.WebviewViewProvider {
     await this.openWorkspace(workspace);
   }
 
-  async newThread(preserveFocus = true): Promise<void> {
-    const creating = this.threads.newThread();
-    this.view?.show(preserveFocus);
-    await creating;
+  async newThread(preserveFocus = true, initialPrompt?: string): Promise<void> {
+    const setupStep = this.setup?.prompt();
+    if (setupStep) {
+      this.setupPrompt = initialPrompt;
+      this.setupStep = setupStep;
+      this.view?.show(preserveFocus);
+      this.render();
+      return;
+    }
+    await this.startThread(preserveFocus, initialPrompt);
   }
 
   configurationChanged(): void {
@@ -529,7 +546,16 @@ export class MischiefView implements vscode.WebviewViewProvider {
       return true;
     }
     if (data.type === "newThread") {
-      await this.threads.newThread();
+      await this.newThread();
+      return true;
+    }
+    if (data.type === "setupContinue") {
+      const selected = Array.isArray(data.selected)
+        ? data.selected
+            .filter((item): item is string => typeof item === "string")
+            .slice(0, 10)
+        : [];
+      await this.continueSetup(selected);
       return true;
     }
     if (data.type === "openIssues" && typeof data.path === "string") {
@@ -655,6 +681,33 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
   }
 
+  private async continueSetup(selected: string[]): Promise<void> {
+    if (!this.setup || !this.setupStep) {
+      return;
+    }
+    this.setupStep = await this.setup.advance(selected);
+    if (this.setupStep) {
+      this.render();
+    } else {
+      const prompt = this.setupPrompt;
+      this.setupPrompt = undefined;
+      await this.startThread(true, prompt);
+    }
+  }
+
+  private async startThread(
+    preserveFocus = true,
+    initialPrompt?: string
+  ): Promise<void> {
+    this.setupStep = undefined;
+    const creating = this.threads.newThread();
+    this.view?.show(preserveFocus);
+    await creating;
+    if (initialPrompt) {
+      void MischiefView.run(this.threads.prompt(initialPrompt));
+    }
+  }
+
   private static async run(operation: Promise<void>): Promise<void> {
     try {
       await operation;
@@ -693,10 +746,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
       pending.toSpliced(index, 1)
     );
     await vscode.commands.executeCommand("workbench.view.extension.mischief");
-    await this.newThread(false);
-    if (start.prompt) {
-      void MischiefView.run(this.threads.prompt(start.prompt));
-    }
+    await this.newThread(false, start.prompt);
   }
 
   private async openWorkspace(candidate: string): Promise<void> {
@@ -873,6 +923,21 @@ export class MischiefView implements vscode.WebviewViewProvider {
     void postMessage({
       font: font || DEFAULT_MONO_FONT_FAMILY,
       projects: this.projectsSnapshot,
+      ...(this.setupStep
+        ? {
+            setup: {
+              id: this.setupStep.id,
+              item: renderTranscriptItem({
+                id: `setup:${this.setupStep.id}`,
+                kind: "system",
+                text: this.setupStep.message,
+              }),
+              ...(this.setupStep.options
+                ? { options: this.setupStep.options }
+                : {}),
+            },
+          }
+        : {}),
       threads,
       type: "state",
     } satisfies HostToWebviewMessage);

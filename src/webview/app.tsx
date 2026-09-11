@@ -97,6 +97,7 @@ export const App = (): React.JSX.Element => {
         thread={
           <ThreadView
             contextItems={contextItems}
+            setup={snapshot.setup}
             snapshot={snapshot.threads}
             threadMaximized={threadMaximized}
             transcript={transcript}

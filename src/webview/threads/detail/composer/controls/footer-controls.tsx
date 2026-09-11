@@ -8,16 +8,24 @@ export const FooterControls = ({
   onNewThread,
   onSend,
   selected,
+  setup = false,
   workspace,
 }: {
   onNewThread: () => void;
   onSend: () => void;
   selected?: RenderedThreadDetail;
+  setup?: boolean;
   workspace?: string;
 }): React.JSX.Element => {
   const running = Boolean(
     selected && ["running", "waiting"].includes(selected.status)
   );
+  let sendLabel = "Send";
+  if (setup) {
+    sendLabel = "Continue setup";
+  } else if (running) {
+    sendLabel = "Stop";
+  }
   return (
     <div className="footer-row">
       <button
@@ -48,9 +56,9 @@ export const FooterControls = ({
       <button
         className={`action${running ? " stop" : ""}`}
         id="send"
-        title={running ? "Stop" : "Send"}
-        aria-label={running ? "Stop" : "Send"}
-        disabled={!selected}
+        title={sendLabel}
+        aria-label={sendLabel}
+        disabled={!selected && !setup}
         onClick={onSend}
       >
         <SvgIcon className="send-icon" kind="send" />

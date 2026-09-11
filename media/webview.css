@@ -495,6 +495,7 @@ select:disabled {
   justify-content: flex-end;
   gap: 12px;
   overflow-x: auto;
+  scrollbar-width: none;
 }
 #configs::-webkit-scrollbar {
   display: none;
