@@ -350,8 +350,8 @@ export class MischiefView implements vscode.WebviewViewProvider {
       await this.openWorkspace(data.path);
       return true;
     }
-    if (data.type === "removeMembership" && typeof data.path === "string") {
-      await this.removeMembership(data.path);
+    if (data.type === "deactivateWorkspace" && typeof data.path === "string") {
+      await this.deactivateWorkspace(data.path);
       return true;
     }
     return false;
@@ -499,23 +499,15 @@ export class MischiefView implements vscode.WebviewViewProvider {
     );
   }
 
-  private async removeMembership(candidate: string): Promise<void> {
-    const project = this.projectsSnapshot.projects.find(
-      (item) => item.root === candidate
+  private async deactivateWorkspace(candidate: string): Promise<void> {
+    const workspace = this.workspaces().find(
+      (item) => item.path === candidate && item.current
     );
-    const standalone = this.projectsSnapshot.ungrouped.find(
-      (item) => item.path === candidate
-    );
-    if (!project && !standalone) {
+    if (!workspace) {
       return;
     }
-    const removesCurrent =
-      project?.workspaces.some((workspace) => workspace.current) ||
-      standalone?.current;
     await this.setProjects(this.projects.remove(candidate));
-    if (removesCurrent) {
-      await this.threads.closeWorkspace();
-    }
+    await this.threads.closeWorkspace();
     this.render();
   }
 

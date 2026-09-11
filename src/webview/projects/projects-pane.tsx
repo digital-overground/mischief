@@ -43,10 +43,8 @@ const visibleColor = (color: string): string => {
 };
 
 const WorkspaceRow = ({
-  removable = false,
   workspace,
 }: {
-  removable?: boolean;
   workspace: Workspace;
 }): React.JSX.Element => (
   <div className={`row${workspace.current ? " selected" : ""}`}>
@@ -91,11 +89,11 @@ const WorkspaceRow = ({
         ＋
       </IconButton>
     ) : null}
-    {removable ? (
+    {workspace.current ? (
       <IconButton
-        title="Remove membership"
+        title="Close Workspace"
         onClick={() =>
-          postMessage({ path: workspace.path, type: "removeMembership" })
+          postMessage({ path: workspace.path, type: "deactivateWorkspace" })
         }
       >
         ×
@@ -115,14 +113,6 @@ const ProjectGroup = ({ project }: { project: Project }): React.JSX.Element => (
         }
       >
         ＋
-      </IconButton>
-      <IconButton
-        title="Remove membership"
-        onClick={() =>
-          postMessage({ path: project.root, type: "removeMembership" })
-        }
-      >
-        ×
       </IconButton>
     </div>
     {project.workspaces.map((workspace) => (
@@ -160,16 +150,12 @@ export const ProjectsPane = ({
         <>
           <div className="group-row">Ungrouped</div>
           {snapshot.ungrouped.map((workspace) => (
-            <WorkspaceRow
-              removable
-              workspace={workspace}
-              key={workspace.path}
-            />
+            <WorkspaceRow workspace={workspace} key={workspace.path} />
           ))}
         </>
       ) : null}
       {!snapshot.projects.length && !snapshot.ungrouped.length ? (
-        <div className="empty">No managed Workspaces. Add one with ＋.</div>
+        <div className="empty">No active Workspaces. Add one with ＋.</div>
       ) : null}
     </div>
   </section>

@@ -6,12 +6,12 @@ import { promisify } from "node:util";
 
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { ProfileSync } from "../profile-sync/profile-sync";
+import { ProfileDatabase } from "../profile-database/profile-database";
 import { Projects } from "./projects";
 
 const exec = promisify(execFile);
 const log = vi.fn<(message: string) => void>();
-const profileSyncs: ProfileSync[] = [];
+const profileDatabases: ProfileDatabase[] = [];
 const temporaryFolders: string[] = [];
 
 const temporaryFolder = async (): Promise<string> => {
@@ -24,27 +24,34 @@ const git = async (cwd: string, ...args: string[]): Promise<void> => {
   await exec("git", ["-C", cwd, ...args]);
 };
 
-const openProfileSync = async (
+const openProfileDatabase = async (
   profileDirectory?: string,
-  workspace?: string
-): Promise<ProfileSync> => {
+  currentWorkspace?: string
+): Promise<ProfileDatabase> => {
   const directory = profileDirectory ?? (await temporaryFolder());
-  const sync = await ProfileSync.open({
+  const database = await ProfileDatabase.open({
+    currentWorkspace: currentWorkspace ?? path.join(directory, "workspace"),
     instanceId: randomUUID(),
     log,
     profileDirectory: directory,
-    workspace: workspace ?? path.join(directory, "workspace"),
   });
-  profileSyncs.push(sync);
-  return sync;
+  profileDatabases.push(database);
+  return database;
 };
 
-const createProjects = async (): Promise<Projects> =>
-  new Projects(await openProfileSync());
+const createProjects = async (currentWorkspace?: string): Promise<Projects> =>
+  new Projects(
+    await openProfileDatabase(
+      undefined,
+      currentWorkspace ? await realpath(currentWorkspace) : undefined
+    )
+  );
 
 describe("projects module", () => {
   afterEach(async () => {
-    await Promise.all(profileSyncs.splice(0).map((sync) => sync.dispose()));
+    await Promise.all(
+      profileDatabases.splice(0).map((database) => database.dispose())
+    );
     await Promise.all(
       temporaryFolders
         .splice(0)
@@ -52,7 +59,7 @@ describe("projects module", () => {
     );
   });
 
-  test("refresh removes membership for a missing untracked Workspace", async () => {
+  test("refresh hides a missing untracked Workspace without changing its status", async () => {
     const folder = await temporaryFolder();
     const projects = await createProjects();
     await projects.add(folder);
@@ -62,20 +69,29 @@ describe("projects module", () => {
     expect(snapshot.ungrouped).toStrictEqual([]);
     await mkdir(folder);
     snapshot = await projects.refresh();
-    expect(snapshot.ungrouped).toStrictEqual([]);
+    expect(snapshot.ungrouped).toHaveLength(1);
   });
 
-  test("an explicitly removed Workspace stays removed until it is added", async () => {
+  test("the owning window can make its current Workspace inactive", async () => {
     const folder = await temporaryFolder();
-    const projects = await createProjects();
+    const projects = await createProjects(folder);
 
     await projects.open(folder);
-    const removed = await projects.remove(folder);
-    expect(removed.ungrouped).toStrictEqual([]);
+    const inactive = await projects.remove(folder);
+    expect(inactive.ungrouped).toStrictEqual([]);
     const reopened = await projects.open(folder);
-    expect(reopened.ungrouped).toStrictEqual([]);
-    const added = await projects.add(folder);
-    expect(added.ungrouped).toHaveLength(1);
+    expect(reopened.ungrouped).toHaveLength(1);
+  });
+
+  test("another window cannot make a Workspace inactive", async () => {
+    const folder = await temporaryFolder();
+    const owner = await createProjects(folder);
+    const other = await createProjects();
+    await owner.open(folder);
+
+    await expect(other.remove(folder)).rejects.toThrow("own window");
+    const snapshot = await owner.refresh();
+    expect(snapshot.ungrouped).toHaveLength(1);
   });
 
   test("opening a folder adds and marks its Workspace as current", async () => {
@@ -118,6 +134,7 @@ describe("projects module", () => {
     await git(root, "worktree", "add", "-b", "deleted", linked);
     const projects = await createProjects();
     await projects.add(root);
+    await projects.add(linked);
 
     await rm(linked, { recursive: true });
 
@@ -127,7 +144,7 @@ describe("projects module", () => {
     ]);
   });
 
-  test("refresh discovers a newly created linked Workspace", async () => {
+  test("refresh does not activate a newly created linked Workspace", async () => {
     const parent = await temporaryFolder();
     const root = path.join(parent, "mischief");
     const linked = path.join(parent, "later-worktree");
@@ -141,7 +158,7 @@ describe("projects module", () => {
     await git(root, "worktree", "add", "-b", "later", linked);
 
     const snapshot = await projects.refresh();
-    expect(snapshot.projects[0]?.workspaces).toHaveLength(2);
+    expect(snapshot.projects[0]?.workspaces).toHaveLength(1);
   });
 
   test("creates a normalized branch in the sibling worktrees directory", async () => {
@@ -181,7 +198,41 @@ describe("projects module", () => {
     );
   });
 
-  test("Project membership added in one Instance appears when another Instance refreshes", async () => {
+  test("imports the previous Workspace list only into an empty database", async () => {
+    const parent = await temporaryFolder();
+    const root = path.join(parent, "mischief");
+    const linked = path.join(parent, "feature-worktree");
+    const untracked = await temporaryFolder();
+    await git(parent, "init", "--initial-branch=main", root);
+    await git(root, "config", "user.email", "mischief@example.test");
+    await git(root, "config", "user.name", "Mischief Test");
+    await git(root, "commit", "--allow-empty", "--message=initial");
+    await git(root, "worktree", "add", "-b", "feature", linked);
+    const canonicalRoot = await realpath(root);
+    const database = await openProfileDatabase(undefined, canonicalRoot);
+    const projects = new Projects(database);
+
+    await projects.importPreviousWorkspaces({
+      roots: [root],
+      ungrouped: [untracked],
+    });
+
+    let snapshot = await projects.refresh();
+    expect(snapshot.projects[0]?.workspaces).toHaveLength(2);
+    expect(snapshot.ungrouped).toHaveLength(1);
+
+    await projects.remove(root);
+    await projects.importPreviousWorkspaces({
+      roots: [root],
+      ungrouped: [untracked],
+    });
+    snapshot = await projects.refresh();
+    expect(
+      snapshot.projects[0]?.workspaces.map((workspace) => workspace.path)
+    ).toStrictEqual([await realpath(linked)]);
+  });
+
+  test("Git Workspace activated in one Instance appears when another Instance refreshes", async () => {
     const parent = await temporaryFolder();
     const root = path.join(parent, "mischief");
     await git(parent, "init", "--initial-branch=main", root);
@@ -191,15 +242,18 @@ describe("projects module", () => {
     const canonicalRoot = await realpath(root);
     const profileDirectory = await temporaryFolder();
     vi.useFakeTimers();
-    const firstSync = await openProfileSync(profileDirectory, canonicalRoot);
-    const secondSync = await openProfileSync(
+    const firstDatabase = await openProfileDatabase(
+      profileDirectory,
+      canonicalRoot
+    );
+    const secondDatabase = await openProfileDatabase(
       profileDirectory,
       path.join(profileDirectory, "second-workspace")
     );
 
     try {
-      const first = new Projects(firstSync);
-      const second = new Projects(secondSync);
+      const first = new Projects(firstDatabase);
+      const second = new Projects(secondDatabase);
       await first.add(root);
       await vi.advanceTimersByTimeAsync(1000);
 
@@ -208,7 +262,7 @@ describe("projects module", () => {
         expect(snapshot.projects).toMatchObject([{ root: canonicalRoot }]);
       });
     } finally {
-      await Promise.all([firstSync.dispose(), secondSync.dispose()]);
+      await Promise.all([firstDatabase.dispose(), secondDatabase.dispose()]);
       vi.useRealTimers();
     }
   });
@@ -234,12 +288,6 @@ describe("projects module", () => {
         name: "mischief",
         root: canonicalRoot,
         workspaces: [
-          {
-            branch: "main",
-            linked: false,
-            name: "mischief",
-            path: canonicalRoot,
-          },
           {
             branch: "feature",
             linked: true,

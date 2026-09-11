@@ -146,7 +146,7 @@ const ThreadsPaneView = ({
           </div>
         ))}
         {snapshot.workspace ? null : (
-          <div className="empty">Open a managed Workspace.</div>
+          <div className="empty">Open an active Workspace.</div>
         )}
         {snapshot.workspace && !snapshot.threads.length ? (
           <div className="empty">No durable Threads yet.</div>

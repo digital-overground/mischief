@@ -1,8 +1,12 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 
-import type { ProfileSync } from "../profile-sync/profile-sync";
+import type {
+  ProfileDatabase,
+  WorkspaceLocation,
+} from "../profile-database/profile-database";
 import { createGitWorkspace, discoverGitProject } from "./git";
+import type { GitWorkspace } from "./git";
 
 export const normalizeWorkspaceName = (name: string): string =>
   name.trim().toLowerCase().replaceAll(/\s+/gu, "-");
@@ -30,44 +34,39 @@ export interface ProjectsSnapshot {
   ungrouped: Workspace[];
 }
 
+const locateWorkspace = async (folder: string): Promise<WorkspaceLocation> => {
+  const selected = await realpath(folder);
+  const project = await discoverGitProject(selected);
+  if (!project) {
+    return { path: selected };
+  }
+  const [workspace] = project.workspaces
+    .filter(
+      (candidate) =>
+        selected === candidate.path ||
+        selected.startsWith(`${candidate.path}${path.sep}`)
+    )
+    .toSorted((left, right) => right.path.length - left.path.length);
+  return { path: workspace?.path ?? selected, projectRoot: project.root };
+};
+
 export class Projects {
   private currentWorkspace?: string;
-  private readonly sync: ProfileSync;
+  private readonly database: ProfileDatabase;
 
-  constructor(sync: ProfileSync) {
-    this.sync = sync;
+  constructor(database: ProfileDatabase) {
+    this.database = database;
   }
 
   async open(folder: string): Promise<ProjectsSnapshot> {
-    const selected = await realpath(folder);
-    const discovered = await discoverGitProject(selected);
-    this.currentWorkspace = discovered
-      ? discovered.workspaces
-          .filter(
-            (workspace) =>
-              selected === workspace.path ||
-              selected.startsWith(`${workspace.path}${path.sep}`)
-          )
-          .toSorted((a, b) => b.path.length - a.path.length)[0]?.path
-      : selected;
-    const membershipPath = discovered?.root ?? selected;
-    const membership = this.sync
-      .snapshot()
-      .memberships.find((candidate) => candidate.path === membershipPath);
-    return membership ? this.snapshot() : this.add(selected);
+    const workspace = await locateWorkspace(folder);
+    this.currentWorkspace = workspace.path;
+    await this.activate(workspace);
+    return this.snapshot();
   }
 
   async add(folder: string): Promise<ProjectsSnapshot> {
-    const selected = await realpath(folder);
-    const discovered = await discoverGitProject(selected);
-    await this.sync.apply({
-      membership: {
-        kind: discovered ? "git" : "untracked",
-        path: discovered?.root ?? selected,
-        state: "active",
-      },
-      type: "putMembership",
-    });
+    await this.activate(await locateWorkspace(folder));
     return this.snapshot();
   }
 
@@ -75,15 +74,61 @@ export class Projects {
     return this.snapshot();
   }
 
+  async importPreviousWorkspaces(value: unknown): Promise<void> {
+    if (
+      this.database.snapshot().workspaces.length > 0 ||
+      !value ||
+      typeof value !== "object" ||
+      Array.isArray(value)
+    ) {
+      return;
+    }
+    const previous = value as Record<string, unknown>;
+    const roots = Array.isArray(previous.roots)
+      ? previous.roots.filter(
+          (item): item is string => typeof item === "string"
+        )
+      : [];
+    const ungrouped = Array.isArray(previous.ungrouped)
+      ? previous.ungrouped.filter(
+          (item): item is string => typeof item === "string"
+        )
+      : [];
+    const imported = await Promise.all([
+      ...roots.map(async (root) => {
+        const project = await discoverGitProject(root);
+        return (
+          project?.workspaces.map((workspace) => ({
+            path: workspace.path,
+            projectRoot: project.root,
+          })) ?? []
+        );
+      }),
+      ...ungrouped.map(async (folder) => {
+        try {
+          return [await locateWorkspace(folder)];
+        } catch {
+          return [];
+        }
+      }),
+    ]);
+    const locations = imported.flat();
+    await Promise.all(
+      [
+        ...new Map(
+          locations.map((location) => [location.path, location])
+        ).values(),
+      ].map((workspace) => this.activate(workspace))
+    );
+  }
+
   async createWorkspace(projectRoot: string, name: string): Promise<string> {
     const root = await realpath(projectRoot);
-    const listed = this.sync
+    const listed = this.database
       .snapshot()
-      .memberships.some(
-        (membership) =>
-          membership.kind === "git" &&
-          membership.path === root &&
-          membership.state === "active"
+      .workspaces.some(
+        (workspace) =>
+          workspace.projectRoot === root && workspace.status === "active"
       );
     if (!listed) {
       throw new Error("Project is not in Mischief");
@@ -92,71 +137,80 @@ export class Projects {
     if (!branch || /[/\\]/u.test(branch)) {
       throw new Error("Enter a Workspace name without slashes");
     }
-    return createGitWorkspace(root, branch);
+    const workspace = await createGitWorkspace(root, branch);
+    await this.activate({ path: workspace, projectRoot: root });
+    return workspace;
   }
 
   async remove(folder: string): Promise<ProjectsSnapshot> {
-    const selected = await realpath(folder);
-    const discovered = await discoverGitProject(selected);
-    await this.sync.apply({
-      path: discovered?.root ?? selected,
-      type: "removeMembership",
+    const workspace = await locateWorkspace(folder);
+    await this.database.apply({
+      path: workspace.path,
+      type: "deactivateWorkspace",
     });
     return this.snapshot();
   }
 
+  private activate(workspace: WorkspaceLocation): Promise<void> {
+    return this.database.apply({ type: "activateWorkspace", workspace });
+  }
+
   private async snapshot(): Promise<ProjectsSnapshot> {
-    const memberships = this.sync
+    const active = this.database
       .snapshot()
-      .memberships.filter((membership) => membership.state === "active");
-    const gitMemberships = memberships.filter(
-      (membership) => membership.kind === "git"
-    );
-    const untrackedMemberships = memberships.filter(
-      (membership) => membership.kind === "untracked"
-    );
-    const [discoveredProjects, untrackedPaths] = await Promise.all([
-      Promise.all(
-        gitMemberships.map(async (membership) => {
-          const project = await discoverGitProject(membership.path);
-          if (!project) {
-            await this.sync.apply({
-              path: membership.path,
-              type: "removeMembership",
-            });
-          }
-          return project;
-        })
-      ),
-      Promise.all(
-        untrackedMemberships.map(async (membership) => {
+      .workspaces.filter((workspace) => workspace.status === "active");
+    const inspected = await Promise.all(
+      active.map(async (record) => {
+        const { projectRoot } = record;
+        if (!projectRoot) {
           try {
-            return await realpath(membership.path);
+            return { path: await realpath(record.path) };
           } catch {
-            await this.sync.apply({
-              path: membership.path,
-              type: "removeMembership",
-            });
             return null;
           }
-        })
-      ),
-    ]);
+        }
+        const project = await discoverGitProject(record.path);
+        const workspace = project?.workspaces.find(
+          (candidate) => candidate.path === record.path
+        );
+        return project?.root === projectRoot && workspace
+          ? { projectRoot, workspace }
+          : null;
+      })
+    );
+    const grouped = new Map<string, GitWorkspace[]>();
+    const untracked: string[] = [];
+    for (const result of inspected) {
+      if (!result) {
+        continue;
+      }
+      if (result.workspace && result.projectRoot) {
+        const workspaces = grouped.get(result.projectRoot) ?? [];
+        workspaces.push(result.workspace);
+        grouped.set(result.projectRoot, workspaces);
+      } else if (result.path) {
+        untracked.push(result.path);
+      }
+    }
 
-    const projects = discoveredProjects
-      .filter((project) => project !== undefined)
-      .map((project) => ({
-        name: path.basename(project.root),
-        root: project.root,
-        workspaces: project.workspaces.map((workspace) => ({
-          name: path.basename(workspace.path),
-          ...workspace,
-          current: workspace.path === this.currentWorkspace,
-        })),
+    const projects = [...grouped]
+      .map(([root, workspaces]) => ({
+        name: path.basename(root),
+        root,
+        workspaces: workspaces
+          .map((workspace) => ({
+            name: path.basename(workspace.path),
+            ...workspace,
+            current: workspace.path === this.currentWorkspace,
+          }))
+          .toSorted(
+            (left, right) =>
+              Number(left.linked) - Number(right.linked) ||
+              left.name.localeCompare(right.name)
+          ),
       }))
-      .toSorted((a, b) => a.name.localeCompare(b.name));
-    const ungrouped = untrackedPaths
-      .filter((workspacePath) => workspacePath !== null)
+      .toSorted((left, right) => left.name.localeCompare(right.name));
+    const ungrouped = untracked
       .map((workspacePath) => ({
         ahead: 0,
         behind: 0,
@@ -166,7 +220,7 @@ export class Projects {
         name: path.basename(workspacePath),
         path: workspacePath,
       }))
-      .toSorted((a, b) => a.name.localeCompare(b.name));
+      .toSorted((left, right) => left.name.localeCompare(right.name));
     return { projects, ungrouped };
   }
 }

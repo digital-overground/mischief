@@ -208,7 +208,7 @@ describe("React webview", () => {
     await unmount();
   });
 
-  test("shows each Workspace color and routes new Workspace creation", async () => {
+  test("shows each Workspace color and routes Workspace actions", async () => {
     const unmount = await renderApp();
     await act(() => {
       window.dispatchEvent(
@@ -226,7 +226,7 @@ describe("React webview", () => {
                       behind: 0,
                       changes: 0,
                       color: "#0e1c14",
-                      current: false,
+                      current: true,
                       linked: true,
                       name: "project-feature",
                       path: "/worktrees/project-feature",
@@ -246,12 +246,18 @@ describe("React webview", () => {
     const create = document.querySelector<HTMLButtonElement>(
       '[aria-label="New Workspace"]'
     );
-    if (!dot || !create) {
+    const close = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Close Workspace"]'
+    );
+    if (!dot || !create || !close) {
       throw new Error("Missing Workspace controls");
     }
     postMessage.mockClear();
 
-    await act(() => create.click());
+    await act(() => {
+      create.click();
+      close.click();
+    });
 
     expect({
       fill: dot.style.backgroundColor,
@@ -259,7 +265,15 @@ describe("React webview", () => {
       ring: dot.style.boxShadow,
     }).toStrictEqual({
       fill: "rgb(14, 28, 20)",
-      message: [[{ path: "/project", type: "newWorkspace" }]],
+      message: [
+        [{ path: "/project", type: "newWorkspace" }],
+        [
+          {
+            path: "/worktrees/project-feature",
+            type: "deactivateWorkspace",
+          },
+        ],
+      ],
       ring: "0 0 0 1px #50a072",
     });
     await unmount();

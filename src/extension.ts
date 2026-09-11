@@ -1,16 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
 import * as vscode from "vscode";
 
-import { ProfileSync } from "./profile-sync/profile-sync";
+import { ProfileDatabase } from "./profile-database/profile-database";
 import { Projects } from "./projects/projects";
 import { acpConnectionFactory } from "./threads/acp";
 import type { AgentLaunch } from "./threads/acp";
 import { Threads } from "./threads/threads";
 import { MischiefView, registerMischiefView } from "./view";
+
+const PROJECTS_KEY = "mischief.projects";
+const PROJECTS_VERSION_KEY = "mischief.profileDatabaseProjectsVersion";
+let database: ProfileDatabase | undefined;
 
 const agentLaunch = (context: vscode.ExtensionContext): AgentLaunch => {
   const env = { MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT: "true" };
@@ -38,28 +43,32 @@ export const activate = async (
 ): Promise<void> => {
   const output = vscode.window.createOutputChannel("Mischief");
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const currentWorkspace = folder ? await realpath(folder) : undefined;
   const log = (message: string): void => output.appendLine(message);
-  const profileSync = await ProfileSync.open({
+  database = await ProfileDatabase.open({
+    currentWorkspace,
     instanceId: randomUUID(),
     log,
     profileDirectory: context.globalStorageUri.fsPath,
-    workspace: folder,
   });
+  const projects = new Projects(database);
+  if (context.globalState.get<number>(PROJECTS_VERSION_KEY, 0) < 1) {
+    await projects.importPreviousWorkspaces(
+      context.globalState.get<unknown>(PROJECTS_KEY)
+    );
+    await context.globalState.update(PROJECTS_VERSION_KEY, 1);
+  }
   const threads = new Threads(
     context.globalState,
     acpConnectionFactory(agentLaunch(context), log)
   );
   const view = new MischiefView(
-    new Projects(profileSync),
+    projects,
     threads,
     context.extensionUri,
     context.globalState
   );
-  context.subscriptions.push(
-    output,
-    { dispose: () => threads.dispose() },
-    { dispose: () => profileSync.dispose() }
-  );
+  context.subscriptions.push(output, { dispose: () => threads.dispose() });
   registerMischiefView(context, view);
 
   context.subscriptions.push(
@@ -90,6 +99,7 @@ export const activate = async (
   }
 };
 
-export const deactivate = (): void => {
-  // VS Code calls this hook when no cleanup is needed.
+export const deactivate = async (): Promise<void> => {
+  await database?.dispose();
+  database = undefined;
 };
