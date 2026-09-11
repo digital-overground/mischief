@@ -45,6 +45,10 @@ if (process.argv.slice(2).join(" ") !== expected || process.cwd() !== process.en
   process.stderr.write("unexpected gh invocation");
   process.exit(1);
 }
+if (process.env.MISCHIEF_GH_ERROR) {
+  process.stderr.write(process.env.MISCHIEF_GH_ERROR);
+  process.exit(1);
+}
 process.stdout.write(process.env.MISCHIEF_GH_OUTPUT ?? "");
 `
   );
@@ -71,6 +75,7 @@ describe("projects module", () => {
   afterEach(async () => {
     process.env.PATH = originalPath;
     delete process.env.MISCHIEF_EXPECTED_CWD;
+    delete process.env.MISCHIEF_GH_ERROR;
     delete process.env.MISCHIEF_GH_OUTPUT;
     await Promise.all(
       temporaryFolders
@@ -190,11 +195,35 @@ describe("projects module", () => {
       { number: 9, title: "Second issue", url: "https://example.test/9" },
     ]);
 
+    process.env.MISCHIEF_GH_OUTPUT = "not JSON";
+    await expect(projects.listOpenIssues(root)).rejects.toThrow(
+      "issue list could not be read"
+    );
+
     process.env.MISCHIEF_GH_OUTPUT = JSON.stringify([
       { number: 0, title: "Broken", url: "http://example.test/0" },
     ]);
     await expect(projects.listOpenIssues(root)).rejects.toThrow(
       "invalid GitHub issue"
+    );
+  });
+
+  test("explains missing and unauthenticated GitHub CLI failures", async () => {
+    const parent = await temporaryFolder();
+    const root = path.join(parent, "mischief");
+    await git(parent, "init", "--initial-branch=main", root);
+    const projects = new Projects(new MemoryStorage());
+    await projects.add(root);
+    process.env.PATH = await temporaryFolder();
+
+    await expect(projects.listOpenIssues(root)).rejects.toThrow(
+      "GitHub CLI (gh) is required"
+    );
+
+    await fakeGitHubCli(await realpath(root), "[]");
+    process.env.MISCHIEF_GH_ERROR = "authentication required for github.test";
+    await expect(projects.listOpenIssues(root)).rejects.toThrow(
+      /authentication required for github\.test[\s\S]*gh auth login[\s\S]*gh auth refresh/u
     );
   });
 
@@ -296,6 +325,9 @@ describe("projects module", () => {
     await expect(projects.createWorkspace(root, "../escape")).rejects.toThrow(
       "without slashes"
     );
+    await expect(projects.createWorkspace(root, "..")).rejects.toThrow(
+      "not a valid Git branch"
+    );
     const workspace = await projects.createWorkspace(root, "My New Thing");
     const expected = await realpath(
       path.join(parent, "worktrees", "mischief-my-new-thing")
@@ -311,6 +343,9 @@ describe("projects module", () => {
       branch: "my-new-thing",
       workspace: expected,
     });
+    await expect(
+      projects.createWorkspace(root, "My New Thing")
+    ).rejects.toThrow(/already exists|already checked out/u);
     const snapshot = await projects.refresh();
     expect(snapshot.projects[0]?.workspaces).toContainEqual(
       expect.objectContaining({

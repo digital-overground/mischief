@@ -1,3 +1,4 @@
+import { realpath } from "node:fs/promises";
 import path from "node:path";
 
 import MarkdownIt from "markdown-it";
@@ -33,8 +34,16 @@ import {
 
 const VIEW_ID = "mischief.view";
 const START_WORKSPACES_KEY = "mischief.startWorkspaces";
+
+interface PendingWorkspaceStart {
+  path: string;
+  prompt?: string;
+}
 const DEFAULT_MONO_FONT_FAMILY =
   '"Lilex", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+const issuePrompt = (number: number): string =>
+  `start planning work on GitHub issue #${number}. Read it with gh issue view ${number} --comments.  return to the user once you've read the issue and give them a summary of the item`;
+
 const workspaceColorsEnabled = (): boolean =>
   vscode.workspace
     .getConfiguration("mischief")
@@ -338,14 +347,20 @@ export class MischiefView implements vscode.WebviewViewProvider {
       value: issueWorkspaceName(issue),
     });
     if (name !== undefined) {
-      await this.createWorkspace(project, name, branch.name);
+      await this.createWorkspace(
+        project,
+        name,
+        branch.name,
+        issuePrompt(issue.number)
+      );
     }
   }
 
   private async createWorkspace(
     project: Project,
     name: string,
-    sourceRef?: string
+    sourceRef?: string,
+    prompt?: string
   ): Promise<void> {
     const workspace = await this.projects.createWorkspace(
       project.root,
@@ -362,9 +377,13 @@ export class MischiefView implements vscode.WebviewViewProvider {
       }
     }
     await this.setProjects(this.projects.refresh());
-    const pending = this.storage.get<string[]>(START_WORKSPACES_KEY, []);
+    const pending = this.storage.get<PendingWorkspaceStart[]>(
+      START_WORKSPACES_KEY,
+      []
+    );
     await this.storage.update(START_WORKSPACES_KEY, [
-      ...new Set([...pending, workspace]),
+      ...pending.filter((candidate) => candidate.path !== workspace),
+      { path: workspace, ...(prompt ? { prompt } : {}) },
     ]);
     this.render();
     await this.openWorkspace(workspace);
@@ -648,16 +667,36 @@ export class MischiefView implements vscode.WebviewViewProvider {
 
   private async startPendingWorkspace(): Promise<void> {
     const workspace = this.workspaces().find((candidate) => candidate.current);
-    const pending = this.storage.get<string[]>(START_WORKSPACES_KEY, []);
-    if (!workspace || !pending.includes(workspace.path)) {
+    const pending = this.storage.get<PendingWorkspaceStart[]>(
+      START_WORKSPACES_KEY,
+      []
+    );
+    if (!workspace) {
+      return;
+    }
+    const canonical = await Promise.all(
+      pending.map(async (candidate) => {
+        try {
+          return (await realpath(candidate.path)) === workspace.path;
+        } catch {
+          return false;
+        }
+      })
+    );
+    const index = canonical.indexOf(true);
+    const start = pending[index];
+    if (!start) {
       return;
     }
     await this.storage.update(
       START_WORKSPACES_KEY,
-      pending.filter((candidate) => candidate !== workspace.path)
+      pending.toSpliced(index, 1)
     );
     await vscode.commands.executeCommand("workbench.view.extension.mischief");
     await this.newThread(false);
+    if (start.prompt) {
+      void MischiefView.run(this.threads.prompt(start.prompt));
+    }
   }
 
   private async openWorkspace(candidate: string): Promise<void> {

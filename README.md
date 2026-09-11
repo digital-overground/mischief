@@ -12,6 +12,10 @@ Project
     Thread
 ```
 
+## GitHub issue Workspaces
+
+Starting a Workspace from a GitHub issue requires the GitHub CLI (`gh`). Authenticate with `gh auth login`; private repositories require an authenticated CLI session. Use `gh auth refresh` when credentials expire.
+
 ## Development
 
 Requires Node.js 20+ and pnpm.

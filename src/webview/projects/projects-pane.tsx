@@ -113,7 +113,7 @@ const ProjectGroup = ({ project }: { project: Project }): React.JSX.Element => (
         title="Open GitHub Issues"
         onClick={() => postMessage({ path: project.root, type: "openIssues" })}
       >
-        <SvgIcon kind="circle" />
+        <SvgIcon className="project-action-icon" kind="folderGit2" />
       </IconButton>
       <IconButton
         title="New Workspace"

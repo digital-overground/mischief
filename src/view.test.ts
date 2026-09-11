@@ -1,9 +1,19 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { setImmediate } from "node:timers/promises";
 
 import { describe, expect, test, vi } from "vitest";
 
 import { MischiefView } from "./view";
+
+const deferred = (): { promise: Promise<void>; resolve: () => void } => {
+  let resolver: (() => void) | undefined;
+  // oxlint-disable-next-line promise/avoid-new
+  const promise = new Promise<void>((resolve) => {
+    resolver = resolve;
+  });
+  return { promise, resolve: () => resolver?.() };
+};
 
 const vscode = vi.hoisted(() => ({
   assignWorkspaceColors: true,
@@ -61,9 +71,9 @@ vi.mock(
 describe("view provider", () => {
   test("focuses Mischief and starts a Thread in a newly created Workspace", async () => {
     vscode.executeCommand.mockClear();
-    const folder = "/workspace";
+    const folder = process.cwd();
     let active: string | undefined;
-    let pending = [folder];
+    let pending = [{ path: folder }];
     const projects = {
       open: vi.fn<() => Promise<unknown>>(() =>
         Promise.resolve({
@@ -91,6 +101,7 @@ describe("view provider", () => {
           return Promise.resolve();
         }
       ),
+      prompt: vi.fn<() => Promise<void>>(() => Promise.resolve()),
       snapshot: () => ({
         attentionCount: 0,
         threads: [],
@@ -101,7 +112,7 @@ describe("view provider", () => {
       get: () => pending,
       update: vi.fn<(_key: string, value: unknown) => Promise<void>>(
         (_key, value) => {
-          pending = value as string[];
+          pending = value as typeof pending;
           return Promise.resolve();
         }
       ),
@@ -119,11 +130,101 @@ describe("view provider", () => {
       command: vscode.executeCommand.mock.calls,
       newThreads: threads.newThread.mock.calls.length,
       pending,
+      prompts: threads.prompt.mock.calls.length,
     }).toStrictEqual({
       command: [["workbench.view.extension.mischief"]],
       newThreads: 1,
       pending: [],
+      prompts: 0,
     });
+  });
+
+  test("consumes a seeded Workspace start before focusing and prompting one Thread", async () => {
+    const folder = process.cwd();
+    const prompt =
+      "start planning work on GitHub issue #123. Read it with gh issue view 123 --comments.  return to the user once you've read the issue and give them a summary of the item";
+    const events: string[] = [];
+    const promptFinished = deferred();
+    const promptStarted = deferred();
+    let pending = [{ path: folder, prompt }];
+    vscode.executeCommand.mockImplementation(() => {
+      events.push("focus");
+      return Promise.resolve();
+    });
+    const threads = {
+      newThread: vi.fn<() => Promise<void>>(() => {
+        events.push("newThread");
+        return Promise.resolve();
+      }),
+      onChange: vi.fn<() => void>(),
+      openWorkspace: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+      prompt: vi.fn<(text: string) => Promise<void>>((text) => {
+        events.push(`prompt:${text}`);
+        promptStarted.resolve();
+        return promptFinished.promise;
+      }),
+      snapshot: () => ({ attentionCount: 0, threads: [] }),
+    };
+    const provider = new MischiefView(
+      {
+        open: () =>
+          Promise.resolve({
+            projects: [],
+            ungrouped: [
+              {
+                ahead: 0,
+                behind: 0,
+                changes: 0,
+                current: true,
+                linked: false,
+                name: "workspace",
+                path: folder,
+              },
+            ],
+          }),
+      } as never,
+      threads as never,
+      { fsPath: process.cwd() } as never,
+      {
+        get: () => pending,
+        update: vi.fn<(_key: string, value: unknown) => Promise<void>>(
+          (_key, value) => {
+            pending = value as typeof pending;
+            events.push("remove");
+            return Promise.resolve();
+          }
+        ),
+      } as never
+    );
+
+    const initialization = provider.initialize(folder);
+    await promptStarted.promise;
+    const initialized = await Promise.race([
+      initialization.then(() => true),
+      setImmediate(false),
+    ]);
+    promptFinished.resolve();
+    await initialization;
+
+    expect({
+      events,
+      initialized,
+      pending,
+      prompts: threads.prompt.mock.calls,
+    }).toStrictEqual({
+      events: ["remove", "focus", "newThread", `prompt:${prompt}`],
+      initialized: true,
+      pending: [],
+      prompts: [[prompt]],
+    });
+
+    await provider.initialize(folder);
+
+    expect({ events, prompts: threads.prompt.mock.calls }).toStrictEqual({
+      events: ["remove", "focus", "newThread", `prompt:${prompt}`],
+      prompts: [[prompt]],
+    });
+    vscode.executeCommand.mockReset();
   });
 
   test("lists Project issues and opens one externally without closing the picker", async () => {
@@ -197,6 +298,7 @@ describe("view provider", () => {
       .mockReturnValueOnce(sourcePicker);
     vscode.executeCommand.mockClear();
     vscode.openExternal.mockClear();
+    vscode.showErrorMessage.mockClear();
     vscode.showInputBox.mockResolvedValue("Edited Name");
     const createWorkspace = vi.fn<() => Promise<string>>(() =>
       Promise.resolve("/worktree")
@@ -313,13 +415,22 @@ describe("view provider", () => {
     );
 
     await triggerButton?.({ item: picker.items[1] as { issue: unknown } });
+    vscode.openExternal.mockRejectedValueOnce(new Error("blocked"));
+    await triggerButton?.({ item: picker.items[0] as { issue: unknown } });
 
     expect({
+      errors: vscode.showErrorMessage.mock.calls,
       hidden: picker.hide.mock.calls.length,
       opened: vscode.openExternal.mock.calls,
+      sourceRequests: sourceBranches.mock.calls.length,
     }).toStrictEqual({
+      errors: [["Mischief: Could not open #6: blocked"]],
       hidden: 0,
-      opened: [[{ value: "https://example.test/9" }]],
+      opened: [
+        [{ value: "https://example.test/9" }],
+        [{ value: "https://example.test/6" }],
+      ],
+      sourceRequests: 0,
     });
 
     picker.selectedItems = [picker.items[1] as { issue: unknown }];
@@ -369,7 +480,18 @@ describe("view provider", () => {
           { forceNewWindow: true },
         ],
       ],
-      pending: [["mischief.startWorkspaces", ["/worktree"]]],
+      pending: [
+        [
+          "mischief.startWorkspaces",
+          [
+            {
+              path: "/worktree",
+              prompt:
+                "start planning work on GitHub issue #9. Read it with gh issue view 9 --comments.  return to the user once you've read the issue and give them a summary of the item",
+            },
+          ],
+        ],
+      ],
       sourceActive: ["main"],
       sourceItems: [
         { kind: -1, label: "Local" },
@@ -473,8 +595,8 @@ describe("view provider", () => {
     expect(createWorkspace).not.toHaveBeenCalled();
   });
 
-  test.each(["source", "name"])(
-    "cancels at the %s picker before creating a Workspace",
+  test.each(["branches", "source", "name"])(
+    "stops at the %s step before creating a Workspace",
     async (step) => {
       let receive: ((message: unknown) => void) | undefined;
       let accept: (() => void) | undefined;
@@ -527,6 +649,7 @@ describe("view provider", () => {
         .mockReset()
         .mockReturnValueOnce(picker)
         .mockReturnValueOnce(sourcePicker);
+      vscode.showInformationMessage.mockClear();
       vscode.showInputBox.mockReset();
       const cancelled: unknown = undefined;
       vscode.showInputBox.mockResolvedValue(cancelled);
@@ -534,7 +657,11 @@ describe("view provider", () => {
         Promise.resolve("/worktree")
       );
       const sourceBranches = vi.fn<() => Promise<unknown[]>>(() =>
-        Promise.resolve([{ current: true, name: "main", remoteOnly: false }])
+        Promise.resolve(
+          step === "branches"
+            ? []
+            : [{ current: true, name: "main", remoteOnly: false }]
+        )
       );
       const provider = new MischiefView(
         {
@@ -582,34 +709,39 @@ describe("view provider", () => {
       await vi.waitFor(() => expect(picker.show).toHaveBeenCalledOnce());
       picker.selectedItems = [picker.items[0] as { issue: unknown }];
       accept?.();
-      await vi.waitFor(() => expect(sourcePicker.show).toHaveBeenCalledOnce());
-      if (step === "source") {
-        sourceHidden?.();
-      } else {
-        sourcePicker.selectedItems = [
-          sourcePicker.items.find((item) => item.branch) as {
-            branch: { name: string };
-          },
-        ];
-        sourceAccept?.();
+      if (step !== "branches") {
+        await vi.waitFor(() => {
+          if (!sourcePicker.show.mock.calls.length) {
+            throw new Error("Source picker is not open");
+          }
+        });
+        if (step === "source") {
+          sourceHidden?.();
+        } else {
+          sourcePicker.selectedItems = [
+            sourcePicker.items.find((item) => item.branch) as {
+              branch: { name: string };
+            },
+          ];
+          sourceAccept?.();
+        }
       }
       await vi.waitFor(() =>
         expect({
+          information: vscode.showInformationMessage.mock.calls,
           namePrompts: vscode.showInputBox.mock.calls.length,
           sourceRequests: sourceBranches.mock.calls.length,
+          sourceShows: sourcePicker.show.mock.calls.length,
+          workspaceCreations: createWorkspace.mock.calls.length,
         }).toStrictEqual({
+          information:
+            step === "branches" ? [["No source branches for project."]] : [],
           namePrompts: step === "name" ? 1 : 0,
           sourceRequests: 1,
+          sourceShows: step === "branches" ? 0 : 1,
+          workspaceCreations: 0,
         })
       );
-
-      expect({
-        namePrompts: vscode.showInputBox.mock.calls.length,
-        workspaceCreations: createWorkspace.mock.calls.length,
-      }).toStrictEqual({
-        namePrompts: step === "name" ? 1 : 0,
-        workspaceCreations: 0,
-      });
     }
   );
 
@@ -625,6 +757,12 @@ describe("view provider", () => {
     );
     expect(style).toMatch(
       /footer \{[^}]*flex: none;[\s\S]*#processing::before \{[^}]*animation: thread-status-frame/u
+    );
+  });
+
+  test("keeps Project action icons icon-sized", () => {
+    expect(readFileSync("media/webview.css", "utf-8")).toMatch(
+      /\.project-action-icon \{[^}]*width: 14px;[^}]*height: 14px;/u
     );
   });
 

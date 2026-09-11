@@ -575,6 +575,10 @@ select:disabled {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+.project-action-icon {
+  width: 14px;
+  height: 14px;
+}
 #chat {
   flex: 1;
   min-width: 0;

@@ -228,16 +228,24 @@ describe("React webview", () => {
     const openIssues = document.querySelector<HTMLButtonElement>(
       '[aria-label="Open GitHub Issues"]'
     );
-    if (!openIssues) {
+    const icon = openIssues?.querySelector("svg");
+    if (!openIssues || !icon) {
       throw new Error("Missing Open GitHub Issues control");
     }
     postMessage.mockClear();
 
     await act(() => openIssues.click());
 
-    expect(postMessage).toHaveBeenCalledExactlyOnceWith({
-      path: "/project",
-      type: "openIssues",
+    expect({
+      circles: icon.querySelectorAll("circle").length,
+      className: icon.getAttribute("class"),
+      message: postMessage.mock.calls,
+      paths: icon.querySelectorAll("path").length,
+    }).toStrictEqual({
+      circles: 2,
+      className: "lucide project-action-icon",
+      message: [[{ path: "/project", type: "openIssues" }]],
+      paths: 2,
     });
     await unmount();
   });
