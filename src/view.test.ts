@@ -159,7 +159,7 @@ describe("view provider", () => {
       /#thread \{[^}]*min-width: 0;[^}]*overflow: hidden;/u
     );
     expect(style).toMatch(
-      /#chat \* \{[^}]*min-width: 0;[^}]*max-width: 100%;/u
+      /#configs \{[^}]*overflow-x: auto;[^}]*scrollbar-width: none;[\s\S]*#chat \* \{[^}]*min-width: 0;[^}]*max-width: 100%;/u
     );
     expect(style).toMatch(
       /\.markdown pre \{[^}]*overflow-x: hidden;[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/u
