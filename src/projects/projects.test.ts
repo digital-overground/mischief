@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -10,6 +17,7 @@ import { Projects } from "./projects";
 
 const exec = promisify(execFile);
 const temporaryFolders: string[] = [];
+const originalPath = process.env.PATH;
 
 const temporaryFolder = async (): Promise<string> => {
   const folder = await mkdtemp("/tmp/mischief-");
@@ -19,6 +27,26 @@ const temporaryFolder = async (): Promise<string> => {
 
 const git = async (cwd: string, ...args: string[]): Promise<void> => {
   await exec("git", ["-C", cwd, ...args]);
+};
+
+const fakeGitHubCli = async (cwd: string, output: string): Promise<void> => {
+  const bin = await temporaryFolder();
+  const executable = path.join(bin, "gh");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+const expected = "issue list --state open --limit 1000 --json number,title,url";
+if (process.argv.slice(2).join(" ") !== expected || process.cwd() !== process.env.MISCHIEF_EXPECTED_CWD) {
+  process.stderr.write("unexpected gh invocation");
+  process.exit(1);
+}
+process.stdout.write(process.env.MISCHIEF_GH_OUTPUT ?? "");
+`
+  );
+  await chmod(executable, 0o755);
+  process.env.PATH = `${bin}${path.delimiter}${originalPath}`;
+  process.env.MISCHIEF_EXPECTED_CWD = cwd;
+  process.env.MISCHIEF_GH_OUTPUT = output;
 };
 
 class MemoryStorage implements ProjectsStorage {
@@ -36,6 +64,9 @@ class MemoryStorage implements ProjectsStorage {
 
 describe("projects module", () => {
   afterEach(async () => {
+    process.env.PATH = originalPath;
+    delete process.env.MISCHIEF_EXPECTED_CWD;
+    delete process.env.MISCHIEF_GH_OUTPUT;
     await Promise.all(
       temporaryFolders
         .splice(0)
@@ -133,6 +164,33 @@ describe("projects module", () => {
 
     const snapshot = await projects.refresh();
     expect(snapshot.projects[0]?.workspaces).toHaveLength(2);
+  });
+
+  test("lists validated open GitHub issues for a managed Project", async () => {
+    const parent = await temporaryFolder();
+    const root = path.join(parent, "mischief");
+    await git(parent, "init", "--initial-branch=main", root);
+    const projects = new Projects(new MemoryStorage());
+    await projects.add(root);
+    await fakeGitHubCli(
+      await realpath(root),
+      JSON.stringify([
+        { number: 6, title: "First issue", url: "https://example.test/6" },
+        { number: 9, title: "Second issue", url: "https://example.test/9" },
+      ])
+    );
+
+    await expect(projects.listOpenIssues(root)).resolves.toStrictEqual([
+      { number: 6, title: "First issue", url: "https://example.test/6" },
+      { number: 9, title: "Second issue", url: "https://example.test/9" },
+    ]);
+
+    process.env.MISCHIEF_GH_OUTPUT = JSON.stringify([
+      { number: 0, title: "Broken", url: "http://example.test/0" },
+    ]);
+    await expect(projects.listOpenIssues(root)).rejects.toThrow(
+      "invalid GitHub issue"
+    );
   });
 
   test("creates a normalized branch in the sibling worktrees directory", async () => {

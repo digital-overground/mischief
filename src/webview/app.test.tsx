@@ -208,6 +208,40 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("routes open GitHub issues from a Project", async () => {
+    const unmount = await renderApp();
+    await act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            font: "Test Mono",
+            projects: {
+              projects: [{ name: "project", root: "/project", workspaces: [] }],
+              ungrouped: [],
+            },
+            threads: { attentionCount: 0, threads: [] },
+            type: "state",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    const openIssues = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Open GitHub Issues"]'
+    );
+    if (!openIssues) {
+      throw new Error("Missing Open GitHub Issues control");
+    }
+    postMessage.mockClear();
+
+    await act(() => openIssues.click());
+
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({
+      path: "/project",
+      type: "openIssues",
+    });
+    await unmount();
+  });
+
   test("shows each Workspace color and routes new Workspace creation", async () => {
     const unmount = await renderApp();
     await act(() => {

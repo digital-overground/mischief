@@ -41,7 +41,11 @@ export type HostToWebviewMessage =
 export type WebviewToHostMessage =
   | { type: "ready" | "add" | "refresh" | "contextItems" | "newThread" }
   | {
-      type: "newWorkspace" | "openWorkspace" | "removeMembership";
+      type:
+        | "newWorkspace"
+        | "openIssues"
+        | "openWorkspace"
+        | "removeMembership";
       path: string;
     }
   | {

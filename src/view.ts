@@ -5,6 +5,7 @@ import * as vscode from "vscode";
 
 import { normalizeWorkspaceName } from "./projects/projects";
 import type {
+  GitHubIssue,
   Projects,
   ProjectsSnapshot,
   ProjectsStorage,
@@ -74,6 +75,10 @@ const promptImages = (value: unknown): PromptImage[] => {
     return { data: image.data, mimeType: image.mimeType };
   });
 };
+
+interface GitHubIssueQuickPickItem extends vscode.QuickPickItem {
+  issue: GitHubIssue;
+}
 
 const interactionResponse = (
   value: unknown
@@ -198,6 +203,62 @@ export class MischiefView implements vscode.WebviewViewProvider {
     await this.setProjects(this.projects.refresh());
     await this.syncThreads();
     this.render();
+  }
+
+  async openIssues(projectRoot: string): Promise<void> {
+    const project = this.projectsSnapshot.projects.find(
+      (candidate) => candidate.root === projectRoot
+    );
+    if (!project) {
+      return;
+    }
+    const issues = await this.projects.listOpenIssues(project.root);
+    if (!issues.length) {
+      await vscode.window.showInformationMessage(
+        `No open GitHub issues for ${project.name}.`
+      );
+      return;
+    }
+    const picker = vscode.window.createQuickPick<GitHubIssueQuickPickItem>();
+    picker.title = `Open Issues · ${project.name}`;
+    picker.items = issues.map((issue) => ({
+      buttons: [
+        {
+          iconPath: new vscode.ThemeIcon("link-external"),
+          tooltip: `Open #${issue.number} on GitHub`,
+        },
+      ],
+      issue,
+      label: `#${issue.number} ${issue.title}`,
+    }));
+    const disposables = [
+      picker.onDidAccept(() => {
+        if (picker.selectedItems[0]) {
+          picker.hide();
+        }
+      }),
+      picker.onDidTriggerItemButton(async ({ item }) => {
+        try {
+          const opened = await vscode.env.openExternal(
+            vscode.Uri.parse(item.issue.url)
+          );
+          if (!opened) {
+            throw new Error("VS Code declined the URL");
+          }
+        } catch (error) {
+          void vscode.window.showErrorMessage(
+            `Mischief: Could not open #${item.issue.number}: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }),
+      picker.onDidHide(() => {
+        for (const disposable of disposables) {
+          disposable.dispose();
+        }
+        picker.dispose();
+      }),
+    ];
+    picker.show();
   }
 
   async newThread(preserveFocus = true): Promise<void> {
@@ -341,6 +402,10 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
     if (data.type === "newThread") {
       await this.threads.newThread();
+      return true;
+    }
+    if (data.type === "openIssues" && typeof data.path === "string") {
+      await this.openIssues(data.path);
       return true;
     }
     if (data.type === "newWorkspace" && typeof data.path === "string") {

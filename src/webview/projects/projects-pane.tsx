@@ -4,6 +4,7 @@ import type {
   Workspace,
 } from "../../projects/projects";
 import { postMessage } from "../bridge";
+import { SvgIcon } from "../icon";
 
 const IconButton = ({
   children,
@@ -108,6 +109,12 @@ const ProjectGroup = ({ project }: { project: Project }): React.JSX.Element => (
   <>
     <div className="group-row">
       <span className="name">{project.name}</span>
+      <IconButton
+        title="Open GitHub Issues"
+        onClick={() => postMessage({ path: project.root, type: "openIssues" })}
+      >
+        <SvgIcon kind="circle" />
+      </IconButton>
       <IconButton
         title="New Workspace"
         onClick={() =>

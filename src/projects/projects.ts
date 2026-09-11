@@ -2,6 +2,7 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 
 import { createGitWorkspace, discoverGitProject } from "./git";
+import { listOpenGitHubIssues } from "./github";
 
 const STORAGE_KEY = "mischief.projects";
 
@@ -34,6 +35,12 @@ export interface Project {
 export interface ProjectsSnapshot {
   projects: Project[];
   ungrouped: Workspace[];
+}
+
+export interface GitHubIssue {
+  number: number;
+  title: string;
+  url: string;
 }
 
 interface StoredProjects {
@@ -87,6 +94,14 @@ export class Projects {
 
   refresh(): Promise<ProjectsSnapshot> {
     return this.snapshot();
+  }
+
+  async listOpenIssues(projectRoot: string): Promise<GitHubIssue[]> {
+    const root = await realpath(projectRoot);
+    if (!this.readStored().roots.includes(root)) {
+      throw new Error("Project is not managed by Mischief");
+    }
+    return listOpenGitHubIssues(root);
   }
 
   async createWorkspace(projectRoot: string, name: string): Promise<string> {

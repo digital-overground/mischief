@@ -7,7 +7,11 @@ import { MischiefView } from "./view";
 
 const vscode = vi.hoisted(() => ({
   assignWorkspaceColors: true,
+  createQuickPick: vi.fn<() => unknown>(),
   executeCommand: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+  openExternal: vi.fn<() => Promise<boolean>>(() => Promise.resolve(true)),
+  showErrorMessage: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+  showInformationMessage: vi.fn<() => Promise<void>>(() => Promise.resolve()),
   updateConfiguration: vi.fn<
     (key: string, value: unknown, target: number) => Promise<void>
   >(() => Promise.resolve()),
@@ -18,14 +22,28 @@ vi.mock(
   () =>
     ({
       ConfigurationTarget: { Global: 1, Workspace: 2 },
+      ThemeIcon: class ThemeIcon {
+        readonly id: string;
+
+        constructor(id: string) {
+          this.id = id;
+        }
+      },
       Uri: {
         file: (fsPath: string) => ({ fsPath }),
         joinPath: (base: { fsPath: string }, ...parts: string[]) => ({
           fsPath: path.join(base.fsPath, ...parts),
         }),
+        parse: (value: string) => ({ value }),
       },
       commands: { executeCommand: vscode.executeCommand },
+      env: { openExternal: vscode.openExternal },
       extensions: { all: [] },
+      window: {
+        createQuickPick: vscode.createQuickPick,
+        showErrorMessage: vscode.showErrorMessage,
+        showInformationMessage: vscode.showInformationMessage,
+      },
       workspace: {
         getConfiguration: () => ({
           get: (key: string) =>
@@ -103,6 +121,233 @@ describe("view provider", () => {
       newThreads: 1,
       pending: [],
     });
+  });
+
+  test("lists Project issues and opens one externally without closing the picker", async () => {
+    let receive: ((message: unknown) => void) | undefined;
+    let accept: (() => void) | undefined;
+    let hidden: (() => void) | undefined;
+    let triggerButton:
+      | ((event: { item: { issue: unknown } }) => Promise<void>)
+      | undefined;
+    const picker = {
+      activeItems: [],
+      dispose: vi.fn<() => void>(),
+      hide: vi.fn<() => void>(() => hidden?.()),
+      items: [] as { buttons?: unknown[]; issue: unknown; label: string }[],
+      onDidAccept: vi.fn<(listener: () => void) => { dispose: () => void }>(
+        (listener) => {
+          accept = listener;
+          return { dispose: vi.fn<() => void>() };
+        }
+      ),
+      onDidHide: vi.fn<(listener: () => void) => { dispose: () => void }>(
+        (listener) => {
+          hidden = listener;
+          return { dispose: vi.fn<() => void>() };
+        }
+      ),
+      onDidTriggerItemButton: vi.fn<
+        (listener: (event: { item: { issue: unknown } }) => Promise<void>) => {
+          dispose: () => void;
+        }
+      >((listener) => {
+        triggerButton = listener;
+        return { dispose: vi.fn<() => void>() };
+      }),
+      selectedItems: [] as { issue: unknown }[],
+      show: vi.fn<() => void>(),
+      title: "",
+    };
+    vscode.createQuickPick.mockReturnValue(picker);
+    vscode.openExternal.mockClear();
+    const createWorkspace = vi.fn<() => Promise<string>>(() =>
+      Promise.resolve("/worktree")
+    );
+    const sourceBranches = vi.fn<() => Promise<unknown[]>>(() =>
+      Promise.resolve([])
+    );
+    const projects = {
+      createWorkspace,
+      listOpenIssues: vi.fn<() => Promise<unknown[]>>(() =>
+        Promise.resolve([
+          { number: 6, title: "First issue", url: "https://example.test/6" },
+          { number: 9, title: "Second issue", url: "https://example.test/9" },
+        ])
+      ),
+      open: vi.fn<() => Promise<unknown>>(() =>
+        Promise.resolve({
+          projects: [{ name: "project", root: "/project", workspaces: [] }],
+          ungrouped: [],
+        })
+      ),
+      sourceBranches,
+    };
+    const provider = new MischiefView(
+      projects as never,
+      {
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({ attentionCount: 0, threads: [] }),
+      } as never,
+      { fsPath: process.cwd() } as never,
+      { get: (_key: string, fallback: unknown) => fallback } as never
+    );
+    await provider.initialize("/project");
+    await provider.resolveWebviewView({
+      onDidDispose: vi.fn<() => void>(),
+      webview: {
+        asWebviewUri: (uri: { fsPath: string }) => ({
+          toString: () => `webview:${uri.fsPath}`,
+        }),
+        cspSource: "webview-csp",
+        html: "",
+        onDidReceiveMessage: (listener: (message: unknown) => void) => {
+          receive = listener;
+        },
+        options: {},
+        postMessage: vi.fn<() => void>(),
+      },
+    } as never);
+
+    receive?.({ path: "/project", type: "openIssues" });
+    await vi.waitFor(() => expect(picker.show).toHaveBeenCalledOnce());
+
+    expect({
+      items: picker.items.map((item) => {
+        const button = item.buttons?.[0] as
+          | { iconPath: { id: string }; tooltip: string }
+          | undefined;
+        return {
+          button: button && {
+            icon: button.iconPath.id,
+            tooltip: button.tooltip,
+          },
+          label: item.label,
+        };
+      }),
+      title: picker.title,
+    }).toStrictEqual({
+      items: [
+        {
+          button: { icon: "link-external", tooltip: "Open #6 on GitHub" },
+          label: "#6 First issue",
+        },
+        {
+          button: { icon: "link-external", tooltip: "Open #9 on GitHub" },
+          label: "#9 Second issue",
+        },
+      ],
+      title: "Open Issues · project",
+    });
+
+    await triggerButton?.({ item: picker.items[1] as { issue: unknown } });
+
+    expect({
+      hidden: picker.hide.mock.calls.length,
+      opened: vscode.openExternal.mock.calls,
+    }).toStrictEqual({
+      hidden: 0,
+      opened: [[{ value: "https://example.test/9" }]],
+    });
+
+    picker.selectedItems = [picker.items[1] as { issue: unknown }];
+    accept?.();
+    await vi.waitFor(() => expect(picker.dispose).toHaveBeenCalledOnce());
+
+    expect({
+      hidden: picker.hide.mock.calls.length,
+      sourceRequests: sourceBranches.mock.calls.length,
+      workspaceCreations: createWorkspace.mock.calls.length,
+    }).toStrictEqual({ hidden: 1, sourceRequests: 0, workspaceCreations: 0 });
+  });
+
+  test("cancels the issue picker without mutation and reports no open issues", async () => {
+    let receive: ((message: unknown) => void) | undefined;
+    let hide: (() => void) | undefined;
+    const picker = {
+      dispose: vi.fn<() => void>(),
+      hide: vi.fn<() => void>(),
+      items: [],
+      onDidAccept: vi.fn<(_listener: () => void) => { dispose: () => void }>(
+        () => ({ dispose: vi.fn<() => void>() })
+      ),
+      onDidHide: vi.fn<(listener: () => void) => { dispose: () => void }>(
+        (listener) => {
+          hide = listener;
+          return { dispose: vi.fn<() => void>() };
+        }
+      ),
+      onDidTriggerItemButton: vi.fn<
+        (_listener: (event: unknown) => Promise<void>) => {
+          dispose: () => void;
+        }
+      >(() => ({ dispose: vi.fn<() => void>() })),
+      selectedItems: [],
+      show: vi.fn<() => void>(),
+      title: "",
+    };
+    vscode.createQuickPick.mockReturnValue(picker);
+    vscode.showInformationMessage.mockClear();
+    const sourceBranches = vi.fn<() => Promise<unknown[]>>(() =>
+      Promise.resolve([])
+    );
+    const createWorkspace = vi.fn<() => Promise<string>>(() =>
+      Promise.resolve("/worktree")
+    );
+    const listOpenIssues = vi
+      .fn<() => Promise<unknown[]>>()
+      .mockResolvedValueOnce([
+        { number: 6, title: "First issue", url: "https://example.test/6" },
+      ])
+      .mockResolvedValueOnce([]);
+    const provider = new MischiefView(
+      {
+        createWorkspace,
+        listOpenIssues,
+        open: () =>
+          Promise.resolve({
+            projects: [{ name: "project", root: "/project", workspaces: [] }],
+            ungrouped: [],
+          }),
+        sourceBranches,
+      } as never,
+      {
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({ attentionCount: 0, threads: [] }),
+      } as never,
+      { fsPath: process.cwd() } as never,
+      { get: (_key: string, fallback: unknown) => fallback } as never
+    );
+    await provider.initialize("/project");
+    await provider.resolveWebviewView({
+      onDidDispose: vi.fn<() => void>(),
+      webview: {
+        asWebviewUri: (uri: { fsPath: string }) => ({
+          toString: () => `webview:${uri.fsPath}`,
+        }),
+        cspSource: "webview-csp",
+        html: "",
+        onDidReceiveMessage: (listener: (message: unknown) => void) => {
+          receive = listener;
+        },
+        options: {},
+        postMessage: vi.fn<() => void>(),
+      },
+    } as never);
+
+    receive?.({ path: "/project", type: "openIssues" });
+    await vi.waitFor(() => expect(picker.show).toHaveBeenCalledOnce());
+    hide?.();
+    await vi.waitFor(() => expect(picker.dispose).toHaveBeenCalledOnce());
+    receive?.({ path: "/project", type: "openIssues" });
+    await vi.waitFor(() =>
+      expect(vscode.showInformationMessage).toHaveBeenCalledExactlyOnceWith(
+        "No open GitHub issues for project."
+      )
+    );
+
+    expect(sourceBranches).not.toHaveBeenCalled();
+    expect(createWorkspace).not.toHaveBeenCalled();
   });
 
   test("static webview shell loads the React bundle", () => {
