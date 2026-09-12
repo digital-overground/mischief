@@ -3,10 +3,7 @@ import path from "node:path";
 import MarkdownIt from "markdown-it";
 import * as vscode from "vscode";
 
-import type {
-  DatabaseWorkspace,
-  ProfileDatabase,
-} from "./profile-database/profile-database";
+import type { ProfileDatabase } from "./profile-database/profile-database";
 import { normalizeWorkspaceName } from "./projects/projects";
 import type {
   Projects,
@@ -37,18 +34,6 @@ const workspaceColorsEnabled = (): boolean =>
     .getConfiguration("mischief")
     .get<boolean>("assignWorkspaceColors", true);
 const markdown = new MarkdownIt({ breaks: true, html: false, linkify: true });
-
-const sameWorkspaces = (
-  left: readonly DatabaseWorkspace[],
-  right: readonly DatabaseWorkspace[]
-): boolean =>
-  left.length === right.length &&
-  left.every(
-    (workspace, index) =>
-      workspace.path === right[index]?.path &&
-      workspace.projectRoot === right[index]?.projectRoot &&
-      workspace.status === right[index]?.status
-  );
 
 const renderTranscriptItem = (
   item: TranscriptItem
@@ -120,7 +105,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private projectsSnapshot: ProjectsSnapshot = { projects: [], ungrouped: [] };
   private readonly database: ProfileDatabase;
-  private databaseWorkspaces: readonly DatabaseWorkspace[];
+  private databaseWorkspaces: string;
   private profileRefresh = Promise.resolve();
   private readonly extensionUri: vscode.Uri;
   private readonly projects: Projects;
@@ -139,7 +124,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     this.extensionUri = extensionUri;
     this.storage = storage;
     this.database = database;
-    this.databaseWorkspaces = database.snapshot().workspaces;
+    this.databaseWorkspaces = JSON.stringify(database.snapshot().workspaces);
     database.onChange(() => this.databaseChanged());
     threads.onChange((change) => {
       if (change?.type === "transcript") {
@@ -309,8 +294,8 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   private databaseChanged(): void {
-    const { workspaces } = this.database.snapshot();
-    if (sameWorkspaces(this.databaseWorkspaces, workspaces)) {
+    const workspaces = JSON.stringify(this.database.snapshot().workspaces);
+    if (this.databaseWorkspaces === workspaces) {
       this.render();
       return;
     }

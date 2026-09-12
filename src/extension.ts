@@ -1,13 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
 import * as vscode from "vscode";
 
 import { ProfileDatabase } from "./profile-database/profile-database";
-import { Projects } from "./projects/projects";
+import { locateWorkspace, Projects } from "./projects/projects";
 import { acpConnectionFactory } from "./threads/acp";
 import type { AgentLaunch } from "./threads/acp";
 import { Threads } from "./threads/threads";
@@ -46,10 +45,10 @@ export const activate = async (
 ): Promise<void> => {
   const output = vscode.window.createOutputChannel("Mischief");
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  const currentWorkspace = folder ? await realpath(folder) : undefined;
+  const workspace = folder ? await locateWorkspace(folder) : undefined;
   const log = (message: string): void => output.appendLine(message);
   database = await ProfileDatabase.open({
-    currentWorkspace,
+    currentWorkspace: workspace?.path,
     instanceId: randomUUID(),
     log,
     profileDirectory: context.globalStorageUri.fsPath,
@@ -79,11 +78,7 @@ export const activate = async (
     context.globalState,
     database
   );
-  context.subscriptions.push(output, {
-    dispose: () => {
-      void threads.dispose();
-    },
-  });
+  context.subscriptions.push(output);
   registerMischiefView(context, view);
 
   context.subscriptions.push(

@@ -34,7 +34,9 @@ export interface ProjectsSnapshot {
   ungrouped: Workspace[];
 }
 
-const locateWorkspace = async (folder: string): Promise<WorkspaceLocation> => {
+export const locateWorkspace = async (
+  folder: string
+): Promise<WorkspaceLocation> => {
   const selected = await realpath(folder);
   const project = await discoverGitProject(selected);
   if (!project) {
@@ -75,12 +77,7 @@ export class Projects {
   }
 
   async importPreviousWorkspaces(value: unknown): Promise<void> {
-    if (
-      this.database.snapshot().workspaces.length > 0 ||
-      !value ||
-      typeof value !== "object" ||
-      Array.isArray(value)
-    ) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
       return;
     }
     const previous = value as Record<string, unknown>;
@@ -112,13 +109,18 @@ export class Projects {
         }
       }),
     ]);
+    const existing = new Set(
+      this.database.snapshot().workspaces.map((workspace) => workspace.path)
+    );
     const locations = imported.flat();
     await Promise.all(
       [
         ...new Map(
           locations.map((location) => [location.path, location])
         ).values(),
-      ].map((workspace) => this.activate(workspace))
+      ]
+        .filter((workspace) => !existing.has(workspace.path))
+        .map((workspace) => this.activate(workspace))
     );
   }
 

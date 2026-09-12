@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { ProfileDatabase } from "../profile-database/profile-database";
-import { Projects } from "./projects";
+import { locateWorkspace, Projects } from "./projects";
 
 const exec = promisify(execFile);
 const log = vi.fn<(message: string) => void>();
@@ -92,6 +92,19 @@ describe("projects module", () => {
     const snapshot = await other.remove(folder);
 
     expect(snapshot.ungrouped).toStrictEqual([]);
+  });
+
+  test("locates a nested folder at its Git Workspace root", async () => {
+    const parent = await temporaryFolder();
+    const root = path.join(parent, "mischief");
+    const nested = path.join(root, "src", "nested");
+    await git(parent, "init", "--initial-branch=main", root);
+    await mkdir(nested, { recursive: true });
+
+    await expect(locateWorkspace(nested)).resolves.toMatchObject({
+      path: await realpath(root),
+      projectRoot: await realpath(root),
+    });
   });
 
   test("opening a folder adds and marks its Workspace as current", async () => {
@@ -198,7 +211,7 @@ describe("projects module", () => {
     );
   });
 
-  test("imports the previous Workspace list only into an empty database", async () => {
+  test("imports missing previous Workspaces without replacing database records", async () => {
     const parent = await temporaryFolder();
     const root = path.join(parent, "mischief");
     const linked = path.join(parent, "feature-worktree");
@@ -211,25 +224,31 @@ describe("projects module", () => {
     const canonicalRoot = await realpath(root);
     const database = await openProfileDatabase(undefined, canonicalRoot);
     const projects = new Projects(database);
+    await database.apply({
+      type: "activateWorkspace",
+      workspace: { path: canonicalRoot, projectRoot: canonicalRoot },
+    });
+    await database.apply({
+      path: canonicalRoot,
+      type: "deactivateWorkspace",
+    });
 
     await projects.importPreviousWorkspaces({
       roots: [root],
       ungrouped: [untracked],
     });
 
-    let snapshot = await projects.refresh();
-    expect(snapshot.projects[0]?.workspaces).toHaveLength(2);
-    expect(snapshot.ungrouped).toHaveLength(1);
-
-    await projects.remove(root);
-    await projects.importPreviousWorkspaces({
-      roots: [root],
-      ungrouped: [untracked],
-    });
-    snapshot = await projects.refresh();
+    const snapshot = await projects.refresh();
     expect(
       snapshot.projects[0]?.workspaces.map((workspace) => workspace.path)
     ).toStrictEqual([await realpath(linked)]);
+    expect(snapshot.ungrouped).toHaveLength(1);
+    expect(
+      database
+        .snapshot()
+        .workspaces.find((workspace) => workspace.path === canonicalRoot)
+        ?.status
+    ).toBe("inactive");
   });
 
   test("Git Workspace activated in one Instance appears when another Instance refreshes", async () => {

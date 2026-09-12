@@ -403,6 +403,13 @@ export class Threads {
     this.viewedId = undefined;
     this.stored = this.database.snapshot().threads.map(Threads.copyRecord);
     const records = this.records();
+    const stopped = records.filter(
+      (record) => record.status === "running" || record.status === "waiting"
+    );
+    for (const record of stopped) {
+      record.status = "idle";
+    }
+    await Promise.all(stopped.map((record) => this.persist(record)));
     const selected = this.database
       .snapshot()
       .selections.find(
@@ -1214,6 +1221,7 @@ export class Threads {
     });
   }
 
+  // oxlint-disable-next-line complexity -- routes each Agent update
   private handleUpdate(record: StoredThread, update: AgentUpdate): void {
     const runtime = this.runtimes.get(record.id);
     if (!runtime) {
@@ -1239,13 +1247,28 @@ export class Threads {
     } else if (update.type === "config") {
       runtime.configOptions = update.options;
     } else if (update.type === "sessionInfo") {
-      if (!record.manualName && update.title?.trim()) {
-        record.name = update.title.trim();
+      const title = update.title?.trim();
+      let changed = false;
+      if (
+        !record.manualName &&
+        title &&
+        title.length <= 200 &&
+        !/[\r\n]/u.test(title)
+      ) {
+        record.name = title;
+        changed = true;
       }
-      if (update.updatedAt) {
+      if (
+        update.updatedAt &&
+        update.updatedAt.length <= 100 &&
+        Number.isFinite(Date.parse(update.updatedAt))
+      ) {
         record.updatedAt = update.updatedAt;
+        changed = true;
       }
-      void this.persist(record);
+      if (changed) {
+        void this.persist(record);
+      }
     }
     this.emit(
       item && !archivedPlan

@@ -314,6 +314,32 @@ describe("threads module", () => {
     });
   });
 
+  test("opening a Workspace clears stale live Thread statuses", async () => {
+    const createdAt = "2026-09-11T12:00:00.000Z";
+    await Promise.all(
+      (["running", "waiting"] as const).map((status, index) =>
+        database.apply({
+          thread: {
+            createdAt,
+            id: `10000000-0000-4000-8000-00000000000${index + 1}`,
+            name: status,
+            status,
+            updatedAt: createdAt,
+            workspace: "/workspace",
+          },
+          type: "putThread",
+        })
+      )
+    );
+    const threads = createThreads(new FakeAgent().factory);
+
+    await threads.openWorkspace("/workspace");
+
+    expect(
+      database.snapshot().threads.map((thread) => thread.status)
+    ).toStrictEqual(["idle", "idle"]);
+  });
+
   test("sends a pasted image without requiring text", async () => {
     const agent = new FakeAgent();
     const threads = createThreads(agent.factory);
@@ -331,6 +357,25 @@ describe("threads module", () => {
     ).toMatchObject({
       images: [{ data: "c2NyZWVuc2hvdA==", mimeType: "image/png" }],
       text: "Pasted image",
+    });
+  });
+
+  test("ignores invalid Agent Thread metadata", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.newThread();
+    const updatedAt = threads.snapshot().threads[0]?.updatedAt;
+
+    agent.update?.({
+      title: "Invalid\nThread",
+      type: "sessionInfo",
+      updatedAt: "not-a-timestamp",
+    });
+
+    expect(threads.snapshot()).toMatchObject({
+      selected: { name: "New Thread" },
+      threads: [{ updatedAt }],
     });
   });
 
