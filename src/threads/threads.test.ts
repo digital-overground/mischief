@@ -307,9 +307,10 @@ describe("threads module", () => {
 
     expect(threads.workspaceActivity()).toStrictEqual({
       "/workspace": {
-        activeThreads: 2,
-        attentionThreads: 3,
-        indicator: "error",
+        active: 1,
+        attention: 2,
+        completed: 1,
+        idle: 1,
       },
     });
   });

@@ -228,7 +228,7 @@ Move durable Thread registrations and per-Workspace selections behind the databa
 
 Subscribe MischiefView to database changes and render the same active Workspaces and aggregate Thread activity in every open Instance. Keep `Workspace.current` local to each window and keep the Threads pane scoped to that current Workspace.
 
-Each Workspace row shows the highest-priority Thread indicator using `error`, `waiting`, `running`, unread `completed`, then `idle` precedence. It also shows counts for active (`running` or `waiting`) and attention (`waiting`, `error`, or unread) Threads. Serialize Workspace refreshes so overlapping polls cannot render an older snapshot last.
+Each Workspace row shows synchronized counts for idle, unread completed, running, and attention-needed (`waiting` or `error`) Threads. Serialize Workspace refreshes so overlapping polls cannot render an older snapshot last.
 
 ### Phase 6: Final verification
 

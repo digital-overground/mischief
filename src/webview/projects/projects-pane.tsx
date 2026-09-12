@@ -5,7 +5,7 @@ import type {
 } from "../../projects/projects";
 import type { WorkspaceActivity } from "../../threads/threads";
 import { postMessage } from "../bridge";
-import { indicatorLabel, StatusIndicator } from "../threads/threads-pane";
+import { SvgIcon } from "../icon";
 
 const IconButton = ({
   children,
@@ -44,15 +44,12 @@ const visibleColor = (color: string): string => {
     .join("")}`;
 };
 
-const activityMeta = (activity: WorkspaceActivity): string =>
-  [
-    activity.activeThreads ? `${activity.activeThreads} active` : "",
-    activity.attentionThreads
-      ? `${activity.attentionThreads} ${activity.attentionThreads === 1 ? "needs" : "need"} attention`
-      : "",
-  ]
-    .filter(Boolean)
-    .join(" · ") || "idle";
+const THREAD_STATUSES = [
+  ["idle", "idle", "Idle Threads"],
+  ["completed", "completed", "Completed Threads"],
+  ["active", "active", "Running Threads"],
+  ["attention", "error", "Waiting or error Threads"],
+] as const;
 
 const WorkspaceRow = ({
   activity,
@@ -60,66 +57,71 @@ const WorkspaceRow = ({
 }: {
   activity?: WorkspaceActivity;
   workspace: Workspace;
-}): React.JSX.Element => (
-  <div className={`row${workspace.current ? " selected" : ""}`}>
-    <button
-      className="row-open"
-      title={workspace.path}
-      onClick={() =>
-        postMessage({ path: workspace.path, type: "openWorkspace" })
-      }
-    >
-      {workspace.color ? (
-        <span
-          aria-hidden="true"
-          className="workspace-color"
-          style={{
-            backgroundColor: workspace.color,
-            boxShadow: `0 0 0 1px ${visibleColor(workspace.color)}`,
-          }}
-        />
-      ) : null}
-      {activity ? (
-        <StatusIndicator
-          kind={activity.indicator}
-          label={`${workspace.name}: ${indicatorLabel(activity.indicator)}; ${activityMeta(activity)}`}
-        />
-      ) : null}
-      <span className="name">{workspace.name}</span>
-      <span className="meta">
-        {[
-          workspace.branch,
-          workspace.linked ? "worktree" : "",
-          workspace.changes ? `✎${workspace.changes}` : "",
-          workspace.ahead ? `↑${workspace.ahead}` : "",
-          workspace.behind ? `↓${workspace.behind}` : "",
-          activity ? activityMeta(activity) : "",
-        ]
-          .filter(Boolean)
-          .join("  ")}
-      </span>
-    </button>
-    {workspace.current ? (
-      <IconButton
-        title="New Thread"
-        onClick={(event) => {
-          event.stopPropagation();
-          postMessage({ type: "newThread" });
-        }}
+}): React.JSX.Element => {
+  const metadata = [
+    workspace.branch,
+    workspace.linked ? "worktree" : "",
+    workspace.changes ? `✎${workspace.changes}` : "",
+    workspace.ahead ? `↑${workspace.ahead}` : "",
+    workspace.behind ? `↓${workspace.behind}` : "",
+  ]
+    .filter(Boolean)
+    .join("  ");
+  return (
+    <div className={`row${workspace.current ? " selected" : ""}`}>
+      <button
+        className="row-open"
+        title={workspace.path}
+        onClick={() =>
+          postMessage({ path: workspace.path, type: "openWorkspace" })
+        }
       >
-        ＋
+        {workspace.color ? (
+          <span
+            aria-hidden="true"
+            className="workspace-color"
+            style={{
+              backgroundColor: workspace.color,
+              boxShadow: `0 0 0 1px ${visibleColor(workspace.color)}`,
+            }}
+          />
+        ) : null}
+        <span className="workspace-label">
+          <span className="name">{workspace.name}</span>
+          {metadata ? <span className="meta">{metadata}</span> : null}
+        </span>
+      </button>
+      <span className="workspace-statuses">
+        <SvgIcon className="workspace-spool" kind="spool" />
+        {THREAD_STATUSES.map(([status, indicator, label]) => {
+          const count = activity?.[status] ?? 0;
+          return (
+            <span
+              className="workspace-status-count"
+              aria-label={`${label}: ${count}`}
+              title={`${label}: ${count}`}
+              key={status}
+            >
+              <span
+                aria-hidden="true"
+                className={`thread-status ${indicator}`}
+              />
+              <span aria-hidden="true">{count}</span>
+            </span>
+          );
+        })}
+      </span>
+      <IconButton
+        title="Close Workspace"
+        onClick={() =>
+          postMessage({ path: workspace.path, type: "deactivateWorkspace" })
+        }
+      >
+        ×
       </IconButton>
-    ) : null}
-    <IconButton
-      title="Close Workspace"
-      onClick={() =>
-        postMessage({ path: workspace.path, type: "deactivateWorkspace" })
-      }
-    >
-      ×
-    </IconButton>
-  </div>
-);
+    </div>
+  );
+};
 
 const ProjectGroup = ({
   project,

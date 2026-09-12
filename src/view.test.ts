@@ -127,6 +127,14 @@ describe("view provider", () => {
     );
   });
 
+  test("keeps the Workspace spool separator compact", () => {
+    const style = readFileSync("media/webview.css", "utf-8");
+
+    expect(style).toMatch(
+      /\.lucide\.workspace-spool \{[^}]*width: 14px;[^}]*height: 14px;[^}]*flex: none;/u
+    );
+  });
+
   test("conversation content wraps instead of creating horizontal overflow", () => {
     const style = readFileSync("media/webview.css", "utf-8");
 
@@ -317,9 +325,10 @@ describe("view provider", () => {
       snapshot: () => ({ attentionCount: 0, threads: [] }),
       workspaceActivity: () => ({
         "/remote": {
-          activeThreads: 1,
-          attentionThreads: 1,
-          indicator: "waiting",
+          active: 1,
+          attention: 5,
+          completed: 2,
+          idle: 4,
         },
       }),
     };
@@ -361,9 +370,10 @@ describe("view provider", () => {
           type: "state",
           workspaceActivity: {
             "/remote": {
-              activeThreads: 1,
-              attentionThreads: 1,
-              indicator: "waiting",
+              active: 1,
+              attention: 5,
+              completed: 2,
+              idle: 4,
             },
           },
         })

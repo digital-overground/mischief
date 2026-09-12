@@ -185,18 +185,11 @@ export type ThreadIndicator =
   | "error";
 
 export interface WorkspaceActivity {
-  activeThreads: number;
-  attentionThreads: number;
-  indicator: ThreadIndicator;
+  active: number;
+  attention: number;
+  completed: number;
+  idle: number;
 }
-
-const INDICATOR_PRIORITY: Record<ThreadIndicator, number> = {
-  active: 2,
-  completed: 3,
-  error: 0,
-  idle: 4,
-  waiting: 1,
-};
 
 export interface TranscriptItem {
   id: string;
@@ -435,26 +428,18 @@ export class Threads {
     const activities: Record<string, WorkspaceActivity> = {};
     for (const thread of this.database.snapshot().threads) {
       const indicator = indicatorFor(thread.status, Boolean(thread.unread));
-      let activity = activities[thread.workspace];
-      if (!activity) {
-        activity = {
-          activeThreads: 0,
-          attentionThreads: 0,
-          indicator,
-        };
-        activities[thread.workspace] = activity;
-      }
-      if (
-        INDICATOR_PRIORITY[indicator] < INDICATOR_PRIORITY[activity.indicator]
-      ) {
-        activity.indicator = indicator;
-      }
-      if (indicator === "active" || indicator === "waiting") {
-        activity.activeThreads += 1;
-      }
-      if (indicatorNeedsAttention(indicator)) {
-        activity.attentionThreads += 1;
-      }
+      const activity = activities[thread.workspace] ?? {
+        active: 0,
+        attention: 0,
+        completed: 0,
+        idle: 0,
+      };
+      const status =
+        indicator === "waiting" || indicator === "error"
+          ? "attention"
+          : indicator;
+      activity[status] += 1;
+      activities[thread.workspace] = activity;
     }
     return activities;
   }
