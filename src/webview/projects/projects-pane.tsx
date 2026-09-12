@@ -134,6 +134,12 @@ const ProjectGroup = ({
     <div className="group-row">
       <span className="name">{project.name}</span>
       <IconButton
+        title="Open GitHub Issues"
+        onClick={() => postMessage({ path: project.root, type: "openIssues" })}
+      >
+        <SvgIcon className="project-action-icon" kind="folderGit2" />
+      </IconButton>
+      <IconButton
         title="New Workspace"
         onClick={() =>
           postMessage({ path: project.root, type: "newWorkspace" })

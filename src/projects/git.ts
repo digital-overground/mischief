@@ -19,6 +19,14 @@ export interface GitWorkspace {
   behind: number;
 }
 
+export interface GitSourceBranch {
+  name: string;
+  current: boolean;
+  remoteOnly: boolean;
+  ahead?: number;
+  behind?: number;
+}
+
 const run = async (cwd: string, ...args: string[]): Promise<string> => {
   const { stdout } = await exec("git", ["-C", cwd, ...args], {
     encoding: "utf-8",
@@ -26,9 +34,65 @@ const run = async (cwd: string, ...args: string[]): Promise<string> => {
   return stdout.trim();
 };
 
+export const sourceBranches = async (
+  root: string
+): Promise<GitSourceBranch[]> => {
+  const output = await run(
+    root,
+    "for-each-ref",
+    "--format=%(refname)%00%(HEAD)%00%(symref)",
+    "refs/heads",
+    "refs/remotes/origin"
+  );
+  const refs = output
+    .split("\n")
+    .map((line) => line.split("\0"))
+    .filter((fields) => !fields[2]);
+  const locals = refs
+    .filter(([ref]) => ref?.startsWith("refs/heads/"))
+    .map(([ref, current]) => ({
+      current: current === "*",
+      name: ref?.slice("refs/heads/".length) ?? "",
+      remoteOnly: false as const,
+    }))
+    .toSorted(
+      (a, b) =>
+        Number(b.current) - Number(a.current) || a.name.localeCompare(b.name)
+    );
+  const remotes = refs
+    .filter(([ref]) => ref?.startsWith("refs/remotes/origin/"))
+    .map(([ref]) => `origin/${ref?.slice("refs/remotes/origin/".length)}`);
+  const remoteNames = new Set(remotes);
+  const localNames = new Set(locals.map(({ name }) => name));
+  const localBranches = await Promise.all(
+    locals.map(async (branch): Promise<GitSourceBranch> => {
+      if (!remoteNames.has(`origin/${branch.name}`)) {
+        return branch;
+      }
+      const divergence = await run(
+        root,
+        "rev-list",
+        "--left-right",
+        "--count",
+        `origin/${branch.name}...${branch.name}`
+      );
+      const [behind, ahead] = divergence.split(/\s+/u).map(Number);
+      return { ...branch, ahead: ahead ?? 0, behind: behind ?? 0 };
+    })
+  );
+  return [
+    ...localBranches,
+    ...remotes
+      .filter((name) => !localNames.has(name.slice("origin/".length)))
+      .toSorted((a, b) => a.localeCompare(b))
+      .map((name) => ({ current: false, name, remoteOnly: true as const })),
+  ];
+};
+
 export const createGitWorkspace = async (
   root: string,
-  branch: string
+  branch: string,
+  sourceRef?: string
 ): Promise<string> => {
   try {
     await run(root, "check-ref-format", "--branch", branch);
@@ -41,7 +105,15 @@ export const createGitWorkspace = async (
     `${path.basename(root)}-${branch}`
   );
   await mkdir(path.dirname(workspace), { recursive: true });
-  await run(root, "worktree", "add", "-b", branch, workspace);
+  await run(
+    root,
+    "worktree",
+    "add",
+    "-b",
+    branch,
+    workspace,
+    ...(sourceRef ? [sourceRef] : [])
+  );
   return realpath(workspace);
 };
 

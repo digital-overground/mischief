@@ -73,7 +73,7 @@ The absence is deliberate/current rather than a hidden API: Zed issue [#21208](h
 
 Zed stores one agent connection per agent in each project and reuses it for that project's sessions ([source](https://github.com/zed-industries/zed/blob/9e636045f74d3d431abe9873d2b8d2962e614c98/crates/agent_ui/src/agent_connection_store.rs#L69-L82), [reuse path](https://github.com/zed-industries/zed/blob/9e636045f74d3d431abe9873d2b8d2962e614c98/crates/agent_ui/src/agent_connection_store.rs#L143-L161)).
 
-MagPi currently calls `closeAllExcept` when creating or loading a session ([new session](https://github.com/kylehumphrey-ao/magpi-acp/blob/a21717b80d2ad8902461b49a5a9465276b22a262/src/acp/agent.ts#L389-L394), [load session](https://github.com/kylehumphrey-ao/magpi-acp/blob/a21717b80d2ad8902461b49a5a9465276b22a262/src/acp/agent.ts#L1056-L1058)). That policy works for clients that create one ACP process per Thread, as Mischief does, but not for Zed's multiplexed connection.
+MagPi currently calls `closeAllExcept` when creating or loading a session ([new session](https://github.com/digital-overground/magpi-acp/blob/a21717b80d2ad8902461b49a5a9465276b22a262/src/acp/agent.ts#L389-L394), [load session](https://github.com/digital-overground/magpi-acp/blob/a21717b80d2ad8902461b49a5a9465276b22a262/src/acp/agent.ts#L1056-L1058)). That policy works for clients that create one ACP process per Thread, as Mischief does, but not for Zed's multiplexed connection.
 
 The smallest robust adapter change is:
 

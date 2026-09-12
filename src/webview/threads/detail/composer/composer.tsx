@@ -74,11 +74,15 @@ const ComposerView = ({
   contextItems,
   copyNotice,
   selected,
+  setup,
+  setupSelected,
   workspace,
 }: {
   contextItems: string[];
   copyNotice: number;
   selected?: RenderedThreadDetail;
+  setup: boolean;
+  setupSelected: string[];
   workspace?: string;
 }): React.JSX.Element => {
   const box = useRef<HTMLTextAreaElement>(null);
@@ -165,10 +169,10 @@ const ComposerView = ({
   }, [selected?.drafts, selected?.id]);
 
   useEffect(() => {
-    if (selected) {
+    if (selected || setup) {
       box.current?.focus();
     }
-  }, [selected?.id]);
+  }, [selected?.id, setup]);
 
   const newThread = (): void => {
     if (!workspace) {
@@ -179,6 +183,10 @@ const ComposerView = ({
   };
 
   const send = (): void => {
+    if (setup) {
+      postMessage({ selected: setupSelected, type: "setupContinue" });
+      return;
+    }
     const text = box.current?.value ?? "";
     if ((!text.trim() && !images.length) || !selected) {
       return;
@@ -297,9 +305,14 @@ const ComposerView = ({
       <textarea
         id="composer"
         ref={box}
-        placeholder="Message magpi-acp — @ to include context, / for commands"
+        placeholder={
+          setup
+            ? "Press Enter to continue"
+            : "Message magpi-acp — @ to include context, / for commands"
+        }
         autoComplete="off"
-        disabled={!selected}
+        disabled={!selected && !setup}
+        readOnly={setup}
         onChange={(event) => {
           updateSuggestions(
             event.currentTarget.value,
@@ -373,6 +386,7 @@ const ComposerView = ({
         onNewThread={newThread}
         onSend={() => (running ? postMessage({ type: "cancel" }) : send())}
         selected={selected}
+        setup={setup}
         workspace={workspace}
       />
     </footer>

@@ -542,6 +542,7 @@ select:disabled {
   justify-content: flex-end;
   gap: 12px;
   overflow-x: auto;
+  scrollbar-width: none;
 }
 #configs::-webkit-scrollbar {
   display: none;
@@ -621,6 +622,10 @@ select:disabled {
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+.project-action-icon {
+  width: 14px;
+  height: 14px;
 }
 #chat {
   flex: 1;

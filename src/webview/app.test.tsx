@@ -68,6 +68,78 @@ describe("React webview", () => {
     vi.useRealTimers();
   });
 
+  test("continues text-based setup when Enter is pressed", async () => {
+    const unmount = await renderApp();
+    await act(() => {
+      window.dispatchEvent(
+        new MessageEvent<HostToWebviewMessage>("message", {
+          data: {
+            font: "Test Mono",
+            projects: { projects: [], ungrouped: [] },
+            setup: {
+              id: "addons",
+              item: {
+                id: "setup:addons",
+                kind: "system",
+                text: "Select recommended add-ons.",
+              },
+              options: [
+                {
+                  description: "Highly recommended",
+                  id: "todo",
+                  label: "Todo",
+                },
+                {
+                  description: "Engineering workflows",
+                  id: "matt",
+                  label: "Matt Pocock Skills",
+                },
+              ],
+            },
+            threads: {
+              attentionCount: 0,
+              threads: [],
+              workspace: "/workspace",
+            },
+            type: "state",
+            workspaceActivity: {},
+          },
+        })
+      );
+    });
+    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+    const options = [
+      ...document.querySelectorAll<HTMLInputElement>(
+        ".setup-option input[type='checkbox']"
+      ),
+    ];
+    if (!composer || !options[0]) {
+      throw new Error("Missing setup controls");
+    }
+    expect(options.map(({ checked }) => checked)).toStrictEqual([true, true]);
+    await act(() => options[0]?.click());
+
+    await act(() => {
+      composer.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "Enter",
+        })
+      );
+    });
+
+    expect(document.querySelector("#transcript")?.textContent).toContain(
+      "Matt Pocock Skills"
+    );
+    expect(composer.placeholder).toBe("Press Enter to continue");
+    expect(postMessage).toHaveBeenCalledWith({
+      selected: ["matt"],
+      type: "setupContinue",
+    });
+    await unmount();
+  });
+
   test("maximizes the current Thread and restores the pane layout", async () => {
     const unmount = await renderApp();
     const projects = document.querySelector<HTMLElement>("#projects");
@@ -206,6 +278,49 @@ describe("React webview", () => {
 
     await act(() => close.click());
     expect(dialog.open).toBeFalsy();
+    await unmount();
+  });
+
+  test("routes open GitHub issues from a Project", async () => {
+    const unmount = await renderApp();
+    await act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            font: "Test Mono",
+            projects: {
+              projects: [{ name: "project", root: "/project", workspaces: [] }],
+              ungrouped: [],
+            },
+            threads: { attentionCount: 0, threads: [] },
+            type: "state",
+            workspaceActivity: {},
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    const openIssues = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Open GitHub Issues"]'
+    );
+    const icon = openIssues?.querySelector("svg");
+    if (!openIssues || !icon) {
+      throw new Error("Missing Open GitHub Issues control");
+    }
+    postMessage.mockClear();
+
+    await act(() => openIssues.click());
+
+    expect({
+      circles: icon.querySelectorAll("circle").length,
+      className: icon.getAttribute("class"),
+      message: postMessage.mock.calls,
+      paths: icon.querySelectorAll("path").length,
+    }).toStrictEqual({
+      circles: 2,
+      className: "lucide project-action-icon",
+      message: [[{ path: "/project", type: "openIssues" }]],
+      paths: 2,
+    });
     await unmount();
   });
 

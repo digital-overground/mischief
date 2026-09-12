@@ -1,11 +1,18 @@
+import { realpath } from "node:fs/promises";
 import path from "node:path";
 
 import MarkdownIt from "markdown-it";
 import * as vscode from "vscode";
 
 import type { ProfileDatabase } from "./profile-database/profile-database";
-import { normalizeWorkspaceName } from "./projects/projects";
+import {
+  issueWorkspaceName,
+  normalizeWorkspaceName,
+} from "./projects/projects";
 import type {
+  GitHubIssue,
+  GitSourceBranch,
+  Project,
   Projects,
   ProjectsSnapshot,
   Workspace,
@@ -18,7 +25,7 @@ import type {
   TranscriptItem,
 } from "./threads/threads";
 import { webviewHtml } from "./webview";
-import type { HostToWebviewMessage } from "./webview/protocol";
+import type { HostToWebviewMessage, SetupStep } from "./webview/protocol";
 import {
   assignWorkspaceColors,
   ensureWorkspaceColors,
@@ -27,8 +34,16 @@ import {
 
 const VIEW_ID = "mischief.view";
 const START_WORKSPACES_KEY = "mischief.startWorkspaces";
+
+interface PendingWorkspaceStart {
+  path: string;
+  prompt?: string;
+}
 const DEFAULT_MONO_FONT_FAMILY =
   '"Lilex", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+const issuePrompt = (number: number): string =>
+  `start planning work on GitHub issue #${number}. Read it with gh issue view ${number} --comments.  return to the user once you've read the issue and give them a summary of the item`;
+
 const workspaceColorsEnabled = (): boolean =>
   vscode.workspace
     .getConfiguration("mischief")
@@ -75,6 +90,14 @@ const promptImages = (value: unknown): PromptImage[] => {
   });
 };
 
+interface GitHubIssueQuickPickItem extends vscode.QuickPickItem {
+  issue: GitHubIssue;
+}
+
+interface SourceBranchQuickPickItem extends vscode.QuickPickItem {
+  branch?: GitSourceBranch;
+}
+
 const interactionResponse = (
   value: unknown
 ): ThreadInteractionResponse | undefined => {
@@ -101,13 +124,22 @@ const interactionResponse = (
   }
   return undefined;
 };
+
+export interface ThreadSetup {
+  advance: (selected: string[]) => Promise<SetupStep | undefined>;
+  prompt: () => SetupStep | undefined;
+}
+
 export class MischiefView implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private projectsSnapshot: ProjectsSnapshot = { projects: [], ungrouped: [] };
   private readonly database: ProfileDatabase;
   private databaseWorkspaces: string;
   private profileRefresh = Promise.resolve();
+  private setupPrompt?: string;
+  private setupStep?: SetupStep;
   private readonly extensionUri: vscode.Uri;
+  private readonly setup?: ThreadSetup;
   private readonly projects: Projects;
   private readonly storage: Pick<vscode.Memento, "get" | "update">;
   private readonly threads: Threads;
@@ -117,7 +149,8 @@ export class MischiefView implements vscode.WebviewViewProvider {
     threads: Threads,
     extensionUri: vscode.Uri,
     storage: Pick<vscode.Memento, "get" | "update">,
-    database: ProfileDatabase
+    database: ProfileDatabase,
+    setup?: ThreadSetup
   ) {
     this.projects = projects;
     this.threads = threads;
@@ -126,6 +159,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     this.database = database;
     this.databaseWorkspaces = JSON.stringify(database.snapshot().workspaces);
     database.onChange(() => this.databaseChanged());
+    this.setup = setup;
     threads.onChange((change) => {
       if (change?.type === "transcript") {
         this.renderTranscript(change);
@@ -182,7 +216,175 @@ export class MischiefView implements vscode.WebviewViewProvider {
     if (name === undefined) {
       return;
     }
-    const workspace = await this.projects.createWorkspace(project.root, name);
+    await this.createWorkspace(project, name);
+  }
+
+  async refresh(): Promise<void> {
+    await this.setProjects(this.projects.refresh());
+    await this.syncThreads();
+    this.render();
+  }
+
+  private async openIssues(projectRoot: string): Promise<void> {
+    const project = this.projectsSnapshot.projects.find(
+      (candidate) => candidate.root === projectRoot
+    );
+    if (!project) {
+      return;
+    }
+    const issues = await this.projects.listOpenIssues(project.root);
+    if (!issues.length) {
+      await vscode.window.showInformationMessage(
+        `No open GitHub issues for ${project.name}.`
+      );
+      return;
+    }
+    const picker = vscode.window.createQuickPick<GitHubIssueQuickPickItem>();
+    picker.title = `Open Issues · ${project.name}`;
+    picker.items = issues.map((issue) => ({
+      buttons: [
+        {
+          iconPath: new vscode.ThemeIcon("link-external"),
+          tooltip: `Open #${issue.number} on GitHub`,
+        },
+      ],
+      issue,
+      label: `#${issue.number} ${issue.title}`,
+    }));
+    const disposables = [
+      picker.onDidAccept(() => {
+        const [selected] = picker.selectedItems;
+        if (selected) {
+          picker.hide();
+          void MischiefView.run(
+            this.newIssueWorkspace(project, selected.issue)
+          );
+        }
+      }),
+      picker.onDidTriggerItemButton(async ({ item }) => {
+        try {
+          const opened = await vscode.env.openExternal(
+            vscode.Uri.parse(item.issue.url)
+          );
+          if (!opened) {
+            throw new Error("VS Code declined the URL");
+          }
+        } catch (error) {
+          void vscode.window.showErrorMessage(
+            `Mischief: Could not open #${item.issue.number}: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }),
+      picker.onDidHide(() => {
+        for (const disposable of disposables) {
+          disposable.dispose();
+        }
+        picker.dispose();
+      }),
+    ];
+    picker.show();
+  }
+
+  private async newIssueWorkspace(
+    project: Project,
+    issue: GitHubIssue
+  ): Promise<void> {
+    const branches = await this.projects.sourceBranches(project.root);
+    if (!branches.length) {
+      await vscode.window.showInformationMessage(
+        `No source branches for ${project.name}.`
+      );
+      return;
+    }
+    const local = branches.filter((branch) => !branch.remoteOnly);
+    const remote = branches.filter((branch) => branch.remoteOnly);
+    const items: SourceBranchQuickPickItem[] = [
+      { kind: vscode.QuickPickItemKind.Separator, label: "Local" },
+      ...local.map((branch) => ({
+        branch,
+        description:
+          branch.ahead === undefined
+            ? "local only"
+            : `↑${branch.ahead} ↓${branch.behind ?? 0}`,
+        label: branch.name,
+      })),
+      ...(remote.length
+        ? [
+            {
+              kind: vscode.QuickPickItemKind.Separator,
+              label: "Remote only",
+            },
+            ...remote.map((branch) => ({ branch, label: branch.name })),
+          ]
+        : []),
+    ];
+    const picker = vscode.window.createQuickPick<SourceBranchQuickPickItem>();
+    picker.items = items;
+    picker.title = `Source Branch for #${issue.number}`;
+    const current = items.find((item) => item.branch?.current);
+    if (current) {
+      picker.activeItems = [current];
+    }
+    const disposables = [
+      picker.onDidAccept(() => {
+        const [selected] = picker.selectedItems;
+        if (selected?.branch) {
+          picker.hide();
+          void MischiefView.run(
+            this.nameIssueWorkspace(project, issue, selected.branch)
+          );
+        }
+      }),
+      picker.onDidHide(() => {
+        for (const disposable of disposables) {
+          disposable.dispose();
+        }
+        picker.dispose();
+      }),
+    ];
+    picker.show();
+  }
+
+  private async nameIssueWorkspace(
+    project: Project,
+    issue: GitHubIssue,
+    branch: GitSourceBranch
+  ): Promise<void> {
+    const name = await vscode.window.showInputBox({
+      prompt: `Create a linked worktree and branch from ${branch.name}`,
+      title: `New Workspace for #${issue.number}`,
+      validateInput: (value) => {
+        const normalized = normalizeWorkspaceName(value);
+        if (!normalized) {
+          return "Enter a Workspace name";
+        }
+        return /[/\\]/u.test(normalized)
+          ? "Workspace names cannot contain slashes"
+          : undefined;
+      },
+      value: issueWorkspaceName(issue),
+    });
+    if (name !== undefined) {
+      await this.createWorkspace(
+        project,
+        name,
+        branch.name,
+        issuePrompt(issue.number)
+      );
+    }
+  }
+
+  private async createWorkspace(
+    project: Project,
+    name: string,
+    sourceRef?: string,
+    prompt?: string
+  ): Promise<void> {
+    const workspace = await this.projects.createWorkspace(
+      project.root,
+      name,
+      sourceRef
+    );
     if (workspaceColorsEnabled()) {
       try {
         await assignWorkspaceColors(workspace, project.root);
@@ -193,24 +395,28 @@ export class MischiefView implements vscode.WebviewViewProvider {
       }
     }
     await this.setProjects(this.projects.refresh());
-    const pending = this.storage.get<string[]>(START_WORKSPACES_KEY, []);
+    const pending = this.storage.get<PendingWorkspaceStart[]>(
+      START_WORKSPACES_KEY,
+      []
+    );
     await this.storage.update(START_WORKSPACES_KEY, [
-      ...new Set([...pending, workspace]),
+      ...pending.filter((candidate) => candidate.path !== workspace),
+      { path: workspace, ...(prompt ? { prompt } : {}) },
     ]);
     this.render();
     await this.openWorkspace(workspace);
   }
 
-  async refresh(): Promise<void> {
-    await this.setProjects(this.projects.refresh());
-    await this.syncThreads();
-    this.render();
-  }
-
-  async newThread(preserveFocus = true): Promise<void> {
-    const creating = this.threads.newThread();
-    this.view?.show(preserveFocus);
-    await creating;
+  async newThread(preserveFocus = true, initialPrompt?: string): Promise<void> {
+    const setupStep = this.setup?.prompt();
+    if (setupStep) {
+      this.setupPrompt = initialPrompt;
+      this.setupStep = setupStep;
+      this.view?.show(preserveFocus);
+      this.render();
+      return;
+    }
+    await this.startThread(preserveFocus, initialPrompt);
   }
 
   configurationChanged(): void {
@@ -365,7 +571,20 @@ export class MischiefView implements vscode.WebviewViewProvider {
       return true;
     }
     if (data.type === "newThread") {
-      await this.threads.newThread();
+      await this.newThread();
+      return true;
+    }
+    if (data.type === "setupContinue") {
+      const selected = Array.isArray(data.selected)
+        ? data.selected
+            .filter((item): item is string => typeof item === "string")
+            .slice(0, 10)
+        : [];
+      await this.continueSetup(selected);
+      return true;
+    }
+    if (data.type === "openIssues" && typeof data.path === "string") {
+      await this.openIssues(data.path);
       return true;
     }
     if (data.type === "newWorkspace" && typeof data.path === "string") {
@@ -487,6 +706,33 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
   }
 
+  private async continueSetup(selected: string[]): Promise<void> {
+    if (!this.setup || !this.setupStep) {
+      return;
+    }
+    this.setupStep = await this.setup.advance(selected);
+    if (this.setupStep) {
+      this.render();
+    } else {
+      const prompt = this.setupPrompt;
+      this.setupPrompt = undefined;
+      await this.startThread(true, prompt);
+    }
+  }
+
+  private async startThread(
+    preserveFocus = true,
+    initialPrompt?: string
+  ): Promise<void> {
+    this.setupStep = undefined;
+    const creating = this.threads.newThread();
+    this.view?.show(preserveFocus);
+    await creating;
+    if (initialPrompt) {
+      void MischiefView.run(this.threads.prompt(initialPrompt));
+    }
+  }
+
   private static async run(operation: Promise<void>): Promise<void> {
     try {
       await operation;
@@ -499,16 +745,33 @@ export class MischiefView implements vscode.WebviewViewProvider {
 
   private async startPendingWorkspace(): Promise<void> {
     const workspace = this.workspaces().find((candidate) => candidate.current);
-    const pending = this.storage.get<string[]>(START_WORKSPACES_KEY, []);
-    if (!workspace || !pending.includes(workspace.path)) {
+    const pending = this.storage.get<PendingWorkspaceStart[]>(
+      START_WORKSPACES_KEY,
+      []
+    );
+    if (!workspace) {
+      return;
+    }
+    const canonical = await Promise.all(
+      pending.map(async (candidate) => {
+        try {
+          return (await realpath(candidate.path)) === workspace.path;
+        } catch {
+          return false;
+        }
+      })
+    );
+    const index = canonical.indexOf(true);
+    const start = pending[index];
+    if (!start) {
       return;
     }
     await this.storage.update(
       START_WORKSPACES_KEY,
-      pending.filter((candidate) => candidate !== workspace.path)
+      pending.toSpliced(index, 1)
     );
     await vscode.commands.executeCommand("workbench.view.extension.mischief");
-    await this.newThread(false);
+    await this.newThread(false, start.prompt);
   }
 
   private async openWorkspace(candidate: string): Promise<void> {
@@ -677,6 +940,21 @@ export class MischiefView implements vscode.WebviewViewProvider {
     void postMessage({
       font: font || DEFAULT_MONO_FONT_FAMILY,
       projects: this.projectsSnapshot,
+      ...(this.setupStep
+        ? {
+            setup: {
+              id: this.setupStep.id,
+              item: renderTranscriptItem({
+                id: `setup:${this.setupStep.id}`,
+                kind: "system",
+                text: this.setupStep.message,
+              }),
+              ...(this.setupStep.options
+                ? { options: this.setupStep.options }
+                : {}),
+            },
+          }
+        : {}),
       threads,
       type: "state",
       workspaceActivity: this.threads.workspaceActivity(),

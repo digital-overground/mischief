@@ -12,6 +12,22 @@ export interface RenderedTranscriptItem extends TranscriptItem {
   html?: string;
 }
 
+export interface SetupOption {
+  description: string;
+  id: string;
+  label: string;
+}
+
+export interface SetupStep {
+  id: string;
+  message: string;
+  options?: SetupOption[];
+}
+
+export interface RenderedSetupStep extends Omit<SetupStep, "message"> {
+  item: RenderedTranscriptItem;
+}
+
 export interface RenderedThreadDetail extends Omit<ThreadDetail, "items"> {
   items: RenderedTranscriptItem[];
 }
@@ -28,6 +44,7 @@ export type HostToWebviewMessage =
       type: "state";
       font: string;
       projects: ProjectsSnapshot;
+      setup?: RenderedSetupStep;
       threads: RenderedThreadsSnapshot;
       workspaceActivity: Readonly<Record<string, WorkspaceActivity>>;
     }
@@ -41,9 +58,15 @@ export type HostToWebviewMessage =
   | { type: "showSettings"; assignWorkspaceColors: boolean };
 
 export type WebviewToHostMessage =
-  | { type: "ready" | "add" | "refresh" | "contextItems" | "newThread" }
   | {
-      type: "deactivateWorkspace" | "newWorkspace" | "openWorkspace";
+      type: "ready" | "add" | "refresh" | "contextItems" | "newThread";
+    }
+  | {
+      type:
+        | "deactivateWorkspace"
+        | "newWorkspace"
+        | "openIssues"
+        | "openWorkspace";
       path: string;
     }
   | {
@@ -61,6 +84,7 @@ export type WebviewToHostMessage =
         | "authenticate";
     }
   | { type: "prompt"; text: string; images: PromptImage[] }
+  | { type: "setupContinue"; selected: string[] }
   | { type: "setAssignWorkspaceColors"; value: boolean }
   | { type: "removeSteering" | "sendSteering"; id: string }
   | { type: "setConfig"; id: string; value: string | boolean }

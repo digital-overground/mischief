@@ -5,8 +5,15 @@ import type {
   ProfileDatabase,
   WorkspaceLocation,
 } from "../profile-database/profile-database";
-import { createGitWorkspace, discoverGitProject } from "./git";
-import type { GitWorkspace } from "./git";
+import {
+  createGitWorkspace,
+  discoverGitProject,
+  sourceBranches as listGitSourceBranches,
+} from "./git";
+import type { GitSourceBranch, GitWorkspace } from "./git";
+import { listOpenGitHubIssues } from "./github";
+
+export type { GitSourceBranch } from "./git";
 
 export const normalizeWorkspaceName = (name: string): string =>
   name.trim().toLowerCase().replaceAll(/\s+/gu, "-");
@@ -50,6 +57,23 @@ export const locateWorkspace = async (
     )
     .toSorted((left, right) => right.path.length - left.path.length);
   return { path: workspace?.path ?? selected, projectRoot: project.root };
+};
+
+export interface GitHubIssue {
+  number: number;
+  title: string;
+  url: string;
+}
+
+export const issueWorkspaceName = (issue: GitHubIssue): string => {
+  const title = issue.title
+    .toLowerCase()
+    .replaceAll(/[^\p{L}\p{N}]+/gu, "-")
+    .replaceAll(/^-|-$/gu, "");
+  const name = title
+    ? `issue-${issue.number}_${title}`
+    : `issue-${issue.number}`;
+  return name.slice(0, 50).replace(/-$/u, "");
 };
 
 export class Projects {
@@ -124,7 +148,41 @@ export class Projects {
     );
   }
 
-  async createWorkspace(projectRoot: string, name: string): Promise<string> {
+  async listOpenIssues(projectRoot: string): Promise<GitHubIssue[]> {
+    const root = await realpath(projectRoot);
+    if (
+      !this.database
+        .snapshot()
+        .workspaces.some(
+          (workspace) =>
+            workspace.projectRoot === root && workspace.status === "active"
+        )
+    ) {
+      throw new Error("Project is not in Mischief");
+    }
+    return listOpenGitHubIssues(root);
+  }
+
+  async sourceBranches(projectRoot: string): Promise<GitSourceBranch[]> {
+    const root = await realpath(projectRoot);
+    if (
+      !this.database
+        .snapshot()
+        .workspaces.some(
+          (workspace) =>
+            workspace.projectRoot === root && workspace.status === "active"
+        )
+    ) {
+      throw new Error("Project is not in Mischief");
+    }
+    return listGitSourceBranches(root);
+  }
+
+  async createWorkspace(
+    projectRoot: string,
+    name: string,
+    sourceRef?: string
+  ): Promise<string> {
     const root = await realpath(projectRoot);
     const listed = this.database
       .snapshot()
@@ -139,7 +197,7 @@ export class Projects {
     if (!branch || /[/\\]/u.test(branch)) {
       throw new Error("Enter a Workspace name without slashes");
     }
-    const workspace = await createGitWorkspace(root, branch);
+    const workspace = await createGitWorkspace(root, branch, sourceRef);
     await this.activate({ path: workspace, projectRoot: root });
     return workspace;
   }
