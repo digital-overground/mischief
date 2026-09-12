@@ -12,6 +12,10 @@ Project
     Thread
 ```
 
+## Install
+
+In VS Code, open **Extensions**, search for **Mischief**, and select **Install**. The first Thread walks through the remaining setup.
+
 ## Requirements
 
 Install these on the machine where the VS Code extension host runs:
@@ -19,7 +23,7 @@ Install these on the machine where the VS Code extension host runs:
 - [VS Code desktop](https://code.visualstudio.com/) 1.85 or newer.
 - [Node.js](https://nodejs.org/) 22 or newer. `npm` is included with Node.js.
 - [Pi](https://github.com/earendil-works/pi-mono), installed as `pi` on `PATH` and configured with a model provider.
-- [MagPi ACP](https://github.com/kylehumphrey-ao/magpi-acp), installed as `magpi-acp` on `PATH` or selected with the `mischief.magpiAcpPath` setting.
+- [MagPi ACP](https://github.com/digital-overground/magpi-acp), installed as `magpi-acp` on `PATH` or selected with the `mischief.magpiAcpPath` setting.
 
 [Git](https://git-scm.com/) is required for Git Projects, linked worktree discovery, status, and worktree creation. Without Git, Mischief can still manage folders as ungrouped Workspaces.
 
@@ -32,6 +36,10 @@ Mischief then offers four recommended Pi add-ons: Todo, Ask User, Ponytail, and 
 ## GitHub issue Workspaces
 
 Starting a Workspace from a GitHub issue requires the GitHub CLI (`gh`). Authenticate with `gh auth login`; private repositories require an authenticated CLI session. Use `gh auth refresh` when credentials expire.
+
+## Security and compatibility
+
+Mischief, MagPi ACP, and Pi run locally with the same filesystem and process access as the VS Code extension host. Review Agent permission requests before approving them. Mischief supports desktop VS Code with local or remote folders; untrusted and virtual Workspaces are not supported.
 
 ## Development
 

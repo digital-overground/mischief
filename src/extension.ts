@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 
 import * as vscode from "vscode";
@@ -34,11 +33,11 @@ const agentLaunch = (context: vscode.ExtensionContext): AgentLaunch => {
       : { args: [], command: configured, env };
   }
 
-  const local = [
-    path.resolve(context.extensionPath, "../magpi-acp/dist/index.js"),
-    path.join(homedir(), "Projects/_tools/magpi-acp/dist/index.js"),
-  ].find(existsSync);
-  return local
+  const local = path.resolve(
+    context.extensionPath,
+    "../magpi-acp/dist/index.js"
+  );
+  return existsSync(local)
     ? { args: [local], command: "node", env }
     : { args: [], command: "magpi-acp", env };
 };
