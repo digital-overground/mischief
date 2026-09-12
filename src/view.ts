@@ -4,6 +4,7 @@ import path from "node:path";
 import MarkdownIt from "markdown-it";
 import * as vscode from "vscode";
 
+import type { ProfileDatabase } from "./profile-database/profile-database";
 import {
   issueWorkspaceName,
   normalizeWorkspaceName,
@@ -14,7 +15,6 @@ import type {
   Project,
   Projects,
   ProjectsSnapshot,
-  ProjectsStorage,
   Workspace,
 } from "./projects/projects";
 import type {
@@ -133,25 +133,32 @@ export interface ThreadSetup {
 export class MischiefView implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private projectsSnapshot: ProjectsSnapshot = { projects: [], ungrouped: [] };
+  private readonly database: ProfileDatabase;
+  private databaseWorkspaces: string;
+  private profileRefresh = Promise.resolve();
   private setupPrompt?: string;
   private setupStep?: SetupStep;
   private readonly extensionUri: vscode.Uri;
   private readonly setup?: ThreadSetup;
   private readonly projects: Projects;
-  private readonly storage: ProjectsStorage;
+  private readonly storage: Pick<vscode.Memento, "get" | "update">;
   private readonly threads: Threads;
 
   constructor(
     projects: Projects,
     threads: Threads,
     extensionUri: vscode.Uri,
-    storage: ProjectsStorage,
+    storage: Pick<vscode.Memento, "get" | "update">,
+    database: ProfileDatabase,
     setup?: ThreadSetup
   ) {
     this.projects = projects;
     this.threads = threads;
     this.extensionUri = extensionUri;
     this.storage = storage;
+    this.database = database;
+    this.databaseWorkspaces = JSON.stringify(database.snapshot().workspaces);
+    database.onChange(() => this.databaseChanged());
     this.setup = setup;
     threads.onChange((change) => {
       if (change?.type === "transcript") {
@@ -492,6 +499,24 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
   }
 
+  private databaseChanged(): void {
+    const workspaces = JSON.stringify(this.database.snapshot().workspaces);
+    if (this.databaseWorkspaces === workspaces) {
+      this.render();
+      return;
+    }
+    this.databaseWorkspaces = workspaces;
+    const previous = this.profileRefresh;
+    this.profileRefresh = MischiefView.run(
+      (async () => {
+        await previous;
+        await this.setProjects(this.projects.refresh());
+        await this.syncThreads();
+        this.render();
+      })()
+    );
+  }
+
   private async handleMessage(message: unknown): Promise<void> {
     if (!message || typeof message !== "object") {
       return;
@@ -570,8 +595,8 @@ export class MischiefView implements vscode.WebviewViewProvider {
       await this.openWorkspace(data.path);
       return true;
     }
-    if (data.type === "removeMembership" && typeof data.path === "string") {
-      await this.removeMembership(data.path);
+    if (data.type === "deactivateWorkspace" && typeof data.path === "string") {
+      await this.deactivateWorkspace(data.path);
       return true;
     }
     return false;
@@ -763,21 +788,13 @@ export class MischiefView implements vscode.WebviewViewProvider {
     );
   }
 
-  private async removeMembership(candidate: string): Promise<void> {
-    const project = this.projectsSnapshot.projects.find(
-      (item) => item.root === candidate
-    );
-    const standalone = this.projectsSnapshot.ungrouped.find(
-      (item) => item.path === candidate
-    );
-    if (!project && !standalone) {
+  private async deactivateWorkspace(candidate: string): Promise<void> {
+    const workspace = this.workspaces().find((item) => item.path === candidate);
+    if (!workspace) {
       return;
     }
-    const removesCurrent =
-      project?.workspaces.some((workspace) => workspace.current) ||
-      standalone?.current;
     await this.setProjects(this.projects.remove(candidate));
-    if (removesCurrent) {
+    if (workspace.current) {
       await this.threads.closeWorkspace();
     }
     this.render();
@@ -940,6 +957,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
         : {}),
       threads,
       type: "state",
+      workspaceActivity: this.threads.workspaceActivity(),
     } satisfies HostToWebviewMessage);
   }
 }

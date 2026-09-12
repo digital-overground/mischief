@@ -220,11 +220,15 @@ select:disabled {
   font-weight: 600;
 }
 .group-row .name,
-.row-open .name {
-  flex: 1;
+.workspace-label .name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.group-row .name,
+.workspace-label {
+  min-width: 0;
+  flex: 1;
 }
 .row {
   padding-left: 20px;
@@ -245,6 +249,10 @@ select:disabled {
   background: transparent;
   cursor: pointer;
 }
+.workspace-label {
+  display: flex;
+  flex-direction: column;
+}
 .workspace-color {
   width: 8px;
   height: 8px;
@@ -252,13 +260,52 @@ select:disabled {
   border-radius: 50%;
 }
 .meta {
+  padding-left: 8px;
+  overflow: hidden;
   color: var(--vscode-descriptionForeground);
+  font-family: var(--mischief-mono-font);
   font-size: 11px;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .selected .meta {
   color: inherit;
   opacity: 0.8;
+}
+.workspace-statuses,
+.workspace-status-count {
+  display: inline-flex;
+  align-items: center;
+}
+.workspace-statuses {
+  flex: none;
+  gap: 6px;
+  padding-left: 5px;
+}
+.lucide.workspace-spool {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--vscode-descriptionForeground);
+}
+.workspace-status-count {
+  min-width: 17px;
+  gap: 3px;
+  font-family: var(--mischief-mono-font);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.workspace-statuses .workspace-status-count .thread-status,
+.workspace-statuses .workspace-status-count .thread-status.active {
+  width: 7px;
+  height: 7px;
+  margin: 0;
+  border-radius: 50%;
+  background: currentColor;
+}
+.workspace-statuses .workspace-status-count .thread-status.active::before {
+  content: none;
+  animation: none;
 }
 .thread-status {
   flex: none;

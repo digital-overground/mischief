@@ -4,7 +4,7 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 
 ## Language
 
-**Project**: A conceptual Git-based grouping deliberately managed by Mischief. A Project is anchored to one Git checkout root and contains that root plus any linked Git Workspaces. _Avoid_: Repository, application, VS Code workspace.
+**Project**: A conceptual Git-based grouping added to Mischief. A Project is anchored to one Git checkout root and contains that root plus any linked Git Workspaces. _Avoid_: Repository, application, VS Code workspace.
 
 **Workspace**: A concrete folder or checkout where a Thread runs. Linked Git worktrees are separate Workspaces in the same Project. _Avoid_: Project, session, checkout when the folder itself is meant.
 
@@ -12,14 +12,14 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 
 **Agent**: An ACP-speaking executable that runs Threads. MagPi ACP is the default Agent. _Avoid_: Model, provider, session.
 
-**Membership**: Whether a Project or standalone Workspace is present in Mischief's profile-wide managed list. Removing membership does not delete Threads or Agent history. _Avoid_: Deletion, archive.
+**Workspace status**: Whether a Workspace is `active` and shown or `inactive` and hidden. Any Mischief Instance may change it.
 
 **ACP session**: The protocol-level runtime/session identified by an ACP Agent. It is an implementation detail behind a Mischief Thread. _Avoid_: Thread when speaking about the user's domain.
 
 ## Relationships
 
-- A Project contains one or more Git Workspaces: its checkout root and discovered linked worktrees.
-- A non-Git Workspace belongs to the non-selectable `Ungrouped` section rather than a Project.
+- A Project is the conceptual grouping of Git Workspaces with the same canonical Git root.
+- An untracked Workspace belongs to the non-selectable `Ungrouped` section rather than a Project.
 - Projects themselves are not selectable in the combined view. They are labeled by their root folder name and sorted alphabetically; the currently open Workspace is visibly indicated.
 - A Workspace contains zero or more Threads.
 - A Thread runs through exactly one Agent and one Workspace.
@@ -29,18 +29,14 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 
 ## Project behavior
 
-- Opening an unlisted folder in VS Code automatically creates or discovers its Git-root Project; a non-Git folder becomes a standalone Workspace. An explicitly removed path is the exception and stays unmanaged until `Add Workspace…` is used.
-- Opening an already-listed Workspace does not change Project membership.
-- A Project is anchored to its Git checkout root; selecting a subfolder resolves to that Project rather than creating a separate Project.
-- The Git checkout root and its current linked worktrees are discovered automatically and shown as Workspaces in the same Project.
-- Newly-created linked worktrees appear on refresh; deleted or pruned worktrees disappear on refresh.
-- When a Workspace disappears, Mischief removes its Threads from the visible index but preserves ACP/Pi history; it does not delete that history. If the exact Workspace returns, Mischief restores those Threads automatically.
-- Project identity is the exact canonical Git-root path; standalone Workspace identity is the exact canonical folder path. Separate clones never join the same Project based on GitHub or another remote origin.
-- Membership is global per VS Code profile and persists across restarts and windows.
-- Selecting a Workspace focuses its existing VS Code window when open; otherwise it opens the folder in a new window. Workspace rows use the folder name as their primary label and show branch/worktree identity plus Git changes, ahead, and behind status.
-- Removing a Git Project removes the whole group’s membership; discovered linked Workspaces cannot be hidden individually. A standalone Workspace can be removed from `Ungrouped`. Removal affects membership only and suppresses automatic re-addition: Mischief Thread registrations and ACP/Pi history remain and reappear when the same Project or Workspace is explicitly added again. Active turns in the removed membership are cancelled, but open VS Code folders remain open.
-- If a managed Git root or standalone Workspace no longer exists on disk, Mischief removes its membership automatically.
-- `Add Workspace…` lets the user choose any folder, including one not currently open or previously removed; Mischief derives its Git-root Project or adds it under `Ungrouped`.
+- Opening or adding a folder activates that exact Workspace. Git discovery associates it with its canonical-root Project; a non-Git folder becomes an untracked Workspace under `Ungrouped`.
+- Projects are derived from their Workspaces rather than activated or removed independently. A Project is shown while it has at least one active Workspace.
+- Any Mischief Instance may make an active Workspace inactive. Making one Workspace inactive does not affect its siblings.
+- Active Workspaces are shown; inactive Workspaces are hidden. Changing status does not delete Threads or ACP/Pi history.
+- A Project is keyed by its exact canonical Git-root path; an untracked Workspace is keyed by its exact canonical folder path. Separate clones never join the same Project based on GitHub or another remote origin.
+- Newly-created linked worktrees are associated with the same Project when discovered. Deleted or missing folders are omitted from the UI without another Instance rewriting their status.
+- Selecting a Workspace focuses its existing VS Code window when open; otherwise it opens the folder in a new window. Workspace rows use the folder name as their primary label and show branch/worktree identity, Git changes, ahead/behind status, and synchronized aggregate Thread activity.
+- Workspace records are global per VS Code profile, persist across restarts, and are shared by every open Mischief window in that profile.
 
 ## Thread behavior
 
@@ -53,7 +49,7 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 - ACP streams assistant messages, thoughts, tool calls, plans, usage, permissions, and elicitation into the graphical transcript. Thinking remains visible by default; tool output is compact by default and can be expanded, matching Pi’s display posture. Tool file locations and structured diffs open in VS Code’s native editor/diff view. Mischief does not summarize Agent-provided thoughts. Cancelling a turn preserves already-streamed output and activity, marked as cancelled.
 - The first version uses one stable Activity Bar Webview rather than native TreeViews or proposed Chat Session APIs. It renders Projects/Workspaces at the top, Threads in the middle, and the selected Thread transcript/composer at the bottom. The whole view can use a Mischief-specific font. Domain state and actions stay outside webview JavaScript so the sections can become separate native views later without changing Projects or Threads.
 - Multiple Thread turns may run concurrently, including within one Workspace. A running Thread’s composer remains enabled; additional messages are shown as queued with their position and run in order. Stopping the active turn clears the Agent’s queue but restores the queued message text as editable drafts. Navigating away from a Thread does not cancel its turn; it continues in its Workspace’s VS Code window and remains visible when the Thread is reopened.
-- Each Workspace window’s extension host owns its running Threads. In-flight turns do not need to survive closing that window or restarting its extension host in the first version.
+- Open Mischief windows in one VS Code profile share registered Threads and Thread attention state. Every Workspace row shows synchronized counts for idle, unread completed, running, and attention-needed (waiting or error) Threads, while the Threads pane remains scoped to the current Workspace. Each Workspace window’s extension host still owns its running Threads; closing that window stops its in-flight turns.
 - MagPi ACP is the only Agent in v1. The selected Thread header renders its ACP-provided Role, Model, and Thinking configuration controls. These settings belong to that Thread. An Agent is fixed for the lifetime of a Thread; future support for additional ACP Agents may use the same `{ command, args, env }` shape.
 - Mischief does not require Herdr, a Herdr server, terminal mirroring, or TUI interaction.
 
@@ -61,13 +57,14 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 
 - Start a fresh project rather than continue the Herdex/Merdr fork. Only the useful behavior is carried forward.
 - Organize by domain, not by a symmetric `view/model/service/repository` template.
-- `Projects` is one deep domain module. It hides profile persistence, path canonicalization, Git worktree discovery, and Git status.
-- `Threads` is one deep domain module. It hides Thread persistence, transcript state, ACP lifecycle, and prompt/cancel behavior.
+- `ProfileDatabase` is one deep synchronization module. It hides profile files, validation, polling, and write ordering.
+- `Projects` is one deep domain module. It hides path canonicalization, Git worktree discovery, Git status, and Project grouping.
+- `Threads` is one deep domain module. It hides Thread records, transcript state, ACP lifecycle, and prompt/cancel behavior.
 - The combined Webview is a thin VS Code adapter over `Projects` and `Threads`; it owns no domain state.
 - ACP is an internal external-system adapter inside `threads/`, not a generic repository layer.
 - Git is an internal external-system adapter inside `projects/`.
 - Add separate transcript logic only when its reduction behavior earns a file; do not create generic shared layers preemptively.
-- Tests cross the `Projects` and `Threads` interfaces. Projects tests may use temporary real Git repositories; Threads tests use a fake ACP connection.
+- Tests cross the `ProfileDatabase`, `Projects`, and `Threads` interfaces. Profile Database tests use temporary directories, Projects tests may use temporary real Git repositories, and Threads tests use a fake ACP connection.
 - Add a repository or separate model only when persistence or domain rules materially outgrow the owning domain module.
 
 ## Planned shape
@@ -76,6 +73,9 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 src/
   extension.ts
   view.ts
+  profile-database/
+    profile-database.ts
+    profile-database.test.ts
   projects/
     projects.ts
     git.ts
@@ -106,4 +106,4 @@ The exact split is allowed to shrink if a file does not earn its own behavior. `
 - Configuring or selecting additional ACP Agents.
 - Displaying ACP context usage and cost in the Thread header.
 - Filters, selection sending, status-bar decoration, background waiting/error notifications, and other convenience features not required for the first vertical slice.
-- Automatic deletion of ACP/Pi history when Project membership is removed.
+- Automatic deletion of ACP/Pi history when a Workspace becomes inactive.

@@ -1,9 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
 import * as vscode from "vscode";
 
-import { Projects } from "./projects/projects";
+import { ProfileDatabase } from "./profile-database/profile-database";
+import { locateWorkspace, Projects } from "./projects/projects";
 import {
   addOnInstallCommand,
   missingRecommendedAddons,
@@ -20,6 +22,13 @@ import type { SetupStep } from "./webview/protocol";
 const ADDONS_OFFERED_KEY = "mischief.addonsOffered";
 const AGENT_INSTALL_COMMAND =
   "npm install -g @earendil-works/pi-coding-agent magpi-acp";
+
+const PROJECTS_KEY = "mischief.projects";
+const PROJECTS_VERSION_KEY = "mischief.profileDatabaseProjectsVersion";
+const THREADS_KEY = "mischief.threads";
+const THREADS_VERSION_KEY = "mischief.profileDatabaseThreadsVersion";
+let database: ProfileDatabase | undefined;
+let activeThreads: Threads | undefined;
 
 const agentLaunch = (context: vscode.ExtensionContext): AgentLaunch => {
   const env = { MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT: "true" };
@@ -148,19 +157,40 @@ export const activate = async (
   context: vscode.ExtensionContext
 ): Promise<void> => {
   const output = vscode.window.createOutputChannel("Mischief");
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const workspace = folder ? await locateWorkspace(folder) : undefined;
+  const log = (message: string): void => output.appendLine(message);
+  database = await ProfileDatabase.open({
+    currentWorkspace: workspace?.path,
+    instanceId: randomUUID(),
+    log,
+    profileDirectory: context.globalStorageUri.fsPath,
+  });
+  const projects = new Projects(database);
+  if (context.globalState.get<number>(PROJECTS_VERSION_KEY, 0) < 1) {
+    await projects.importPreviousWorkspaces(
+      context.globalState.get<unknown>(PROJECTS_KEY)
+    );
+    await context.globalState.update(PROJECTS_VERSION_KEY, 1);
+  }
+  if (context.globalState.get<number>(THREADS_VERSION_KEY, 0) < 1) {
+    await database.importPreviousThreads(
+      context.globalState.get<unknown>(THREADS_KEY)
+    );
+    await context.globalState.update(THREADS_VERSION_KEY, 1);
+  }
   const launch = agentLaunch(context);
-  const threads = new Threads(
-    context.globalState,
-    acpConnectionFactory(launch, (message) => output.appendLine(message))
-  );
+  const threads = new Threads(database, acpConnectionFactory(launch, log));
+  activeThreads = threads;
   const view = new MischiefView(
-    new Projects(context.globalState),
+    projects,
     threads,
     context.extensionUri,
     context.globalState,
+    database,
     softwareSetup(launch, context.globalState)
   );
-  context.subscriptions.push(output, { dispose: () => threads.dispose() });
+  context.subscriptions.push(output);
   registerMischiefView(context, view);
 
   context.subscriptions.push(
@@ -181,7 +211,6 @@ export const activate = async (
     })
   );
 
-  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   try {
     await view.initialize(folder);
     output.appendLine("Mischief activated");
@@ -192,6 +221,9 @@ export const activate = async (
   }
 };
 
-export const deactivate = (): void => {
-  // VS Code calls this hook when no cleanup is needed.
+export const deactivate = async (): Promise<void> => {
+  await activeThreads?.dispose();
+  activeThreads = undefined;
+  await database?.dispose();
+  database = undefined;
 };

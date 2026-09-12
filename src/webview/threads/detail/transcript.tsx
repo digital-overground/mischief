@@ -256,7 +256,7 @@ export const Transcript = ({
       </>
     );
   } else if (!selected) {
-    content = <div className="empty">Select a managed Workspace.</div>;
+    content = <div className="empty">Select an active Workspace.</div>;
   } else if (history.length || tail || streamed.length) {
     content = (
       <>

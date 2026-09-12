@@ -1,25 +1,22 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 
+import type {
+  ProfileDatabase,
+  WorkspaceLocation,
+} from "../profile-database/profile-database";
 import {
   createGitWorkspace,
   discoverGitProject,
   sourceBranches as listGitSourceBranches,
 } from "./git";
-import type { GitSourceBranch } from "./git";
+import type { GitSourceBranch, GitWorkspace } from "./git";
 import { listOpenGitHubIssues } from "./github";
 
 export type { GitSourceBranch } from "./git";
 
-const STORAGE_KEY = "mischief.projects";
-
 export const normalizeWorkspaceName = (name: string): string =>
   name.trim().toLowerCase().replaceAll(/\s+/gu, "-");
-
-export interface ProjectsStorage {
-  get: <T>(key: string, fallback: T) => T;
-  update: (key: string, value: unknown) => Thenable<void>;
-}
 
 export interface Workspace {
   name: string;
@@ -44,6 +41,24 @@ export interface ProjectsSnapshot {
   ungrouped: Workspace[];
 }
 
+export const locateWorkspace = async (
+  folder: string
+): Promise<WorkspaceLocation> => {
+  const selected = await realpath(folder);
+  const project = await discoverGitProject(selected);
+  if (!project) {
+    return { path: selected };
+  }
+  const [workspace] = project.workspaces
+    .filter(
+      (candidate) =>
+        selected === candidate.path ||
+        selected.startsWith(`${candidate.path}${path.sep}`)
+    )
+    .toSorted((left, right) => right.path.length - left.path.length);
+  return { path: workspace?.path ?? selected, projectRoot: project.root };
+};
+
 export interface GitHubIssue {
   number: number;
   title: string;
@@ -61,52 +76,23 @@ export const issueWorkspaceName = (issue: GitHubIssue): string => {
   return name.slice(0, 50).replace(/-$/u, "");
 };
 
-interface StoredProjects {
-  roots: string[];
-  ungrouped: string[];
-  suppressed: string[];
-}
-
 export class Projects {
-  private readonly storage: ProjectsStorage;
   private currentWorkspace?: string;
+  private readonly database: ProfileDatabase;
 
-  constructor(storage: ProjectsStorage) {
-    this.storage = storage;
+  constructor(database: ProfileDatabase) {
+    this.database = database;
   }
 
   async open(folder: string): Promise<ProjectsSnapshot> {
-    const selected = await realpath(folder);
-    const discovered = await discoverGitProject(selected);
-    this.currentWorkspace = discovered
-      ? discovered.workspaces
-          .filter(
-            (workspace) =>
-              selected === workspace.path ||
-              selected.startsWith(`${workspace.path}${path.sep}`)
-          )
-          .toSorted((a, b) => b.path.length - a.path.length)[0]?.path
-      : selected;
-    const identity = discovered?.root ?? selected;
-    return this.readStored().suppressed.includes(identity)
-      ? this.snapshot()
-      : this.add(selected);
+    const workspace = await locateWorkspace(folder);
+    this.currentWorkspace = workspace.path;
+    await this.activate(workspace);
+    return this.snapshot();
   }
 
   async add(folder: string): Promise<ProjectsSnapshot> {
-    const stored = this.readStored();
-    const discovered = await discoverGitProject(folder);
-    const canonicalFolder = await realpath(folder);
-    const identity = discovered?.root ?? canonicalFolder;
-    stored.suppressed = stored.suppressed.filter((item) => item !== identity);
-    if (discovered) {
-      if (!stored.roots.includes(identity)) {
-        stored.roots.push(identity);
-      }
-    } else if (!stored.ungrouped.includes(identity)) {
-      stored.ungrouped.push(identity);
-    }
-    await this.storage.update(STORAGE_KEY, stored);
+    await this.activate(await locateWorkspace(folder));
     return this.snapshot();
   }
 
@@ -114,18 +100,80 @@ export class Projects {
     return this.snapshot();
   }
 
+  async importPreviousWorkspaces(value: unknown): Promise<void> {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return;
+    }
+    const previous = value as Record<string, unknown>;
+    const roots = Array.isArray(previous.roots)
+      ? previous.roots.filter(
+          (item): item is string => typeof item === "string"
+        )
+      : [];
+    const ungrouped = Array.isArray(previous.ungrouped)
+      ? previous.ungrouped.filter(
+          (item): item is string => typeof item === "string"
+        )
+      : [];
+    const imported = await Promise.all([
+      ...roots.map(async (root) => {
+        const project = await discoverGitProject(root);
+        return (
+          project?.workspaces.map((workspace) => ({
+            path: workspace.path,
+            projectRoot: project.root,
+          })) ?? []
+        );
+      }),
+      ...ungrouped.map(async (folder) => {
+        try {
+          return [await locateWorkspace(folder)];
+        } catch {
+          return [];
+        }
+      }),
+    ]);
+    const existing = new Set(
+      this.database.snapshot().workspaces.map((workspace) => workspace.path)
+    );
+    const locations = imported.flat();
+    await Promise.all(
+      [
+        ...new Map(
+          locations.map((location) => [location.path, location])
+        ).values(),
+      ]
+        .filter((workspace) => !existing.has(workspace.path))
+        .map((workspace) => this.activate(workspace))
+    );
+  }
+
   async listOpenIssues(projectRoot: string): Promise<GitHubIssue[]> {
     const root = await realpath(projectRoot);
-    if (!this.readStored().roots.includes(root)) {
-      throw new Error("Project is not managed by Mischief");
+    if (
+      !this.database
+        .snapshot()
+        .workspaces.some(
+          (workspace) =>
+            workspace.projectRoot === root && workspace.status === "active"
+        )
+    ) {
+      throw new Error("Project is not in Mischief");
     }
     return listOpenGitHubIssues(root);
   }
 
   async sourceBranches(projectRoot: string): Promise<GitSourceBranch[]> {
     const root = await realpath(projectRoot);
-    if (!this.readStored().roots.includes(root)) {
-      throw new Error("Project is not managed by Mischief");
+    if (
+      !this.database
+        .snapshot()
+        .workspaces.some(
+          (workspace) =>
+            workspace.projectRoot === root && workspace.status === "active"
+        )
+    ) {
+      throw new Error("Project is not in Mischief");
     }
     return listGitSourceBranches(root);
   }
@@ -136,68 +184,93 @@ export class Projects {
     sourceRef?: string
   ): Promise<string> {
     const root = await realpath(projectRoot);
-    if (!this.readStored().roots.includes(root)) {
-      throw new Error("Project is not managed by Mischief");
+    const listed = this.database
+      .snapshot()
+      .workspaces.some(
+        (workspace) =>
+          workspace.projectRoot === root && workspace.status === "active"
+      );
+    if (!listed) {
+      throw new Error("Project is not in Mischief");
     }
     const branch = normalizeWorkspaceName(name);
     if (!branch || /[/\\]/u.test(branch)) {
       throw new Error("Enter a Workspace name without slashes");
     }
-    return createGitWorkspace(root, branch, sourceRef);
+    const workspace = await createGitWorkspace(root, branch, sourceRef);
+    await this.activate({ path: workspace, projectRoot: root });
+    return workspace;
   }
 
   async remove(folder: string): Promise<ProjectsSnapshot> {
-    const selected = await realpath(folder);
-    const discovered = await discoverGitProject(selected);
-    const identity = discovered?.root ?? selected;
-    const stored = this.readStored();
-    stored.roots = stored.roots.filter((item) => item !== identity);
-    stored.ungrouped = stored.ungrouped.filter((item) => item !== identity);
-    if (!stored.suppressed.includes(identity)) {
-      stored.suppressed.push(identity);
-    }
-    await this.storage.update(STORAGE_KEY, stored);
+    const workspace = await locateWorkspace(folder);
+    await this.database.apply({
+      path: workspace.path,
+      type: "deactivateWorkspace",
+    });
     return this.snapshot();
   }
 
+  private activate(workspace: WorkspaceLocation): Promise<void> {
+    return this.database.apply({ type: "activateWorkspace", workspace });
+  }
+
   private async snapshot(): Promise<ProjectsSnapshot> {
-    const stored = this.readStored();
-    const discoveredProjects = await Promise.all(
-      stored.roots.map(discoverGitProject)
-    );
-    const discovered = discoveredProjects.filter(
-      (project) => project !== undefined
-    );
-    const ungroupedPaths = await Promise.all(
-      stored.ungrouped.map(async (workspacePath) => {
-        try {
-          return await realpath(workspacePath);
-        } catch {
-          return null;
+    const active = this.database
+      .snapshot()
+      .workspaces.filter((workspace) => workspace.status === "active");
+    const inspected = await Promise.all(
+      active.map(async (record) => {
+        const { projectRoot } = record;
+        if (!projectRoot) {
+          try {
+            return { path: await realpath(record.path) };
+          } catch {
+            return null;
+          }
         }
+        const project = await discoverGitProject(record.path);
+        const workspace = project?.workspaces.find(
+          (candidate) => candidate.path === record.path
+        );
+        return project?.root === projectRoot && workspace
+          ? { projectRoot, workspace }
+          : null;
       })
     );
-    const existingUngrouped = ungroupedPaths.filter(
-      (workspacePath): workspacePath is string => workspacePath !== null
-    );
-    await this.storage.update(STORAGE_KEY, {
-      roots: discovered.map((project) => project.root),
-      suppressed: stored.suppressed,
-      ungrouped: existingUngrouped,
-    } satisfies StoredProjects);
+    const grouped = new Map<string, GitWorkspace[]>();
+    const untracked: string[] = [];
+    for (const result of inspected) {
+      if (!result) {
+        continue;
+      }
+      if (result.workspace && result.projectRoot) {
+        const workspaces = grouped.get(result.projectRoot) ?? [];
+        workspaces.push(result.workspace);
+        grouped.set(result.projectRoot, workspaces);
+      } else if (result.path) {
+        untracked.push(result.path);
+      }
+    }
 
-    const projects = discovered
-      .map((project) => ({
-        name: path.basename(project.root),
-        root: project.root,
-        workspaces: project.workspaces.map((workspace) => ({
-          name: path.basename(workspace.path),
-          ...workspace,
-          current: workspace.path === this.currentWorkspace,
-        })),
+    const projects = [...grouped]
+      .map(([root, workspaces]) => ({
+        name: path.basename(root),
+        root,
+        workspaces: workspaces
+          .map((workspace) => ({
+            name: path.basename(workspace.path),
+            ...workspace,
+            current: workspace.path === this.currentWorkspace,
+          }))
+          .toSorted(
+            (left, right) =>
+              Number(left.linked) - Number(right.linked) ||
+              left.name.localeCompare(right.name)
+          ),
       }))
-      .toSorted((a, b) => a.name.localeCompare(b.name));
-    const ungrouped = existingUngrouped
+      .toSorted((left, right) => left.name.localeCompare(right.name));
+    const ungrouped = untracked
       .map((workspacePath) => ({
         ahead: 0,
         behind: 0,
@@ -207,16 +280,7 @@ export class Projects {
         name: path.basename(workspacePath),
         path: workspacePath,
       }))
-      .toSorted((a, b) => a.name.localeCompare(b.name));
+      .toSorted((left, right) => left.name.localeCompare(right.name));
     return { projects, ungrouped };
-  }
-
-  private readStored(): StoredProjects {
-    const stored = this.storage.get<Partial<StoredProjects>>(STORAGE_KEY, {});
-    return {
-      roots: [...(stored.roots ?? [])],
-      suppressed: [...(stored.suppressed ?? [])],
-      ungrouped: [...(stored.ungrouped ?? [])],
-    };
   }
 }

@@ -4,7 +4,7 @@ import type { ThreadIndicator, ThreadSummary } from "../../threads/threads";
 import { postMessage } from "../bridge";
 import type { RenderedThreadsSnapshot } from "../protocol";
 
-const indicatorLabel = (kind: ThreadIndicator): string => {
+export const indicatorLabel = (kind: ThreadIndicator): string => {
   if (kind === "active") {
     return "Agent active";
   }
@@ -33,7 +33,7 @@ const compactTime = (value: string, now: number): string => {
   return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
 };
 
-const StatusIndicator = ({
+export const StatusIndicator = ({
   kind,
   label = indicatorLabel(kind),
 }: {
@@ -146,7 +146,7 @@ const ThreadsPaneView = ({
           </div>
         ))}
         {snapshot.workspace ? null : (
-          <div className="empty">Open a managed Workspace.</div>
+          <div className="empty">Open an active Workspace.</div>
         )}
         {snapshot.workspace && !snapshot.threads.length ? (
           <div className="empty">No durable Threads yet.</div>

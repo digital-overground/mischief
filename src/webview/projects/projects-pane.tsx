@@ -3,6 +3,7 @@ import type {
   ProjectsSnapshot,
   Workspace,
 } from "../../projects/projects";
+import type { WorkspaceActivity } from "../../threads/threads";
 import { postMessage } from "../bridge";
 import { SvgIcon } from "../icon";
 
@@ -43,69 +44,92 @@ const visibleColor = (color: string): string => {
     .join("")}`;
 };
 
+const THREAD_STATUSES = [
+  ["idle", "idle", "Idle Threads"],
+  ["completed", "completed", "Completed Threads"],
+  ["active", "active", "Running Threads"],
+  ["attention", "error", "Waiting or error Threads"],
+] as const;
+
 const WorkspaceRow = ({
-  removable = false,
+  activity,
   workspace,
 }: {
-  removable?: boolean;
+  activity?: WorkspaceActivity;
   workspace: Workspace;
-}): React.JSX.Element => (
-  <div className={`row${workspace.current ? " selected" : ""}`}>
-    <button
-      className="row-open"
-      title={workspace.path}
-      onClick={() =>
-        postMessage({ path: workspace.path, type: "openWorkspace" })
-      }
-    >
-      {workspace.color ? (
-        <span
-          aria-hidden="true"
-          className="workspace-color"
-          style={{
-            backgroundColor: workspace.color,
-            boxShadow: `0 0 0 1px ${visibleColor(workspace.color)}`,
-          }}
-        />
-      ) : null}
-      <span className="name">{workspace.name}</span>
-      <span className="meta">
-        {[
-          workspace.branch,
-          workspace.linked ? "worktree" : "",
-          workspace.changes ? `✎${workspace.changes}` : "",
-          workspace.ahead ? `↑${workspace.ahead}` : "",
-          workspace.behind ? `↓${workspace.behind}` : "",
-        ]
-          .filter(Boolean)
-          .join("  ")}
-      </span>
-    </button>
-    {workspace.current ? (
-      <IconButton
-        title="New Thread"
-        onClick={(event) => {
-          event.stopPropagation();
-          postMessage({ type: "newThread" });
-        }}
-      >
-        ＋
-      </IconButton>
-    ) : null}
-    {removable ? (
-      <IconButton
-        title="Remove membership"
+}): React.JSX.Element => {
+  const metadata = [
+    workspace.branch,
+    workspace.linked ? "worktree" : "",
+    workspace.changes ? `✎${workspace.changes}` : "",
+    workspace.ahead ? `↑${workspace.ahead}` : "",
+    workspace.behind ? `↓${workspace.behind}` : "",
+  ]
+    .filter(Boolean)
+    .join("  ");
+  return (
+    <div className={`row${workspace.current ? " selected" : ""}`}>
+      <button
+        className="row-open"
+        title={workspace.path}
         onClick={() =>
-          postMessage({ path: workspace.path, type: "removeMembership" })
+          postMessage({ path: workspace.path, type: "openWorkspace" })
+        }
+      >
+        {workspace.color ? (
+          <span
+            aria-hidden="true"
+            className="workspace-color"
+            style={{
+              backgroundColor: workspace.color,
+              boxShadow: `0 0 0 1px ${visibleColor(workspace.color)}`,
+            }}
+          />
+        ) : null}
+        <span className="workspace-label">
+          <span className="name">{workspace.name}</span>
+          {metadata ? <span className="meta">{metadata}</span> : null}
+        </span>
+      </button>
+      <span className="workspace-statuses">
+        <SvgIcon className="workspace-spool" kind="spool" />
+        {THREAD_STATUSES.map(([status, indicator, label]) => {
+          const count = activity?.[status] ?? 0;
+          return (
+            <span
+              className="workspace-status-count"
+              aria-label={`${label}: ${count}`}
+              title={`${label}: ${count}`}
+              key={status}
+            >
+              <span
+                aria-hidden="true"
+                className={`thread-status ${indicator}`}
+              />
+              <span aria-hidden="true">{count}</span>
+            </span>
+          );
+        })}
+      </span>
+      <IconButton
+        title="Close Workspace"
+        onClick={() =>
+          postMessage({ path: workspace.path, type: "deactivateWorkspace" })
         }
       >
         ×
       </IconButton>
-    ) : null}
-  </div>
-);
+    </div>
+  );
+};
 
-const ProjectGroup = ({ project }: { project: Project }): React.JSX.Element => (
+const ProjectGroup = ({
+  project,
+  workspaceActivity,
+}: {
+  project: Project;
+  workspaceActivity: Readonly<Record<string, WorkspaceActivity>>;
+}): React.JSX.Element => (
   <>
     <div className="group-row">
       <span className="name">{project.name}</span>
@@ -123,25 +147,23 @@ const ProjectGroup = ({ project }: { project: Project }): React.JSX.Element => (
       >
         ＋
       </IconButton>
-      <IconButton
-        title="Remove membership"
-        onClick={() =>
-          postMessage({ path: project.root, type: "removeMembership" })
-        }
-      >
-        ×
-      </IconButton>
     </div>
     {project.workspaces.map((workspace) => (
-      <WorkspaceRow workspace={workspace} key={workspace.path} />
+      <WorkspaceRow
+        activity={workspaceActivity[workspace.path]}
+        workspace={workspace}
+        key={workspace.path}
+      />
     ))}
   </>
 );
 
 export const ProjectsPane = ({
   snapshot,
+  workspaceActivity,
 }: {
   snapshot: ProjectsSnapshot;
+  workspaceActivity: Readonly<Record<string, WorkspaceActivity>>;
 }): React.JSX.Element => (
   <section id="projects">
     <header>
@@ -161,14 +183,18 @@ export const ProjectsPane = ({
     </header>
     <div className="content" id="project-list">
       {snapshot.projects.map((project) => (
-        <ProjectGroup project={project} key={project.root} />
+        <ProjectGroup
+          project={project}
+          workspaceActivity={workspaceActivity}
+          key={project.root}
+        />
       ))}
       {snapshot.ungrouped.length ? (
         <>
           <div className="group-row">Ungrouped</div>
           {snapshot.ungrouped.map((workspace) => (
             <WorkspaceRow
-              removable
+              activity={workspaceActivity[workspace.path]}
               workspace={workspace}
               key={workspace.path}
             />
@@ -176,7 +202,7 @@ export const ProjectsPane = ({
         </>
       ) : null}
       {!snapshot.projects.length && !snapshot.ungrouped.length ? (
-        <div className="empty">No managed Workspaces. Add one with ＋.</div>
+        <div className="empty">No active Workspaces. Add one with ＋.</div>
       ) : null}
     </div>
   </section>

@@ -41,6 +41,7 @@ const threadState = (id: string, drafts: string[]): HostToWebviewMessage => ({
     workspace: "/workspace",
   },
   type: "state",
+  workspaceActivity: {},
 });
 
 const renderApp = async (): Promise<() => Promise<void>> => {
@@ -101,6 +102,7 @@ describe("React webview", () => {
               workspace: "/workspace",
             },
             type: "state",
+            workspaceActivity: {},
           },
         })
       );
@@ -292,6 +294,7 @@ describe("React webview", () => {
             },
             threads: { attentionCount: 0, threads: [] },
             type: "state",
+            workspaceActivity: {},
           } satisfies HostToWebviewMessage,
         })
       );
@@ -321,7 +324,7 @@ describe("React webview", () => {
     await unmount();
   });
 
-  test("shows each Workspace color and routes new Workspace creation", async () => {
+  test("shows each Workspace color and synchronized activity, then routes actions", async () => {
     const unmount = await renderApp();
     await act(() => {
       window.dispatchEvent(
@@ -335,11 +338,12 @@ describe("React webview", () => {
                   root: "/project",
                   workspaces: [
                     {
-                      ahead: 0,
-                      behind: 0,
-                      changes: 0,
+                      ahead: 1,
+                      behind: 3,
+                      branch: "feature/ui",
+                      changes: 2,
                       color: "#0e1c14",
-                      current: false,
+                      current: true,
                       linked: true,
                       name: "project-feature",
                       path: "/worktrees/project-feature",
@@ -351,6 +355,14 @@ describe("React webview", () => {
             },
             threads: { attentionCount: 0, threads: [] },
             type: "state",
+            workspaceActivity: {
+              "/worktrees/project-feature": {
+                active: 1,
+                attention: 8,
+                completed: 2,
+                idle: 4,
+              },
+            },
           } satisfies HostToWebviewMessage,
         })
       );
@@ -359,21 +371,57 @@ describe("React webview", () => {
     const create = document.querySelector<HTMLButtonElement>(
       '[aria-label="New Workspace"]'
     );
-    if (!dot || !create) {
+    const close = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Close Workspace"]'
+    );
+    const spool = document.querySelector<HTMLElement>(".workspace-spool");
+    const statuses = [
+      ...document.querySelectorAll<HTMLElement>(".workspace-status-count"),
+    ].map((status) => status.getAttribute("aria-label"));
+    if (!dot || !create || !close || !spool) {
       throw new Error("Missing Workspace controls");
     }
     postMessage.mockClear();
 
-    await act(() => create.click());
+    await act(() => {
+      create.click();
+      close.click();
+    });
 
     expect({
       fill: dot.style.backgroundColor,
       message: postMessage.mock.calls,
+      meta: document.querySelector("#project-list .meta")?.textContent,
+      newThread: document.querySelector(
+        '#project-list [aria-label="New Thread"]'
+      ),
+      project: document.querySelector("#project-list .group-row .name")
+        ?.textContent,
       ring: dot.style.boxShadow,
+      statuses,
+      workspace: document.querySelector(".workspace-label .name")?.textContent,
     }).toStrictEqual({
       fill: "rgb(14, 28, 20)",
-      message: [[{ path: "/project", type: "newWorkspace" }]],
+      message: [
+        [{ path: "/project", type: "newWorkspace" }],
+        [
+          {
+            path: "/worktrees/project-feature",
+            type: "deactivateWorkspace",
+          },
+        ],
+      ],
+      meta: "feature/ui  worktree  ✎2  ↑1  ↓3",
+      newThread: null,
+      project: "project",
       ring: "0 0 0 1px #50a072",
+      statuses: [
+        "Idle Threads: 4",
+        "Completed Threads: 2",
+        "Running Threads: 1",
+        "Waiting or error Threads: 8",
+      ],
+      workspace: "project-feature",
     });
     await unmount();
   });
@@ -420,6 +468,7 @@ describe("React webview", () => {
         workspace: "/workspace",
       },
       type: "state",
+      workspaceActivity: {},
     };
     await act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
@@ -549,6 +598,7 @@ describe("React webview", () => {
               workspace: "/workspace",
             },
             type: "state",
+            workspaceActivity: {},
           } satisfies HostToWebviewMessage,
         })
       );
@@ -670,6 +720,7 @@ describe("React webview", () => {
               workspace: "/workspace",
             },
             type: "state",
+            workspaceActivity: {},
           } satisfies HostToWebviewMessage,
         })
       );
@@ -783,6 +834,7 @@ describe("React webview", () => {
         workspace: "/workspace",
       },
       type: "state",
+      workspaceActivity: {},
     };
     await act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
@@ -869,6 +921,7 @@ describe("React webview", () => {
         workspace: "/workspace",
       },
       type: "state",
+      workspaceActivity: {},
     };
     await act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
@@ -978,6 +1031,7 @@ describe("React webview", () => {
         workspace: "/workspace",
       },
       type: "state",
+      workspaceActivity: {},
     };
     await act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
