@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import {
   addOnInstallCommand,
+  missingRecommendedAddons,
   missingSoftware,
   nextSoftwareRequirement,
   RECOMMENDED_ADDONS,
@@ -34,6 +35,24 @@ describe("setup", () => {
     expect(addOnInstallCommand(["unknown", "ponytail", "todo"])).toBe(
       "pi install npm:@juicesharp/rpiv-todo && pi install git:github.com/DietrichGebert/ponytail"
     );
+  });
+
+  test("does not recommend packages already installed by Pi", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "mischief-addons-"));
+    directories.push(directory);
+    writeFileSync(
+      path.join(directory, "settings.json"),
+      JSON.stringify({
+        packages: [
+          "npm:@juicesharp/rpiv-todo",
+          "npm:pi-ask-user",
+          "git:github.com/DietrichGebert/ponytail",
+          "git:github.com/mattpocock/skills",
+        ],
+      })
+    );
+
+    expect(missingRecommendedAddons(directory)).toStrictEqual([]);
   });
 
   test("reports missing Git alongside the agent tools", () => {

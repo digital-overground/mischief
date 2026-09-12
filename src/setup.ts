@@ -1,4 +1,5 @@
-import { accessSync, constants, existsSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 
 import type { AgentLaunch } from "./threads/acp";
@@ -36,6 +37,37 @@ export const RECOMMENDED_ADDONS: SetupOption[] = [
     label: "Matt Pocock Skills",
   },
 ];
+
+export const missingRecommendedAddons = (
+  agentDir = process.env.PI_CODING_AGENT_DIR ??
+    path.join(homedir(), ".pi", "agent")
+): SetupOption[] => {
+  let packages: unknown[] = [];
+  try {
+    const settings = JSON.parse(
+      readFileSync(path.join(agentDir, "settings.json"), "utf-8")
+    ) as { packages?: unknown };
+    packages = Array.isArray(settings.packages) ? settings.packages : [];
+  } catch {
+    // Missing or invalid settings means no Pi packages are installed.
+  }
+  const installed = packages.flatMap((entry) => {
+    if (typeof entry === "string") {
+      return [entry];
+    }
+    if (entry && typeof entry === "object" && "source" in entry) {
+      const { source } = entry as { source?: unknown };
+      return typeof source === "string" ? [source] : [];
+    }
+    return [];
+  });
+  return RECOMMENDED_ADDONS.filter(({ id }) => {
+    const source = ADDON_SOURCES[id as keyof typeof ADDON_SOURCES];
+    return !installed.some(
+      (candidate) => candidate === source || candidate.startsWith(`${source}@`)
+    );
+  });
+};
 
 export const addOnInstallCommand = (selected: string[]): string | undefined => {
   const sources = RECOMMENDED_ADDONS.flatMap(({ id }) => {

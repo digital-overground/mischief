@@ -7,8 +7,8 @@ import * as vscode from "vscode";
 import { Projects } from "./projects/projects";
 import {
   addOnInstallCommand,
+  missingRecommendedAddons,
   nextSoftwareRequirement,
-  RECOMMENDED_ADDONS,
 } from "./setup";
 import type { SoftwareRequirement } from "./setup";
 import { acpConnectionFactory } from "./threads/acp";
@@ -86,13 +86,15 @@ const softwareSetup = (
           "The selected add-ons are installing in the Mischief Setup terminal. When it finishes, press Enter to continue.",
       };
     }
-    return storage.get<boolean>(ADDONS_OFFERED_KEY, false)
+    const addons = missingRecommendedAddons();
+    return storage.get<boolean>(ADDONS_OFFERED_KEY, false) ||
+      addons.length === 0
       ? undefined
       : {
           id: "addons",
           message:
             "Recommended Pi add-ons. Select what to install, then press Enter to continue.",
-          options: RECOMMENDED_ADDONS,
+          options: addons,
         };
   };
 
