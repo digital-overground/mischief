@@ -334,6 +334,7 @@ const ComposerView = ({
             className={`${index === contextIndex ? "selected " : ""}${typeof item === "string" ? "" : "command-suggestion"}`}
             role="option"
             aria-selected={index === contextIndex}
+            title={typeof item === "string" ? "Add context" : "Use command"}
             key={typeof item === "string" ? item : item.name}
             onMouseDown={(event) => {
               event.preventDefault();

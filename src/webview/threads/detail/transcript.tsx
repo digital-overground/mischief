@@ -95,6 +95,7 @@ const ToolItem = ({
       {item.locations?.map((location) => (
         <button
           className="link"
+          title="Open file"
           key={`${location.path}:${location.line ?? ""}`}
           onClick={() =>
             postMessage({
@@ -111,6 +112,7 @@ const ToolItem = ({
       {item.diffs?.map((diff) => (
         <button
           className="link"
+          title="Open diff"
           key={diff.path}
           onClick={() => postMessage({ path: diff.path, type: "openDiff" })}
         >

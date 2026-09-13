@@ -134,6 +134,7 @@ export const ThreadView = ({
           {selected?.status === "error" ? (
             <button
               className="action primary"
+              title="Retry"
               onClick={() => postMessage({ type: "retry" })}
             >
               Retry
@@ -142,6 +143,7 @@ export const ThreadView = ({
           {selected?.authentication ? (
             <button
               className="action primary"
+              title="Authenticate Agent"
               onClick={() => postMessage({ type: "authenticate" })}
             >
               {selected.authentication.label}

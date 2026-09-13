@@ -11,7 +11,7 @@ const ActionButton = ({
   type = "button",
   onClick,
 }: {
-  children: React.ReactNode;
+  children: string;
   primary?: boolean;
   type?: "button" | "submit";
   onClick?: React.MouseEventHandler<HTMLButtonElement>;
@@ -19,6 +19,7 @@ const ActionButton = ({
   <button
     className={`action${primary ? " primary" : ""}`}
     type={type}
+    title={children}
     onClick={onClick}
   >
     {children}

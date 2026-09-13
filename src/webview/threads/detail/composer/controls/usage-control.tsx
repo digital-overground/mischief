@@ -72,6 +72,7 @@ export const UsageControl = ({
           className="action primary"
           id="compact"
           type="button"
+          title="Compact context"
           onClick={() => {
             postMessage({ images: [], text: "/compact", type: "prompt" });
             setOpen(false);

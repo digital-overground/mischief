@@ -171,6 +171,47 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("shows a button tooltip after a short hover delay", async () => {
+    vi.useFakeTimers();
+    const unmount = await renderApp();
+    try {
+      const maximize =
+        document.querySelector<HTMLButtonElement>("#maximize-thread");
+      if (!maximize) {
+        throw new Error("Missing maximize button");
+      }
+
+      await act(() =>
+        maximize.dispatchEvent(
+          new MouseEvent("mouseover", {
+            bubbles: true,
+            clientX: 20,
+            clientY: 20,
+          })
+        )
+      );
+
+      expect(document.querySelector('[role="tooltip"]')).toBeNull();
+      await act(() => vi.advanceTimersByTime(350));
+      expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(
+        "Maximize Current Thread"
+      );
+      await act(() =>
+        maximize.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }))
+      );
+      expect(document.querySelector('[role="tooltip"]')).toBeNull();
+      await act(() => maximize.focus());
+      expect(document.querySelector('[role="tooltip"]')).toBeNull();
+      await act(() => vi.advanceTimersByTime(350));
+      expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(
+        "Maximize Current Thread"
+      );
+    } finally {
+      await unmount();
+      vi.useRealTimers();
+    }
+  });
+
   test("opens Settings and toggles Workspace window colors", async () => {
     const unmount = await renderApp();
     const dialog =
@@ -432,6 +473,7 @@ describe("React webview", () => {
       rename: document.querySelectorAll(
         '.workspace-node.current [aria-label="Rename Thread"]'
       ).length,
+      untitledButtons: document.querySelectorAll("button:not([title])").length,
     }).toStrictEqual({
       archiveIcons: 2,
       attention: 2,
@@ -442,6 +484,7 @@ describe("React webview", () => {
       newWorkspaceIcons: 1,
       remove: 2,
       rename: 2,
+      untitledButtons: 0,
     });
 
     const [, renameError] = document.querySelectorAll<HTMLButtonElement>(
@@ -833,10 +876,15 @@ describe("React webview", () => {
 
     await input("/");
     expect(
-      [...document.querySelectorAll("#context-suggestions button")].map(
-        (button) => button.textContent
-      )
-    ).toStrictEqual(["/review [branch]Review changes", "/resumeResume work"]);
+      [
+        ...document.querySelectorAll<HTMLButtonElement>(
+          "#context-suggestions button"
+        ),
+      ].map((button) => ({ text: button.textContent, title: button.title }))
+    ).toStrictEqual([
+      { text: "/review [branch]Review changes", title: "Use command" },
+      { text: "/resumeResume work", title: "Use command" },
+    ]);
 
     const [, resume] = document.querySelectorAll<HTMLButtonElement>(
       "#context-suggestions button"
@@ -1143,6 +1191,9 @@ describe("React webview", () => {
       ),
       icon: document.querySelector(".interaction-question .lucide"),
       question: document.querySelector(".interaction-question")?.textContent,
+      tooltips: [
+        ...document.querySelectorAll<HTMLButtonElement>("#interaction button"),
+      ].map((button) => button.title),
     }).toStrictEqual({
       context: "Context:Test prompt context.",
       descriptions: [
@@ -1151,6 +1202,7 @@ describe("React webview", () => {
       ],
       icon: expect.any(SVGElement),
       question: "Can Team membership change after a round starts?",
+      tooltips: ["Submit", "Cancel"],
     });
 
     postMessage.mockClear();

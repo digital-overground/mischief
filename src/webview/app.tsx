@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { postMessage } from "./bridge";
+import { ButtonTooltip } from "./button-tooltip";
 import { NavigatorPane } from "./navigator-pane";
 import { PaneLayout } from "./pane-layout";
 import type { HostToWebviewMessage, RenderedTranscriptItem } from "./protocol";
@@ -150,6 +151,7 @@ export const App = (): React.JSX.Element => {
           </span>
         </label>
       </dialog>
+      <ButtonTooltip />
     </>
   );
 };
