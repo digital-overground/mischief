@@ -6,7 +6,7 @@
 
 Give every Mischief window in one VS Code profile the same Project, Workspace, and Thread data without a broker process.
 
-Each window opens the same small file database beneath `ExtensionContext.globalStorageUri`. Any window may update Workspace visibility. The window using a Workspace writes its Threads and selected Thread; other windows poll and read.
+Each window opens the same small file database beneath `ExtensionContext.globalStorageUri`. Any window may update Workspace visibility or select a registered Thread for its owning Workspace. The window using a Workspace alone writes its Thread records; other windows poll and read.
 
 Agent processes still belong to the VS Code window where their Workspace is open. Closing that window stops its running turns.
 
@@ -114,7 +114,7 @@ interface SelectionRecord {
 }
 ```
 
-- Only the Instance whose current Workspace equals `workspace` may write the selection.
+- Any Instance may write the selection when the selected Thread is registered in that Workspace.
 - Removing the selected Thread writes its replacement ID or an explicitly empty selection.
 - A missing or invalid selected Thread falls back to the newest Thread.
 
@@ -174,8 +174,8 @@ Do not add `fs.watch`, sockets, a server, a daemon, a database dependency, or a 
 
 - An Instance may activate a Workspace when the user opens or adds it.
 - Any Instance may mark an active Workspace inactive.
-- Only the Instance with that Workspace currently open may create, update, or remove its Thread records or selected Thread.
-- Every other Instance only reads those records.
+- Only the Instance with that Workspace currently open may create, update, or remove its Thread records.
+- Any Instance may update a valid Workspace selection; every Instance observes it as last-write-wins navigation state.
 - A Project is shown whenever at least one of its Workspaces is active.
 - An inactive Workspace is not shown.
 
@@ -222,13 +222,13 @@ Remove the old aggregate Projects storage after migration is ready.
 
 ### Phase 4: Thread records, selections, and migration
 
-Move durable Thread registrations and per-Workspace selections behind the database. Preserve every existing durable field, selection behavior, ACP restoration, and the current Thread status values. Enforce that only the owning Workspace Instance writes them.
+Move durable Thread registrations and per-Workspace selections behind the database. Preserve every existing durable field, selection behavior, ACP restoration, and the current Thread status values. Enforce that only the owning Workspace Instance writes Thread records while any Instance may write a valid selection.
 
 ### Phase 5: UI polling
 
-Subscribe MischiefView to database changes and render the same active Workspaces and aggregate Thread activity in every open Instance. Keep `Workspace.current` local to each window and keep the Threads pane scoped to that current Workspace.
+Subscribe MischiefView to database changes and render the same active Workspaces and profile-wide Thread summaries in every open Instance. Keep `Workspace.current` local to each window and Agent/transcript ownership scoped to that current Workspace.
 
-Each Workspace row shows synchronized counts for idle, unread completed, running, and attention-needed (`waiting` or `error`) Threads. Serialize Workspace refreshes so overlapping polls cannot render an older snapshot last.
+Navigator nests Threads under visible Workspaces. Each Workspace row shows distinct waiting, error, and unread-completed indicators, and the Activity Bar badge counts all visible attention-needing Threads. Serialize Workspace refreshes so overlapping polls cannot render an older snapshot last.
 
 ### Phase 6: Final verification
 
@@ -240,8 +240,8 @@ Run focused tests after every slice, then `pnpm check`. Review the complete diff
 - Active Workspaces are shown; inactive Workspaces are hidden.
 - Projects are derived by grouping active Git Workspaces by canonical Project root.
 - Untracked Workspaces remain under `Ungrouped`.
-- Any Instance can mark an active Workspace inactive; only the current Workspace's Instance can update its Threads and selected Thread.
-- Thread status remains `idle`, `running`, `waiting`, or `error`, and every Workspace row renders its synchronized aggregate activity.
+- Any Instance can mark an active Workspace inactive or update a valid Workspace selection; only the current Workspace's Instance can mutate its Thread records.
+- Thread status remains `idle`, `running`, `waiting`, or `error`, and Navigator renders synchronized profile-wide summaries.
 - No Instance overwrites another Workspace's Threads.
 - ACP transcript history is not copied into the database.
 - Profile Database imports no `vscode` module.
