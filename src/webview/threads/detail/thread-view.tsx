@@ -92,9 +92,13 @@ export const ThreadView = ({
           title="Rename Thread"
           aria-label="Rename Thread"
           disabled={!selected?.id}
-          onClick={() => postMessage({ type: "renameThread" })}
+          onClick={() => {
+            if (selected?.id) {
+              postMessage({ id: selected.id, type: "renameThread" });
+            }
+          }}
         >
-          ✎
+          <SvgIcon className="thread-action-icon" kind="pencil" />
         </button>
       </header>
       <div

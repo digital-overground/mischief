@@ -1,5 +1,6 @@
 type IconKind =
   | "alert"
+  | "archive"
   | "bot"
   | "brain"
   | "chat"
@@ -11,7 +12,10 @@ type IconKind =
   | "rollback"
   | "circleCheck"
   | "folderGit2"
+  | "gitBranch"
+  | "pencil"
   | "plan"
+  | "plus"
   | "question"
   | "send"
   | "signpost"
@@ -27,6 +31,13 @@ const paths: Record<IconKind, React.ReactNode> = {
       <circle cx="12" cy="12" r="10" />
       <path d="M12 8v4" />
       <path d="M12 16h.01" />
+    </>
+  ),
+  archive: (
+    <>
+      <rect width="20" height="5" x="2" y="3" rx="1" />
+      <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
+      <path d="M10 12h4" />
     </>
   ),
   bot: (
@@ -81,6 +92,14 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M18 9a6 6 0 0 1-6 6 6 6 0 0 0-6-6" />
     </>
   ),
+  gitBranch: (
+    <>
+      <path d="M6 3v12" />
+      <circle cx="18" cy="6" r="3" />
+      <circle cx="6" cy="18" r="3" />
+      <path d="M18 9a9 9 0 0 1-9 9" />
+    </>
+  ),
   history: (
     <>
       <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
@@ -104,6 +123,12 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
     </>
   ),
+  pencil: (
+    <>
+      <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
+      <path d="m15 5 4 4" />
+    </>
+  ),
   plan: (
     <>
       <path d="M13 6h8" />
@@ -111,6 +136,12 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M13 18h8" />
       <path d="m3 17 2 2 4-4" />
       <rect width="6" height="6" x="3" y="4" rx="1" />
+    </>
+  ),
+  plus: (
+    <>
+      <path d="M5 12h14" />
+      <path d="M12 5v14" />
     </>
   ),
   question: (

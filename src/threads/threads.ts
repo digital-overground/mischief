@@ -184,13 +184,6 @@ export type ThreadIndicator =
   | "idle"
   | "error";
 
-export interface WorkspaceActivity {
-  active: number;
-  attention: number;
-  completed: number;
-  idle: number;
-}
-
 export interface TranscriptItem {
   id: string;
   kind:
@@ -217,6 +210,7 @@ export interface TranscriptItem {
 
 export interface ThreadSummary {
   id: string;
+  workspace: string;
   name: string;
   status: ThreadStatus;
   indicator: ThreadIndicator;
@@ -294,7 +288,6 @@ export interface ThreadDetail {
 }
 
 export interface ThreadsSnapshot {
-  attentionCount: number;
   workspace?: string;
   threads: ThreadSummary[];
   selected?: ThreadDetail;
@@ -375,8 +368,10 @@ export class Threads {
   private readonly database: ProfileDatabase;
   private stored: StoredThread[];
   private persistence = Promise.resolve();
+  private selectionSync = Promise.resolve();
   private readonly runtimes = new Map<string, Runtime>();
   private readonly listeners = new Set<(change?: ThreadsChange) => void>();
+  private readonly stopDatabaseListener: () => void;
   private workspace?: string;
   private selectedId?: string;
   private viewedId?: string;
@@ -389,6 +384,18 @@ export class Threads {
     this.createConnection = createConnection;
     this.database = database;
     this.stored = database.snapshot().threads.map(Threads.copyRecord);
+    this.stopDatabaseListener = database.onChange(() => {
+      const current = this.workspace;
+      this.stored = [
+        ...this.stored.filter((record) => record.workspace === current),
+        ...database
+          .snapshot()
+          .threads.filter((record) => record.workspace !== current)
+          .map(Threads.copyRecord),
+      ];
+      this.queueSelectionSync();
+      this.emit();
+    });
   }
 
   async openWorkspace(workspace: string): Promise<ThreadsSnapshot> {
@@ -424,26 +431,6 @@ export class Threads {
     return () => this.listeners.delete(listener);
   }
 
-  workspaceActivity(): Readonly<Record<string, WorkspaceActivity>> {
-    const activities: Record<string, WorkspaceActivity> = {};
-    for (const thread of this.database.snapshot().threads) {
-      const indicator = indicatorFor(thread.status, Boolean(thread.unread));
-      const activity = activities[thread.workspace] ?? {
-        active: 0,
-        attention: 0,
-        completed: 0,
-        idle: 0,
-      };
-      const status =
-        indicator === "waiting" || indicator === "error"
-          ? "attention"
-          : indicator;
-      activity[status] += 1;
-      activities[thread.workspace] = activity;
-    }
-    return activities;
-  }
-
   async newThread(): Promise<void> {
     if (!this.workspace) {
       return;
@@ -467,10 +454,15 @@ export class Threads {
     await this.createSession(record, this.runtime(record));
   }
 
-  async select(id: string): Promise<void> {
+  async select(id: string): Promise<string | undefined> {
+    await this.selectionSync;
     const record = this.findRecord(id);
-    if (!record || record.workspace !== this.workspace) {
-      return;
+    if (!record) {
+      return undefined;
+    }
+    if (record.workspace !== this.workspace) {
+      await this.selectThread(record.workspace, id);
+      return record.workspace;
     }
     this.selectedId = id;
     this.viewedId = id;
@@ -480,6 +472,7 @@ export class Threads {
     await this.selectThread(record.workspace, id);
     this.emit();
     await this.load(record);
+    return record.workspace;
   }
 
   async remove(id: string): Promise<void> {
@@ -946,22 +939,28 @@ export class Threads {
   }
 
   snapshot(): ThreadsSnapshot {
-    const threads = this.records().map((record) => {
-      const status = this.runtimes.get(record.id)?.status ?? record.status;
-      const indicator = indicatorFor(status, Boolean(record.unread));
-      return {
-        createdAt: record.createdAt,
-        id: record.id,
-        indicator,
-        name: record.name,
-        needsAttention: indicatorNeedsAttention(indicator),
-        status,
-        updatedAt: record.updatedAt,
-      };
-    });
+    const threads = this.stored
+      .toSorted(
+        (left, right) =>
+          left.workspace.localeCompare(right.workspace) ||
+          right.createdAt.localeCompare(left.createdAt)
+      )
+      .map((record) => {
+        const status = this.runtimes.get(record.id)?.status ?? record.status;
+        const indicator = indicatorFor(status, Boolean(record.unread));
+        return {
+          createdAt: record.createdAt,
+          id: record.id,
+          indicator,
+          name: record.name,
+          needsAttention: indicatorNeedsAttention(indicator),
+          status,
+          updatedAt: record.updatedAt,
+          workspace: record.workspace,
+        };
+      });
     const selected = this.selectedDetail();
     return {
-      attentionCount: threads.filter((thread) => thread.needsAttention).length,
       ...(this.workspace ? { workspace: this.workspace } : {}),
       ...(selected ? { selected } : {}),
       threads,
@@ -1022,8 +1021,10 @@ export class Threads {
   }
 
   async dispose(): Promise<void> {
+    this.stopDatabaseListener();
     await this.closeWorkspace();
     await this.persistence;
+    await this.selectionSync;
     this.listeners.clear();
   }
 
@@ -1265,6 +1266,43 @@ export class Threads {
           }
         : undefined
     );
+  }
+
+  private queueSelectionSync(): void {
+    const previous = this.selectionSync;
+    const operation = (async () => {
+      await previous;
+      const { workspace } = this;
+      if (!workspace) {
+        return;
+      }
+      const selected = this.database
+        .snapshot()
+        .selections.find(
+          (selection) => selection.workspace === workspace
+        )?.threadId;
+      if (!selected || selected === this.selectedId) {
+        return;
+      }
+      const record = this.findRecord(selected);
+      if (!record || record.workspace !== workspace) {
+        return;
+      }
+      this.selectedId = selected;
+      this.viewedId = selected;
+      this.draft = false;
+      record.unread = false;
+      await this.persist(record);
+      await this.load(record);
+      this.emit();
+    })();
+    this.selectionSync = (async () => {
+      try {
+        await operation;
+      } catch {
+        // Keep later selection updates available after one failed restore.
+      }
+    })();
   }
 
   private records(): StoredThread[] {

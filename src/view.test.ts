@@ -108,11 +108,9 @@ describe("view provider", () => {
       ),
       prompt: vi.fn<() => Promise<void>>(() => Promise.resolve()),
       snapshot: () => ({
-        attentionCount: 0,
         threads: [],
         ...(active ? { workspace: active } : {}),
       }),
-      workspaceActivity: () => ({}),
     };
     const storage = {
       get: () => pending,
@@ -170,7 +168,7 @@ describe("view provider", () => {
         promptStarted.resolve();
         return promptFinished.promise;
       }),
-      snapshot: () => ({ attentionCount: 0, threads: [] }),
+      snapshot: () => ({ threads: [] }),
     };
     const provider = new MischiefView(
       {
@@ -369,8 +367,7 @@ describe("view provider", () => {
       projects as never,
       {
         onChange: vi.fn<() => void>(),
-        snapshot: () => ({ attentionCount: 0, threads: [] }),
-        workspaceActivity: () => ({}),
+        snapshot: () => ({ threads: [] }),
       } as never,
       { fsPath: process.cwd() } as never,
       storage as never,
@@ -568,8 +565,7 @@ describe("view provider", () => {
       } as never,
       {
         onChange: vi.fn<() => void>(),
-        snapshot: () => ({ attentionCount: 0, threads: [] }),
-        workspaceActivity: () => ({}),
+        snapshot: () => ({ threads: [] }),
       } as never,
       { fsPath: process.cwd() } as never,
       { get: (_key: string, fallback: unknown) => fallback } as never,
@@ -695,8 +691,7 @@ describe("view provider", () => {
         } as never,
         {
           onChange: vi.fn<() => void>(),
-          snapshot: () => ({ attentionCount: 0, threads: [] }),
-          workspaceActivity: () => ({}),
+          snapshot: () => ({ threads: [] }),
         } as never,
         { fsPath: process.cwd() } as never,
         { get: (_key: string, fallback: unknown) => fallback } as never,
@@ -795,6 +790,122 @@ describe("view provider", () => {
     expect(prompt).toHaveBeenCalledExactlyOnceWith("Read issue");
   });
 
+  test("opens the owning Workspace only after a remote Thread selection", async () => {
+    vscode.executeCommand.mockClear();
+    const select = vi
+      .fn<(id: string) => Promise<string | undefined>>()
+      .mockResolvedValueOnce("/current")
+      .mockResolvedValueOnce("/remote");
+    const threads = {
+      onChange: vi.fn<() => void>(),
+      openWorkspace: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+      select,
+      snapshot: () => ({ threads: [], workspace: "/current" }),
+    };
+    const provider = new MischiefView(
+      {
+        refresh: () =>
+          Promise.resolve({
+            projects: [],
+            ungrouped: [
+              {
+                ahead: 0,
+                behind: 0,
+                changes: 0,
+                current: true,
+                linked: false,
+                name: "current",
+                path: "/current",
+              },
+              {
+                ahead: 0,
+                behind: 0,
+                changes: 0,
+                current: false,
+                linked: false,
+                name: "remote",
+                path: "/remote",
+              },
+            ],
+          }),
+      } as never,
+      threads as never,
+      { fsPath: process.cwd() } as never,
+      { get: (_key: string, fallback: unknown) => fallback } as never,
+      profileDatabase() as never
+    );
+    await provider.initialize();
+    const handle = (
+      provider as unknown as {
+        handleThreadMessage: (
+          data: Record<string, unknown>
+        ) => Promise<boolean>;
+      }
+    ).handleThreadMessage.bind(provider);
+
+    await handle({ id: "local-thread", type: "selectThread" });
+    await handle({ id: "remote-thread", type: "selectThread" });
+
+    expect(select.mock.calls).toStrictEqual([
+      ["local-thread"],
+      ["remote-thread"],
+    ]);
+    expect(vscode.executeCommand).toHaveBeenCalledExactlyOnceWith(
+      "vscode.openFolder",
+      { fsPath: "/remote" },
+      { forceNewWindow: true }
+    );
+  });
+
+  test("renames the clicked Thread instead of the selected Thread", async () => {
+    vscode.showInputBox.mockReset();
+    vscode.showInputBox.mockResolvedValue("Renamed Background");
+    const rename = vi.fn<(id: string, name: string) => Promise<void>>(() =>
+      Promise.resolve()
+    );
+    const provider = new MischiefView(
+      {} as never,
+      {
+        onChange: vi.fn<() => void>(),
+        rename,
+        snapshot: () => ({
+          selected: { id: "selected", name: "Selected" },
+          threads: [
+            { id: "selected", name: "Selected" },
+            { id: "background", name: "Background" },
+          ],
+        }),
+      } as never,
+      { fsPath: process.cwd() } as never,
+      {} as never,
+      profileDatabase() as never
+    );
+    const handled = await (
+      provider as unknown as {
+        handleThreadMessage: (
+          data: Record<string, unknown>
+        ) => Promise<boolean>;
+      }
+    ).handleThreadMessage({ id: "background", type: "renameThread" });
+
+    expect({
+      handled,
+      prompt: vscode.showInputBox.mock.calls,
+      rename: rename.mock.calls,
+    }).toStrictEqual({
+      handled: true,
+      prompt: [
+        [
+          expect.objectContaining({
+            title: "Rename Thread",
+            value: "Background",
+          }),
+        ],
+      ],
+      rename: [["background", "Renamed Background"]],
+    });
+  });
+
   test("static webview shell loads the React bundle", () => {
     const html = readFileSync("media/webview.html", "utf-8");
     const style = readFileSync("media/webview.css", "utf-8");
@@ -810,14 +921,20 @@ describe("view provider", () => {
     );
   });
 
-  test("keeps Project and Workspace action icons compact", () => {
+  test("keeps Navigator metadata and hover actions compact", () => {
     const style = readFileSync("media/webview.css", "utf-8");
 
     expect(style).toMatch(
-      /\.lucide\.workspace-spool \{[^}]*width: 14px;[^}]*height: 14px;[^}]*flex: none;/u
+      /\.project-action-icon \{[^}]*width: 14px;[^}]*height: 14px;/u
     );
     expect(style).toMatch(
-      /\.project-action-icon \{[^}]*width: 14px;[^}]*height: 14px;/u
+      /\.thread-action-icon \{[^}]*width: 14px;[^}]*height: 14px;/u
+    );
+    expect(style).toMatch(
+      /\.workspace-branch \{[^}]*margin-left: 10px;[\s\S]*\.thread-activity \{[^}]*gap: 6px;[^}]*padding-left: 0;[\s\S]*\.thread-activity::before \{[^}]*content: "·";/u
+    );
+    expect(style).toMatch(
+      /#navigator :is\(\.group-row, \.row\) > \.icon \{[^}]*opacity: 0;[\s\S]*#navigator :is\(\.group-row, \.row\):is\(:hover, :focus-within\) > \.icon \{[^}]*opacity: 1;/u
     );
   });
 
@@ -847,7 +964,6 @@ describe("view provider", () => {
         emit = listener;
       },
       snapshot: () => ({
-        attentionCount: 0,
         selected: {
           configOptions: [],
           drafts: [],
@@ -860,7 +976,6 @@ describe("view provider", () => {
         },
         threads: [],
       }),
-      workspaceActivity: () => ({}),
     };
     const provider = new MischiefView(
       {} as never,
@@ -904,7 +1019,7 @@ describe("view provider", () => {
     });
   });
 
-  test("loads static assets and bubbles Thread attention to the native view badge", async () => {
+  test("loads static assets and counts visible Thread attention in the native badge", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     const webview = {
       asWebviewUri: (uri: { fsPath: string }) => ({
@@ -916,61 +1031,58 @@ describe("view provider", () => {
       options: {},
       postMessage,
     };
-    const view = {
-      onDidDispose: vi.fn<() => void>(),
-      webview,
-    };
-    let attentionCount = 2;
+    const view = { onDidDispose: vi.fn<() => void>(), webview };
+    let needsAttention = true;
     let emit: (() => void) | undefined;
     const threads = {
       onChange: (listener: () => void) => {
         emit = listener;
       },
       snapshot: () => ({
-        attentionCount,
-        threads: [
-          {
-            createdAt: "2026-01-01T00:00:00.000Z",
-            id: "waiting",
-            indicator: "waiting",
-            name: "Needs input",
-            needsAttention: true,
-            status: "waiting",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          },
-          {
-            createdAt: "2026-01-01T00:00:00.000Z",
-            id: "completed",
-            indicator: "completed",
-            name: "Finished",
-            needsAttention: true,
-            status: "idle",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          },
-        ],
+        threads: ["waiting", "completed"].map((id) => ({
+          createdAt: "2026-01-01T00:00:00.000Z",
+          id,
+          indicator: id === "waiting" ? "waiting" : "completed",
+          name: id,
+          needsAttention,
+          status: id === "waiting" ? "waiting" : "idle",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          workspace: "/workspace",
+        })),
       }),
-      workspaceActivity: () => ({}),
     };
     const provider = new MischiefView(
-      {} as never,
-      threads as never,
       {
-        fsPath: process.cwd(),
+        refresh: () =>
+          Promise.resolve({
+            projects: [],
+            ungrouped: [
+              {
+                ahead: 0,
+                behind: 0,
+                changes: 0,
+                current: false,
+                linked: false,
+                name: "workspace",
+                path: "/workspace",
+              },
+            ],
+          }),
       } as never,
-      {} as never,
+      threads as never,
+      { fsPath: process.cwd() } as never,
+      { get: (_key: string, fallback: unknown) => fallback } as never,
       profileDatabase() as never
     );
-
+    await provider.initialize();
     await provider.resolveWebviewView(view as never);
 
     expect((view as { badge?: unknown }).badge).toStrictEqual({
       tooltip: "2 Threads need attention",
       value: 2,
     });
-
-    attentionCount = 0;
+    needsAttention = false;
     emit?.();
-
     expect((view as { badge?: unknown }).badge).toStrictEqual({
       tooltip: "",
       value: 0,
@@ -983,7 +1095,7 @@ describe("view provider", () => {
     }).toStrictEqual({ csp: true, placeholders: false, uris: true });
   });
 
-  test("posts synchronized Workspace and Thread activity after a database change", async () => {
+  test("posts synchronized Workspace and Thread summaries after a database change", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     let databaseChanged: (() => void) | undefined;
     let workspaces: unknown[] = [];
@@ -1001,35 +1113,33 @@ describe("view provider", () => {
         },
       ],
     };
-    const projects = {
-      refresh: vi.fn<() => Promise<typeof projectsSnapshot>>(() =>
-        Promise.resolve(projectsSnapshot)
-      ),
-    };
-    const threads = {
-      onChange: vi.fn<() => void>(),
-      snapshot: () => ({ attentionCount: 0, threads: [] }),
-      workspaceActivity: () => ({
-        "/remote": {
-          active: 1,
-          attention: 5,
-          completed: 2,
-          idle: 4,
-        },
-      }),
-    };
-    const database = {
-      onChange: (listener: () => void) => {
-        databaseChanged = listener;
-      },
-      snapshot: () => ({ workspaces }),
-    };
     const provider = new MischiefView(
-      projects as never,
-      threads as never,
+      { refresh: () => Promise.resolve(projectsSnapshot) } as never,
+      {
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({
+          threads: [
+            {
+              createdAt: "2026-01-01T00:00:00.000Z",
+              id: "remote-thread",
+              indicator: "waiting",
+              name: "Remote",
+              needsAttention: true,
+              status: "waiting",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+              workspace: "/remote",
+            },
+          ],
+        }),
+      } as never,
       { fsPath: process.cwd() } as never,
       {} as never,
-      database as never
+      {
+        onChange: (listener: () => void) => {
+          databaseChanged = listener;
+        },
+        snapshot: () => ({ workspaces }),
+      } as never
     );
     await provider.resolveWebviewView({
       onDidDispose: vi.fn<() => void>(),
@@ -1045,26 +1155,20 @@ describe("view provider", () => {
       },
     } as never);
     postMessage.mockClear();
-
     workspaces = [{ path: "/remote", status: "active" }];
     databaseChanged?.();
 
-    await vi.waitFor(() => {
+    await vi.waitFor(() =>
       expect(postMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           projects: projectsSnapshot,
+          threads: expect.objectContaining({
+            threads: [expect.objectContaining({ workspace: "/remote" })],
+          }),
           type: "state",
-          workspaceActivity: {
-            "/remote": {
-              active: 1,
-              attention: 5,
-              completed: 2,
-              idle: 4,
-            },
-          },
         })
-      );
-    });
+      )
+    );
   });
 
   test("persists Workspace color assignment from Settings", async () => {
@@ -1079,8 +1183,7 @@ describe("view provider", () => {
       {} as never,
       {
         onChange: vi.fn<() => void>(),
-        snapshot: () => ({ attentionCount: 0, threads: [] }),
-        workspaceActivity: () => ({}),
+        snapshot: () => ({ threads: [] }),
       } as never,
       { fsPath: process.cwd() } as never,
       {} as never,
@@ -1152,7 +1255,6 @@ describe("view provider", () => {
         },
         threads: [],
       }),
-      workspaceActivity: () => ({}),
     };
     const provider = new MischiefView(
       {} as never,

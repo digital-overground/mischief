@@ -545,14 +545,6 @@ export class MischiefView implements vscode.WebviewViewProvider {
       this.render();
       return true;
     }
-    if (data.type === "add") {
-      await this.addWorkspace();
-      return true;
-    }
-    if (data.type === "refresh") {
-      await this.refresh();
-      return true;
-    }
     if (
       data.type === "setAssignWorkspaceColors" &&
       typeof data.value === "boolean"
@@ -607,7 +599,11 @@ export class MischiefView implements vscode.WebviewViewProvider {
     data: Record<string, unknown>
   ): Promise<boolean> {
     if (data.type === "selectThread" && typeof data.id === "string") {
-      await this.threads.select(data.id);
+      const workspace = await this.threads.select(data.id);
+      const current = this.workspaces().find((candidate) => candidate.current);
+      if (workspace && workspace !== current?.path) {
+        await this.openWorkspace(workspace);
+      }
       return true;
     }
     if (data.type === "removeThread" && typeof data.id === "string") {
@@ -629,8 +625,8 @@ export class MischiefView implements vscode.WebviewViewProvider {
       }
       return true;
     }
-    if (data.type === "renameThread") {
-      await this.renameThread();
+    if (data.type === "renameThread" && typeof data.id === "string") {
+      await this.renameThread(data.id);
       return true;
     }
     if (data.type === "prompt" && typeof data.text === "string") {
@@ -800,19 +796,21 @@ export class MischiefView implements vscode.WebviewViewProvider {
     this.render();
   }
 
-  private async renameThread(): Promise<void> {
-    const { selected } = this.threads.snapshot();
-    if (!selected?.id) {
+  private async renameThread(id: string): Promise<void> {
+    const thread = this.threads
+      .snapshot()
+      .threads.find((candidate) => candidate.id === id);
+    if (!thread) {
       return;
     }
     const name = await vscode.window.showInputBox({
       title: "Rename Thread",
       validateInput: (value) =>
         value.trim() ? undefined : "Enter a Thread name",
-      value: selected.name,
+      value: thread.name,
     });
     if (name !== undefined) {
-      await this.threads.rename(selected.id, name);
+      await this.threads.rename(thread.id, name);
     }
   }
 
@@ -924,10 +922,16 @@ export class MischiefView implements vscode.WebviewViewProvider {
       .get<string>("fontFamily")
       ?.trim();
     const threads = this.threads.snapshot();
-    this.view.badge = threads.attentionCount
+    const visible = new Set(
+      this.workspaces().map((workspace) => workspace.path)
+    );
+    const attentionCount = threads.threads.filter(
+      (thread) => visible.has(thread.workspace) && thread.needsAttention
+    ).length;
+    this.view.badge = attentionCount
       ? {
-          tooltip: `${threads.attentionCount} Thread${threads.attentionCount === 1 ? "" : "s"} need attention`,
-          value: threads.attentionCount,
+          tooltip: `${attentionCount} Thread${attentionCount === 1 ? "" : "s"} need attention`,
+          value: attentionCount,
         }
       : { tooltip: "", value: 0 };
     if (threads.selected) {
@@ -957,7 +961,6 @@ export class MischiefView implements vscode.WebviewViewProvider {
         : {}),
       threads,
       type: "state",
-      workspaceActivity: this.threads.workspaceActivity(),
     } satisfies HostToWebviewMessage);
   }
 }

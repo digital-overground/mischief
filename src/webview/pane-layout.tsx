@@ -5,17 +5,13 @@ const MIN_PANE_HEIGHT = 72;
 const COLLAPSED_PANE_HEIGHT = 26;
 
 export const PaneLayout = ({
-  onExitThreadMaximize,
-  projects,
+  navigator,
   thread,
   threadMaximized,
-  threads,
 }: {
-  onExitThreadMaximize: () => void;
-  projects: ReactNode;
+  navigator: ReactNode;
   thread: ReactNode;
   threadMaximized: boolean;
-  threads: ReactNode;
 }): React.JSX.Element => {
   const root = useRef<HTMLElement>(null);
   const savedLayout = useRef<
@@ -49,10 +45,6 @@ export const PaneLayout = ({
     };
     const togglePane = (pane: HTMLElement): void => {
       const collapsed = !pane.classList.contains("collapsed");
-      if (threadMaximized && pane.id !== "thread" && !collapsed) {
-        savedLayout.current = null;
-        onExitThreadMaximize();
-      }
       const toggle = pane.querySelector<HTMLElement>(
         ":scope > header > .heading"
       );
@@ -209,27 +201,17 @@ export const PaneLayout = ({
     }
     rebalancePanes();
     return () => controller.abort();
-  }, [onExitThreadMaximize, threadMaximized]);
+  }, [threadMaximized]);
 
   return (
     <main ref={root}>
-      {projects}
+      {navigator}
       <div
         className="resizer"
-        data-before="projects"
-        data-after="threads"
-        role="separator"
-        aria-label="Resize Projects and Threads"
-        aria-orientation="horizontal"
-        tabIndex={0}
-      />
-      {threads}
-      <div
-        className="resizer"
-        data-before="threads"
+        data-before="navigator"
         data-after="thread"
         role="separator"
-        aria-label="Resize Threads and Thread"
+        aria-label="Resize Navigator and Thread"
         aria-orientation="horizontal"
         tabIndex={0}
       />

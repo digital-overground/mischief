@@ -12,6 +12,7 @@
 body {
   margin: 0;
   height: 100vh;
+  padding: 0;
   overflow: hidden;
   color: var(--vscode-foreground);
   background: var(--vscode-sideBar-background);
@@ -90,11 +91,12 @@ main > section {
   border-bottom: 1px solid
     var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
 }
-#projects {
-  flex: 0 1 30%;
+#navigator {
+  flex: 0 1 50%;
 }
-#threads {
-  flex: 0 1 20%;
+#navigator.collapsed,
+#navigator.collapsed + .resizer {
+  display: none;
 }
 #thread {
   min-width: 0;
@@ -219,6 +221,11 @@ select:disabled {
   padding: 2px 6px 2px 8px;
   font-weight: 600;
 }
+#navigator-list > .group-row:not(:first-child) {
+  margin-top: 8px;
+  border-top: 1px solid var(--vscode-panel-border);
+  padding-top: 10px;
+}
 .group-row .name,
 .workspace-label .name {
   overflow: hidden;
@@ -230,8 +237,29 @@ select:disabled {
   min-width: 0;
   flex: 1;
 }
-.row {
-  padding-left: 20px;
+#navigator :is(.group-row, .row) > .icon {
+  opacity: 0;
+}
+#navigator :is(.group-row, .row):is(:hover, :focus-within) > .icon {
+  opacity: 1;
+}
+.workspace-row {
+  padding-left: 10px;
+}
+.workspace-disclosure {
+  width: 20px;
+  flex: none;
+  color: var(--vscode-descriptionForeground);
+  font-size: 18px;
+  line-height: 1;
+  text-align: center;
+}
+.row-open:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+.thread-row {
+  padding-left: 32px;
 }
 .row.selected {
   background: var(--vscode-list-activeSelectionBackground);
@@ -251,7 +279,27 @@ select:disabled {
 }
 .workspace-label {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+}
+.workspace-branch {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 10px;
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--mischief-mono-font);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.thread-activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 0;
+}
+.thread-activity::before {
+  content: "·";
+  font-size: 9px;
 }
 .workspace-color {
   width: 8px;
@@ -272,40 +320,12 @@ select:disabled {
   color: inherit;
   opacity: 0.8;
 }
-.workspace-statuses,
-.workspace-status-count {
-  display: inline-flex;
-  align-items: center;
-}
 .workspace-statuses {
   flex: none;
-  gap: 6px;
-  padding-left: 5px;
-}
-.lucide.workspace-spool {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  color: var(--vscode-descriptionForeground);
-}
-.workspace-status-count {
-  min-width: 17px;
+  display: inline-flex;
+  align-items: center;
   gap: 3px;
-  font-family: var(--mischief-mono-font);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-.workspace-statuses .workspace-status-count .thread-status,
-.workspace-statuses .workspace-status-count .thread-status.active {
-  width: 7px;
-  height: 7px;
-  margin: 0;
-  border-radius: 50%;
-  background: currentColor;
-}
-.workspace-statuses .workspace-status-count .thread-status.active::before {
-  content: none;
-  animation: none;
+  padding-left: 5px;
 }
 .thread-status {
   flex: none;
@@ -371,20 +391,6 @@ select:disabled {
 .thread-status.idle {
   color: var(--vscode-descriptionForeground);
   opacity: 0.75;
-}
-.attention-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--vscode-descriptionForeground);
-  font-size: 10px;
-  font-weight: 400;
-}
-.attention-badge[hidden] {
-  display: none;
-}
-.attention-badge .thread-status {
-  transform: scale(0.8);
 }
 .empty {
   margin: 0;
@@ -626,6 +632,20 @@ select:disabled {
 .project-action-icon {
   width: 14px;
   height: 14px;
+}
+.workspace-branch-icon {
+  width: 11px;
+  max-width: 11px;
+  height: 11px;
+  max-height: 11px;
+  margin-right: 3px;
+  vertical-align: -1px;
+}
+.thread-action-icon {
+  width: 14px;
+  max-width: 14px;
+  height: 14px;
+  max-height: 14px;
 }
 #chat {
   flex: 1;

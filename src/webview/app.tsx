@@ -1,18 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { postMessage } from "./bridge";
+import { NavigatorPane } from "./navigator-pane";
 import { PaneLayout } from "./pane-layout";
-import { ProjectsPane } from "./projects/projects-pane";
 import type { HostToWebviewMessage, RenderedTranscriptItem } from "./protocol";
 import { ThreadView } from "./threads/detail/thread-view";
-import { ThreadsPane } from "./threads/threads-pane";
 
 const initialState: Extract<HostToWebviewMessage, { type: "state" }> = {
   font: "ui-monospace, monospace",
   projects: { projects: [], ungrouped: [] },
-  threads: { attentionCount: 0, threads: [] },
+  threads: { threads: [] },
   type: "state",
-  workspaceActivity: {},
 };
 
 export const App = (): React.JSX.Element => {
@@ -78,7 +76,6 @@ export const App = (): React.JSX.Element => {
       ].find((workspace) => workspace.current)?.path,
     [snapshot.projects]
   );
-  const exitThreadMaximize = useCallback(() => setThreadMaximized(false), []);
   useEffect(() => {
     if ((currentWorkspace ?? null) === previousWorkspace.current) {
       return;
@@ -91,15 +88,13 @@ export const App = (): React.JSX.Element => {
   return (
     <>
       <PaneLayout
-        onExitThreadMaximize={exitThreadMaximize}
-        projects={
-          <ProjectsPane
-            snapshot={snapshot.projects}
-            workspaceActivity={snapshot.workspaceActivity}
+        navigator={
+          <NavigatorPane
+            projects={snapshot.projects}
+            threads={snapshot.threads}
           />
         }
         threadMaximized={threadMaximized}
-        threads={<ThreadsPane snapshot={snapshot.threads} />}
         thread={
           <ThreadView
             contextItems={contextItems}

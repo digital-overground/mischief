@@ -65,7 +65,7 @@ describe(ProfileDatabase, () => {
     }
   });
 
-  test("an owning Instance shares read-only Thread and selection records", async () => {
+  test("any Instance may select a valid foreign Thread but cannot mutate it", async () => {
     vi.useFakeTimers();
     const profileDirectory = await mkdtemp(
       path.join(tmpdir(), "mischief-profile-database-")
@@ -121,7 +121,10 @@ describe(ProfileDatabase, () => {
           type: "selectThread",
           workspace: workspacePath,
         })
-      ).rejects.toThrow("owning Workspace");
+      ).resolves.toBeUndefined();
+      expect(reader.snapshot().selections).toStrictEqual([
+        { threadId: thread.id, workspace: workspacePath },
+      ]);
     } finally {
       await Promise.all([owner.dispose(), reader.dispose()]);
       await rm(profileDirectory, { force: true, recursive: true });

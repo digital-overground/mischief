@@ -80,11 +80,13 @@
     "commands": [
       {
         "command": "mischief.addWorkspace",
-        "title": "Mischief: Add Workspace…"
+        "title": "Mischief: Add Workspace…",
+        "icon": "$(add)"
       },
       {
         "command": "mischief.refresh",
-        "title": "Mischief: Refresh"
+        "title": "Mischief: Refresh",
+        "icon": "$(refresh)"
       },
       {
         "command": "mischief.newThread",
@@ -98,6 +100,16 @@
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "mischief.addWorkspace",
+          "when": "view == mischief.view",
+          "group": "navigation@1"
+        },
+        {
+          "command": "mischief.refresh",
+          "when": "view == mischief.view",
+          "group": "navigation@2"
+        },
         {
           "command": "mischief.settings",
           "when": "view == mischief.view",

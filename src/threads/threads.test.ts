@@ -35,6 +35,7 @@ const deferred = (): Deferred => {
 
 class FakeAgent {
   createCalls = 0;
+  loadCalls = 0;
   initialConfigOptions: ThreadConfigOption[] = [];
   failCreate = false;
   createError?: Error;
@@ -119,6 +120,7 @@ class FakeAgent {
         });
       },
       load: (sessionId) => {
+        this.loadCalls += 1;
         if (this.replayOnLoad) {
           handlers.update({
             kind: "user",
@@ -276,43 +278,94 @@ describe("threads module", () => {
     return threads;
   };
 
-  test("summarizes synchronized Thread activity by Workspace", async () => {
+  test("exposes profile-wide Thread summaries with owning Workspaces", async () => {
     const createdAt = "2026-09-11T12:00:00.000Z";
-    const statuses = [
-      { id: "10000000-0000-4000-8000-000000000001", status: "running" },
-      { id: "10000000-0000-4000-8000-000000000002", status: "waiting" },
-      { id: "10000000-0000-4000-8000-000000000003", status: "error" },
-      {
-        id: "10000000-0000-4000-8000-000000000004",
-        status: "idle",
-        unread: true,
+    await database.apply({
+      thread: {
+        createdAt,
+        id: "10000000-0000-4000-8000-000000000001",
+        name: "Waiting",
+        status: "waiting",
+        updatedAt: createdAt,
+        workspace: "/workspace",
       },
-      { id: "10000000-0000-4000-8000-000000000005", status: "idle" },
-    ] as const;
+      type: "putThread",
+    });
+    const threads = createThreads(new FakeAgent().factory);
+
+    expect(threads.snapshot().threads).toStrictEqual([
+      {
+        createdAt,
+        id: "10000000-0000-4000-8000-000000000001",
+        indicator: "waiting",
+        name: "Waiting",
+        needsAttention: true,
+        status: "waiting",
+        updatedAt: createdAt,
+        workspace: "/workspace",
+      },
+    ]);
+  });
+
+  test("remote selection is restored only by the owning Workspace", async () => {
+    const remoteDatabase = await ProfileDatabase.open({
+      currentWorkspace: "/remote",
+      instanceId: "00000000-0000-4000-8000-000000000002",
+      log: vi.fn<(message: string) => void>(),
+      profileDirectory,
+    });
+    const createdAt = "2026-09-11T12:00:00.000Z";
+    const firstId = "10000000-0000-4000-8000-000000000001";
+    const secondId = "10000000-0000-4000-8000-000000000002";
     await Promise.all(
-      statuses.map((status) =>
-        database.apply({
+      (
+        [
+          [firstId, "first-session"],
+          [secondId, "second-session"],
+        ] as const
+      ).map(([id, sessionId]) =>
+        remoteDatabase.apply({
           thread: {
-            ...status,
             createdAt,
-            name: status.id,
+            id,
+            name: sessionId,
+            sessionId,
+            status: "idle",
             updatedAt: createdAt,
-            workspace: "/workspace",
+            workspace: "/remote",
           },
           type: "putThread",
         })
       )
     );
-    const threads = createThreads(new FakeAgent().factory);
-
-    expect(threads.workspaceActivity()).toStrictEqual({
-      "/workspace": {
-        active: 1,
-        attention: 2,
-        completed: 1,
-        idle: 1,
-      },
+    await remoteDatabase.apply({
+      threadId: firstId,
+      type: "selectThread",
+      workspace: "/remote",
     });
+    await vi.waitFor(
+      () => expect(database.snapshot().threads).toHaveLength(2),
+      { timeout: 2000 }
+    );
+    const sourceAgent = new FakeAgent();
+    const ownerAgent = new FakeAgent();
+    const source = createThreads(sourceAgent.factory);
+    const owner = new Threads(remoteDatabase, ownerAgent.factory);
+    instances.push(owner);
+    await owner.openWorkspace("/remote");
+
+    await expect(source.select(secondId)).resolves.toBe("/remote");
+    await vi.waitFor(
+      () => {
+        expect(owner.snapshot().selected?.id).toBe(secondId);
+      },
+      { timeout: 2000 }
+    );
+
+    expect(sourceAgent.loadCalls).toBe(0);
+    expect(sourceAgent.createCalls).toBe(0);
+    expect(ownerAgent.loadCalls).toBe(2);
+    await remoteDatabase.dispose();
   });
 
   test("opening a Workspace clears stale live Thread statuses", async () => {
@@ -403,9 +456,8 @@ describe("threads module", () => {
     await threads.closeWorkspace();
     await prompting;
 
-    expect(threads.snapshot()).toStrictEqual({
-      attentionCount: 0,
-      threads: [],
+    expect(threads.snapshot()).toMatchObject({
+      threads: [{ status: "idle", workspace: "/workspace" }],
     });
   });
 
@@ -802,7 +854,6 @@ describe("threads module", () => {
 
     const interaction = threads.snapshot().selected?.interaction;
     expect(threads.snapshot()).toMatchObject({
-      attentionCount: 1,
       selected: {
         interaction: {
           kind: "permission",
@@ -831,7 +882,6 @@ describe("threads module", () => {
     expect(agent.permissionResponse).toStrictEqual({ optionId: "yes" });
     expect(database.snapshot().threads[0]?.status).toBe("idle");
     expect(threads.snapshot()).toMatchObject({
-      attentionCount: 0,
       selected: { status: "idle" },
       threads: [{ indicator: "idle", needsAttention: false, status: "idle" }],
     });
@@ -851,7 +901,6 @@ describe("threads module", () => {
     await firstPrompt;
 
     expect(threads.snapshot()).toMatchObject({
-      attentionCount: 1,
       threads: [
         { indicator: "idle", needsAttention: false },
         { id: firstId, indicator: "completed", needsAttention: true },
@@ -861,7 +910,6 @@ describe("threads module", () => {
     await threads.select(firstId ?? "");
 
     expect(threads.snapshot()).toMatchObject({
-      attentionCount: 0,
       threads: [
         { indicator: "idle", needsAttention: false },
         { id: firstId, indicator: "idle", needsAttention: false },

@@ -5,7 +5,6 @@ import type {
   ThreadInteractionResponse,
   ThreadsSnapshot,
   TranscriptItem,
-  WorkspaceActivity,
 } from "../threads/threads";
 
 export interface RenderedTranscriptItem extends TranscriptItem {
@@ -46,7 +45,6 @@ export type HostToWebviewMessage =
       projects: ProjectsSnapshot;
       setup?: RenderedSetupStep;
       threads: RenderedThreadsSnapshot;
-      workspaceActivity: Readonly<Record<string, WorkspaceActivity>>;
     }
   | {
       type: "transcript";
@@ -59,7 +57,7 @@ export type HostToWebviewMessage =
 
 export type WebviewToHostMessage =
   | {
-      type: "ready" | "add" | "refresh" | "contextItems" | "newThread";
+      type: "ready" | "contextItems" | "newThread";
     }
   | {
       type:
@@ -70,12 +68,16 @@ export type WebviewToHostMessage =
       path: string;
     }
   | {
-      type: "selectThread" | "removeThread" | "forkThread" | "rollbackThread";
+      type:
+        | "selectThread"
+        | "removeThread"
+        | "renameThread"
+        | "forkThread"
+        | "rollbackThread";
       id: string;
     }
   | {
       type:
-        | "renameThread"
         | "cancel"
         | "clearPlan"
         | "clearSteering"

@@ -25,7 +25,6 @@ const threadState = (id: string, drafts: string[]): HostToWebviewMessage => ({
   font: "Test Mono",
   projects: { projects: [], ungrouped: [] },
   threads: {
-    attentionCount: 0,
     selected: {
       commands: [],
       configOptions: [],
@@ -41,7 +40,6 @@ const threadState = (id: string, drafts: string[]): HostToWebviewMessage => ({
     workspace: "/workspace",
   },
   type: "state",
-  workspaceActivity: {},
 });
 
 const renderApp = async (): Promise<() => Promise<void>> => {
@@ -97,12 +95,10 @@ describe("React webview", () => {
               ],
             },
             threads: {
-              attentionCount: 0,
               threads: [],
               workspace: "/workspace",
             },
             type: "state",
-            workspaceActivity: {},
           },
         })
       );
@@ -142,87 +138,38 @@ describe("React webview", () => {
 
   test("maximizes the current Thread and restores the pane layout", async () => {
     const unmount = await renderApp();
-    const projects = document.querySelector<HTMLElement>("#projects");
-    const threads = document.querySelector<HTMLElement>("#threads");
+    const navigator = document.querySelector<HTMLElement>("#navigator");
     const thread = document.querySelector<HTMLElement>("#thread");
     const maximize =
       document.querySelector<HTMLButtonElement>("#maximize-thread");
-    if (!projects || !threads || !thread || !maximize) {
+    if (!navigator || !thread || !maximize) {
       throw new Error("Missing pane controls");
     }
-    projects.style.flexBasis = "140px";
-    threads.style.flexBasis = "90px";
+    expect(navigator.querySelector(":scope > header")).toBeNull();
+    navigator.style.flexBasis = "140px";
     const maximizeIcon = maximize.innerHTML;
 
     await act(() => maximize.click());
-
-    expect(maximize.innerHTML).not.toBe(maximizeIcon);
     expect({
+      iconChanged: maximize.innerHTML !== maximizeIcon,
       maximized: maximize.getAttribute("aria-pressed"),
-      projects: projects.classList.contains("collapsed"),
+      navigator: navigator.classList.contains("collapsed"),
       thread: thread.classList.contains("collapsed"),
-      threads: threads.classList.contains("collapsed"),
     }).toStrictEqual({
+      iconChanged: true,
       maximized: "true",
-      projects: true,
+      navigator: true,
       thread: false,
-      threads: true,
     });
 
     await act(() => maximize.click());
-
-    expect(maximize.innerHTML).toBe(maximizeIcon);
     expect({
+      basis: navigator.style.flexBasis,
+      collapsed: navigator.classList.contains("collapsed"),
       maximized: maximize.getAttribute("aria-pressed"),
-      projects: [
-        projects.classList.contains("collapsed"),
-        projects.style.flexBasis,
-      ],
-      threads: [
-        threads.classList.contains("collapsed"),
-        threads.style.flexBasis,
-      ],
-    }).toStrictEqual({
-      maximized: "false",
-      projects: [false, "140px"],
-      threads: [false, "90px"],
-    });
+    }).toStrictEqual({ basis: "140px", collapsed: false, maximized: "false" });
     await unmount();
   });
-
-  test.each(["projects", "threads"])(
-    "exits Thread maximize when the %s pane is expanded",
-    async (paneId) => {
-      const unmount = await renderApp();
-      const projects = document.querySelector<HTMLElement>("#projects");
-      const threads = document.querySelector<HTMLElement>("#threads");
-      const heading = document.querySelector<HTMLElement>(
-        `#${paneId} > header > .heading`
-      );
-      const maximize =
-        document.querySelector<HTMLButtonElement>("#maximize-thread");
-      if (!projects || !threads || !heading || !maximize) {
-        throw new Error("Missing pane controls");
-      }
-
-      await act(() => maximize.click());
-      await act(() => heading.click());
-
-      expect(maximize.getAttribute("aria-pressed")).toBe("false");
-      expect(document.querySelector(`#${paneId}`)?.classList).not.toContain(
-        "collapsed"
-      );
-
-      await act(() => maximize.click());
-
-      expect({
-        maximized: maximize.getAttribute("aria-pressed"),
-        projects: projects.classList.contains("collapsed"),
-        threads: threads.classList.contains("collapsed"),
-      }).toStrictEqual({ maximized: "true", projects: true, threads: true });
-      await unmount();
-    }
-  );
 
   test("opens Settings and toggles Workspace window colors", async () => {
     const unmount = await renderApp();
@@ -292,9 +239,8 @@ describe("React webview", () => {
               projects: [{ name: "project", root: "/project", workspaces: [] }],
               ungrouped: [],
             },
-            threads: { attentionCount: 0, threads: [] },
+            threads: { threads: [] },
             type: "state",
-            workspaceActivity: {},
           } satisfies HostToWebviewMessage,
         })
       );
@@ -324,7 +270,7 @@ describe("React webview", () => {
     await unmount();
   });
 
-  test("shows each Workspace color and synchronized activity, then routes actions", async () => {
+  test("renders nested Navigator controls and attention", async () => {
     const unmount = await renderApp();
     await act(() => {
       window.dispatchEvent(
@@ -345,83 +291,233 @@ describe("React webview", () => {
                       color: "#0e1c14",
                       current: true,
                       linked: true,
-                      name: "project-feature",
-                      path: "/worktrees/project-feature",
+                      name: "current",
+                      path: "/current",
+                    },
+                    {
+                      ahead: 0,
+                      behind: 0,
+                      branch: "main",
+                      changes: 0,
+                      current: false,
+                      linked: true,
+                      name: "remote",
+                      path: "/remote",
                     },
                   ],
                 },
               ],
               ungrouped: [],
             },
-            threads: { attentionCount: 0, threads: [] },
-            type: "state",
-            workspaceActivity: {
-              "/worktrees/project-feature": {
-                active: 1,
-                attention: 8,
-                completed: 2,
-                idle: 4,
+            threads: {
+              selected: {
+                commands: [],
+                configOptions: [],
+                drafts: [],
+                id: "current-thread",
+                items: [],
+                name: "Current",
+                status: "idle",
+                steering: [],
+                streaming: false,
               },
+              threads: [
+                {
+                  createdAt: "2026-01-02T00:00:00Z",
+                  id: "current-thread",
+                  indicator: "waiting",
+                  name: "Current",
+                  needsAttention: true,
+                  status: "waiting",
+                  updatedAt: "2026-01-02T00:00:00Z",
+                  workspace: "/current",
+                },
+                {
+                  createdAt: "2026-01-01T00:00:00Z",
+                  id: "error-thread",
+                  indicator: "error",
+                  name: "Error",
+                  needsAttention: true,
+                  status: "error",
+                  updatedAt: "2026-01-01T00:00:00Z",
+                  workspace: "/current",
+                },
+                {
+                  createdAt: "2026-01-03T00:00:00Z",
+                  id: "remote-thread",
+                  indicator: "completed",
+                  name: "Remote",
+                  needsAttention: true,
+                  status: "idle",
+                  updatedAt: "2026-01-03T00:00:00Z",
+                  workspace: "/remote",
+                },
+              ],
+              workspace: "/current",
             },
+            type: "state",
           } satisfies HostToWebviewMessage,
         })
       );
     });
-    const dot = document.querySelector<HTMLElement>(".workspace-color");
-    const create = document.querySelector<HTMLButtonElement>(
-      '[aria-label="New Workspace"]'
-    );
-    const close = document.querySelector<HTMLButtonElement>(
-      '[aria-label="Close Workspace"]'
-    );
-    const spool = document.querySelector<HTMLElement>(".workspace-spool");
-    const statuses = [
-      ...document.querySelectorAll<HTMLElement>(".workspace-status-count"),
-    ].map((status) => status.getAttribute("aria-label"));
-    if (!dot || !create || !close || !spool) {
-      throw new Error("Missing Workspace controls");
-    }
-    postMessage.mockClear();
 
-    await act(() => {
-      create.click();
-      close.click();
-    });
-
-    expect({
-      fill: dot.style.backgroundColor,
-      message: postMessage.mock.calls,
-      meta: document.querySelector("#project-list .meta")?.textContent,
-      newThread: document.querySelector(
-        '#project-list [aria-label="New Thread"]'
-      ),
-      project: document.querySelector("#project-list .group-row .name")
-        ?.textContent,
-      ring: dot.style.boxShadow,
-      statuses,
-      workspace: document.querySelector(".workspace-label .name")?.textContent,
-    }).toStrictEqual({
-      fill: "rgb(14, 28, 20)",
-      message: [
-        [{ path: "/project", type: "newWorkspace" }],
-        [
+    expect(
+      [...document.querySelectorAll(".workspace-node")].map((node) => ({
+        branch: node.querySelector(".workspace-branch")?.textContent,
+        current: node.classList.contains("current"),
+        expanded: node
+          .querySelector(".workspace-toggle")
+          ?.getAttribute("aria-expanded"),
+        headerSelected: node
+          .querySelector(".workspace-row")
+          ?.classList.contains("selected"),
+        threads: [...node.querySelectorAll(".thread-row")].map((thread) => ({
+          activity: thread.querySelector(".thread-activity")?.textContent,
+          name: thread.querySelector(".name")?.textContent,
+          selected: thread.classList.contains("selected"),
+        })),
+      }))
+    ).toStrictEqual([
+      {
+        branch: "feature/ui",
+        current: true,
+        expanded: "true",
+        headerSelected: false,
+        threads: [
           {
-            path: "/worktrees/project-feature",
-            type: "deactivateWorkspace",
+            activity: expect.stringMatching(/^(?:now|\d+(?:min|h|d))$/u),
+            name: "Current",
+            selected: true,
+          },
+          {
+            activity: expect.stringMatching(/^(?:now|\d+(?:min|h|d))$/u),
+            name: "Error",
+            selected: false,
           },
         ],
-      ],
-      meta: "feature/ui  worktree  ✎2  ↑1  ↓3",
-      newThread: null,
-      project: "project",
-      ring: "0 0 0 1px #50a072",
-      statuses: [
-        "Idle Threads: 4",
-        "Completed Threads: 2",
-        "Running Threads: 1",
-        "Waiting or error Threads: 8",
-      ],
-      workspace: "project-feature",
+      },
+      {
+        branch: "main",
+        current: false,
+        expanded: "false",
+        headerSelected: false,
+        threads: [],
+      },
+    ]);
+    expect({
+      archiveIcons: document.querySelectorAll(
+        '.workspace-node.current [aria-label="Remove Thread"] .thread-action-icon'
+      ).length,
+      attention: document.querySelectorAll(
+        ".workspace-node.current .workspace-statuses .thread-status"
+      ).length,
+      branchIcons: document.querySelectorAll(".workspace-branch-icon").length,
+      closeIcons: document.querySelectorAll(
+        '[aria-label="Close Workspace"] .thread-action-icon'
+      ).length,
+      newThread: document.querySelectorAll(
+        '.workspace-node.current [aria-label="New Thread"]'
+      ).length,
+      newThreadMatchesFooter:
+        document.querySelector(
+          '.workspace-node.current [aria-label="New Thread"] svg'
+        )?.innerHTML ===
+        document.querySelector("#footer-new-thread svg")?.innerHTML,
+      newWorkspaceIcons: document.querySelectorAll(
+        '[aria-label="New Workspace"] .thread-action-icon'
+      ).length,
+      remove: document.querySelectorAll(
+        '.workspace-node.current [aria-label="Remove Thread"]'
+      ).length,
+      rename: document.querySelectorAll(
+        '.workspace-node.current [aria-label="Rename Thread"]'
+      ).length,
+    }).toStrictEqual({
+      archiveIcons: 2,
+      attention: 2,
+      branchIcons: 2,
+      closeIcons: 2,
+      newThread: 1,
+      newThreadMatchesFooter: true,
+      newWorkspaceIcons: 1,
+      remove: 2,
+      rename: 2,
+    });
+
+    const [, renameError] = document.querySelectorAll<HTMLButtonElement>(
+      '.workspace-node.current [aria-label="Rename Thread"]'
+    );
+    if (!renameError) {
+      throw new Error("Missing Thread rename control");
+    }
+    postMessage.mockClear();
+    await act(() => renameError.click());
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({
+      id: "error-thread",
+      type: "renameThread",
+    });
+
+    const [currentToggle, remoteToggle] =
+      document.querySelectorAll<HTMLButtonElement>(".workspace-toggle");
+    if (!(currentToggle && remoteToggle)) {
+      throw new Error("Missing Workspace toggles");
+    }
+    await act(() => currentToggle.click());
+    const collapsed = {
+      expanded: currentToggle.getAttribute("aria-expanded"),
+      headerSelected: document
+        .querySelector(".workspace-node.current .workspace-row")
+        ?.classList.contains("selected"),
+      selectedThread: document.querySelector(
+        ".workspace-node.current .thread-row.selected"
+      ),
+    };
+    await act(() => currentToggle.click());
+    const reexpanded = {
+      expanded: currentToggle.getAttribute("aria-expanded"),
+      headerSelected: document
+        .querySelector(".workspace-node.current .workspace-row")
+        ?.classList.contains("selected"),
+      selectedThread: document.querySelector(
+        ".workspace-node.current .thread-row.selected .name"
+      )?.textContent,
+    };
+    await act(() => remoteToggle.click());
+    const toggleMessages = [...postMessage.mock.calls];
+    const remoteThread = document.querySelector<HTMLButtonElement>(
+      ".workspace-node:not(.current) .thread-row .row-open"
+    );
+    if (!remoteThread) {
+      throw new Error("Missing remote Thread");
+    }
+    postMessage.mockClear();
+    await act(() => remoteThread.click());
+    expect({
+      collapsed,
+      reexpanded,
+      remoteMessage: postMessage.mock.calls,
+      remoteRemove: document.querySelector(
+        '.workspace-node:not(.current) [aria-label="Remove Thread"]'
+      ),
+      remoteRename: document.querySelector(
+        '.workspace-node:not(.current) [aria-label="Rename Thread"]'
+      ),
+      toggleMessages,
+    }).toStrictEqual({
+      collapsed: {
+        expanded: "false",
+        headerSelected: true,
+        selectedThread: null,
+      },
+      reexpanded: {
+        expanded: "true",
+        headerSelected: false,
+        selectedThread: "Current",
+      },
+      remoteMessage: [[{ id: "remote-thread", type: "selectThread" }]],
+      remoteRemove: null,
+      remoteRename: null,
+      toggleMessages: [[{ id: "error-thread", type: "renameThread" }]],
     });
     await unmount();
   });
@@ -445,7 +541,6 @@ describe("React webview", () => {
         ],
       },
       threads: {
-        attentionCount: 0,
         selected: {
           commands: [],
           configOptions: [],
@@ -468,7 +563,6 @@ describe("React webview", () => {
         workspace: "/workspace",
       },
       type: "state",
-      workspaceActivity: {},
     };
     await act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
@@ -582,7 +676,6 @@ describe("React webview", () => {
             font: "Test Mono",
             projects: { projects: [], ungrouped: [] },
             threads: {
-              attentionCount: 0,
               selected: {
                 commands: [],
                 configOptions: [],
@@ -598,7 +691,6 @@ describe("React webview", () => {
               workspace: "/workspace",
             },
             type: "state",
-            workspaceActivity: {},
           } satisfies HostToWebviewMessage,
         })
       );
@@ -697,7 +789,6 @@ describe("React webview", () => {
             font: "Test Mono",
             projects: { projects: [], ungrouped: [] },
             threads: {
-              attentionCount: 0,
               selected: {
                 commands: [
                   {
@@ -720,7 +811,6 @@ describe("React webview", () => {
               workspace: "/workspace",
             },
             type: "state",
-            workspaceActivity: {},
           } satisfies HostToWebviewMessage,
         })
       );
@@ -818,7 +908,6 @@ describe("React webview", () => {
       font: "Test Mono",
       projects: { projects: [], ungrouped: [] },
       threads: {
-        attentionCount: 0,
         selected: {
           commands: [],
           configOptions: [model],
@@ -834,7 +923,6 @@ describe("React webview", () => {
         workspace: "/workspace",
       },
       type: "state",
-      workspaceActivity: {},
     };
     await act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
@@ -893,7 +981,6 @@ describe("React webview", () => {
       font: "Test Mono",
       projects: { projects: [], ungrouped: [] },
       threads: {
-        attentionCount: 0,
         selected: {
           commands: [],
           configOptions: [],
@@ -921,7 +1008,6 @@ describe("React webview", () => {
         workspace: "/workspace",
       },
       type: "state",
-      workspaceActivity: {},
     };
     await act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
@@ -980,7 +1066,6 @@ describe("React webview", () => {
       font: "Test Mono",
       projects: { projects: [], ungrouped: [] },
       threads: {
-        attentionCount: 1,
         selected: {
           commands: [],
           configOptions: [],
@@ -1031,7 +1116,6 @@ describe("React webview", () => {
         workspace: "/workspace",
       },
       type: "state",
-      workspaceActivity: {},
     };
     await act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));

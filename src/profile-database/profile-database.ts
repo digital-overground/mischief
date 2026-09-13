@@ -510,7 +510,9 @@ export class ProfileDatabase {
     if (change.threadId !== undefined && !UUID_PATTERN.test(change.threadId)) {
       throw new TypeError("Selected Thread ID is invalid");
     }
-    this.requireThreadOwner(change.workspace);
+    if (!change.threadId) {
+      this.requireThreadOwner(change.workspace);
+    }
     const thread = change.threadId
       ? this.threadRecords.get(change.threadId)
       : undefined;
