@@ -6,6 +6,7 @@ import {
   mkdtemp,
   realpath,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -52,13 +53,20 @@ const gitOutput = async (cwd: string, ...args: string[]): Promise<string> => {
   return stdout.trim();
 };
 
-const fakeGitHubCli = async (cwd: string, output: string): Promise<void> => {
+const unexpectedRepositoryChoice = (): Promise<never> =>
+  Promise.reject(new Error("repository should already be configured"));
+
+const fakeGitHubCli = async (
+  cwd: string,
+  output: string,
+  repository = "example/project"
+): Promise<void> => {
   const bin = await temporaryFolder();
   const executable = path.join(bin, "gh");
   await writeFile(
     executable,
     `#!/usr/bin/env node
-const expected = "issue list --state open --limit 1000 --json number,title,url";
+const expected = "issue list --repo " + process.env.MISCHIEF_EXPECTED_REPO + " --state open --limit 1000 --json number,title,url";
 if (process.argv.slice(2).join(" ") !== expected || process.cwd() !== process.env.MISCHIEF_EXPECTED_CWD) {
   process.stderr.write("unexpected gh invocation");
   process.exit(1);
@@ -73,6 +81,7 @@ process.stdout.write(process.env.MISCHIEF_GH_OUTPUT ?? "");
   await chmod(executable, 0o755);
   process.env.PATH = `${bin}${path.delimiter}${originalPath}`;
   process.env.MISCHIEF_EXPECTED_CWD = cwd;
+  process.env.MISCHIEF_EXPECTED_REPO = repository;
   process.env.MISCHIEF_GH_OUTPUT = output;
 };
 
@@ -88,6 +97,7 @@ describe("projects module", () => {
   afterEach(async () => {
     process.env.PATH = originalPath;
     delete process.env.MISCHIEF_EXPECTED_CWD;
+    delete process.env.MISCHIEF_EXPECTED_REPO;
     delete process.env.MISCHIEF_GH_ERROR;
     delete process.env.MISCHIEF_GH_OUTPUT;
     await Promise.all(
@@ -215,10 +225,17 @@ describe("projects module", () => {
     expect(snapshot.projects[0]?.workspaces).toHaveLength(1);
   });
 
-  test("lists validated open GitHub issues for a managed Project", async () => {
+  test("configures and lists validated open GitHub issues for a managed Project", async () => {
     const parent = await temporaryFolder();
     const root = path.join(parent, "mischief");
     await git(parent, "init", "--initial-branch=main", root);
+    await git(
+      root,
+      "remote",
+      "add",
+      "origin",
+      "git@github.com:owner/mischief.git"
+    );
     const projects = await createProjects();
     await projects.add(root);
     await fakeGitHubCli(
@@ -226,42 +243,67 @@ describe("projects module", () => {
       JSON.stringify([
         { number: 6, title: "First issue", url: "https://example.test/6" },
         { number: 9, title: "Second issue", url: "https://example.test/9" },
-      ])
+      ]),
+      "atomicobject/issues"
+    );
+    const chooseRepository = vi.fn<(repository: string) => Promise<string>>(
+      (repository) => {
+        expect(repository).toBe("owner/mischief");
+        return Promise.resolve("atomicobject/issues");
+      }
     );
 
-    await expect(projects.listOpenIssues(root)).resolves.toStrictEqual([
+    await expect(
+      projects.listOpenIssues(root, chooseRepository)
+    ).resolves.toStrictEqual([
       { number: 6, title: "First issue", url: "https://example.test/6" },
       { number: 9, title: "Second issue", url: "https://example.test/9" },
     ]);
+    await expect(
+      gitOutput(root, "config", "--local", "--get", "mischief.githubIssueRepo")
+    ).resolves.toBe("atomicobject/issues");
 
     process.env.MISCHIEF_GH_OUTPUT = "not JSON";
-    await expect(projects.listOpenIssues(root)).rejects.toThrow(
-      "issue list could not be read"
-    );
+    await expect(
+      projects.listOpenIssues(root, chooseRepository)
+    ).rejects.toThrow("issue list could not be read");
 
     process.env.MISCHIEF_GH_OUTPUT = JSON.stringify([
       { number: 0, title: "Broken", url: "http://example.test/0" },
     ]);
-    await expect(projects.listOpenIssues(root)).rejects.toThrow(
-      "invalid GitHub issue"
-    );
+    await expect(
+      projects.listOpenIssues(root, chooseRepository)
+    ).rejects.toThrow("invalid GitHub issue");
+    expect(chooseRepository).toHaveBeenCalledOnce();
   });
 
   test("explains missing and unauthenticated GitHub CLI failures", async () => {
     const parent = await temporaryFolder();
     const root = path.join(parent, "mischief");
     await git(parent, "init", "--initial-branch=main", root);
+    await git(
+      root,
+      "config",
+      "--local",
+      "mischief.githubIssueRepo",
+      "example/project"
+    );
     const projects = await createProjects();
     await projects.add(root);
-    process.env.PATH = await temporaryFolder();
+    const { stdout: gitExecutable } = await exec("which", ["git"]);
+    const gitOnlyPath = await temporaryFolder();
+    await symlink(gitExecutable.trim(), path.join(gitOnlyPath, "git"));
+    process.env.PATH = gitOnlyPath;
 
-    await expect(projects.listOpenIssues(root)).rejects.toThrow(
-      "GitHub CLI (gh) is required"
-    );
+    await expect(
+      projects.listOpenIssues(root, unexpectedRepositoryChoice)
+    ).rejects.toThrow("GitHub CLI (gh) is required");
 
     await fakeGitHubCli(await realpath(root), "[]");
     process.env.MISCHIEF_GH_ERROR = "authentication required for github.test";
-    await expect(projects.listOpenIssues(root)).rejects.toThrow(
+    await expect(
+      projects.listOpenIssues(root, unexpectedRepositoryChoice)
+    ).rejects.toThrow(
       /authentication required for github\.test[\s\S]*gh auth login[\s\S]*gh auth refresh/u
     );
   });

@@ -7,6 +7,7 @@ import * as vscode from "vscode";
 import type { ProfileDatabase } from "./profile-database/profile-database";
 import {
   issueWorkspaceName,
+  normalizeGitHubRepository,
   normalizeWorkspaceName,
 } from "./projects/projects";
 import type {
@@ -41,8 +42,8 @@ interface PendingWorkspaceStart {
 }
 const DEFAULT_MONO_FONT_FAMILY =
   '"Lilex", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
-const issuePrompt = (number: number): string =>
-  `start planning work on GitHub issue #${number}. Read it with gh issue view ${number} --comments.  return to the user once you've read the issue and give them a summary of the item`;
+const issuePrompt = (issue: GitHubIssue): string =>
+  `start planning work on GitHub issue #${issue.number}. Read it with gh issue view ${issue.url} --comments.  return to the user once you've read the issue and give them a summary of the item`;
 
 const workspaceColorsEnabled = (): boolean =>
   vscode.workspace
@@ -232,7 +233,26 @@ export class MischiefView implements vscode.WebviewViewProvider {
     if (!project) {
       return;
     }
-    const issues = await this.projects.listOpenIssues(project.root);
+    const issues = await this.projects.listOpenIssues(
+      project.root,
+      async (defaultRepository) => {
+        const repository = await vscode.window.showInputBox({
+          prompt: "Enter the GitHub issue repository as owner/repo",
+          title: `Issue Repository for ${project.name}`,
+          validateInput: (value) =>
+            normalizeGitHubRepository(value)
+              ? undefined
+              : "Enter a GitHub repository as owner/repo",
+          value: defaultRepository,
+        });
+        return repository === undefined
+          ? undefined
+          : normalizeGitHubRepository(repository);
+      }
+    );
+    if (!issues) {
+      return;
+    }
     if (!issues.length) {
       await vscode.window.showInformationMessage(
         `No open GitHub issues for ${project.name}.`
@@ -369,7 +389,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
         project,
         name,
         branch.name,
-        issuePrompt(issue.number)
+        issuePrompt(issue)
       );
     }
   }

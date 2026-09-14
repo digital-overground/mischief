@@ -4,6 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
+const ISSUE_REPOSITORY_KEY = "mischief.githubIssueRepo";
 
 export interface GitProject {
   root: string;
@@ -32,6 +33,61 @@ const run = async (cwd: string, ...args: string[]): Promise<string> => {
     encoding: "utf-8",
   });
   return stdout.trim();
+};
+
+export const normalizeGitHubRepository = (
+  value: string
+): string | undefined => {
+  const repository = value.trim();
+  return /^[\w.-]+\/[\w.-]+$/u.test(repository) ? repository : undefined;
+};
+
+export const getGitHubIssueRepository = async (
+  root: string
+): Promise<{ configured: boolean; repository: string }> => {
+  const configured = await run(
+    root,
+    "config",
+    "--local",
+    "--get",
+    ISSUE_REPOSITORY_KEY
+  ).catch(() => "");
+  if (configured) {
+    const repository = normalizeGitHubRepository(configured);
+    if (!repository) {
+      throw new Error(
+        `Git config ${ISSUE_REPOSITORY_KEY} must be an owner/repo`
+      );
+    }
+    return { configured: true, repository };
+  }
+
+  let remote: string;
+  try {
+    remote = await run(root, "remote", "get-url", "origin");
+  } catch (error) {
+    throw new Error(
+      "Could not determine the Project's main GitHub repository from origin",
+      { cause: error }
+    );
+  }
+  const repository = normalizeGitHubRepository(
+    /[/:](?<repository>[^/:\s]+\/[^/\s]+?)(?:\.git)?\/?$/u.exec(remote)?.groups
+      ?.repository ?? ""
+  );
+  if (!repository) {
+    throw new Error(
+      "Could not determine the Project's main GitHub repository from origin"
+    );
+  }
+  return { configured: false, repository };
+};
+
+export const setGitHubIssueRepository = async (
+  root: string,
+  repository: string
+): Promise<void> => {
+  await run(root, "config", "--local", ISSUE_REPOSITORY_KEY, repository);
 };
 
 export const sourceBranches = async (

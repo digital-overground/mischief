@@ -6,7 +6,8 @@ import type { GitHubIssue } from "./projects";
 const exec = promisify(execFile);
 
 export const listOpenGitHubIssues = async (
-  projectRoot: string
+  projectRoot: string,
+  repository: string
 ): Promise<GitHubIssue[]> => {
   let stdout: string;
   try {
@@ -15,6 +16,8 @@ export const listOpenGitHubIssues = async (
       [
         "issue",
         "list",
+        "--repo",
+        repository,
         "--state",
         "open",
         "--limit",

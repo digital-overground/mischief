@@ -147,7 +147,7 @@ describe("view provider", () => {
   test("consumes a seeded Workspace start before focusing and prompting one Thread", async () => {
     const folder = process.cwd();
     const prompt =
-      "start planning work on GitHub issue #123. Read it with gh issue view 123 --comments.  return to the user once you've read the issue and give them a summary of the item";
+      "start planning work on GitHub issue #123. Read it with gh issue view https://example.test/123 --comments.  return to the user once you've read the issue and give them a summary of the item";
     const events: string[] = [];
     const promptFinished = deferred();
     const promptStarted = deferred();
@@ -305,7 +305,10 @@ describe("view provider", () => {
     vscode.executeCommand.mockClear();
     vscode.openExternal.mockClear();
     vscode.showErrorMessage.mockClear();
-    vscode.showInputBox.mockResolvedValue("Edited Name");
+    vscode.showInputBox
+      .mockReset()
+      .mockResolvedValueOnce("atomicobject/gilligan-golf")
+      .mockResolvedValueOnce("Edited Name");
     const createWorkspace = vi.fn<() => Promise<string>>(() =>
       Promise.resolve("/worktree")
     );
@@ -342,14 +345,35 @@ describe("view provider", () => {
       ],
       ungrouped: [],
     };
+    const listOpenIssues = vi.fn<
+      (
+        root: string,
+        chooseRepository: (
+          defaultRepository: string
+        ) => Promise<string | undefined>
+      ) => Promise<unknown[] | undefined>
+    >(async (_root, chooseRepository) => {
+      const repository = await chooseRepository(
+        "Golf-With-GIlligan/gilligan-mono"
+      );
+      return repository
+        ? [
+            {
+              number: 6,
+              title: "First issue",
+              url: "https://example.test/6",
+            },
+            {
+              number: 9,
+              title: "Second issue",
+              url: "https://example.test/9",
+            },
+          ]
+        : undefined;
+    });
     const projects = {
       createWorkspace,
-      listOpenIssues: vi.fn<() => Promise<unknown[]>>(() =>
-        Promise.resolve([
-          { number: 6, title: "First issue", url: "https://example.test/6" },
-          { number: 9, title: "Second issue", url: "https://example.test/9" },
-        ])
-      ),
+      listOpenIssues,
       open: vi.fn<() => Promise<unknown>>(() =>
         Promise.resolve({
           projects: [{ name: "project", root: "/project", workspaces: [] }],
@@ -450,7 +474,10 @@ describe("view provider", () => {
     ];
     sourceAccept?.();
     await vi.waitFor(() => expect(createWorkspace).toHaveBeenCalledOnce());
-    const [nameOptions] = vscode.showInputBox.mock.calls[0] as [
+    const [repositoryOptions] = vscode.showInputBox.mock.calls[0] as [
+      { prompt: string; title: string; value: string },
+    ];
+    const [nameOptions] = vscode.showInputBox.mock.calls[1] as [
       { prompt: string; title: string; value: string },
     ];
 
@@ -464,6 +491,12 @@ describe("view provider", () => {
       },
       opened: vscode.executeCommand.mock.calls,
       pending: storage.update.mock.calls,
+      repository: {
+        prompt: repositoryOptions.prompt,
+        title: repositoryOptions.title,
+        value: repositoryOptions.value,
+      },
+      repositoryRequests: listOpenIssues.mock.calls.map(([root]) => root),
       sourceActive: sourcePicker.activeItems.map((item) => item.branch?.name),
       sourceItems: sourcePicker.items.map(({ description, kind, label }) => ({
         ...(description ? { description } : {}),
@@ -494,11 +527,17 @@ describe("view provider", () => {
             {
               path: "/worktree",
               prompt:
-                "start planning work on GitHub issue #9. Read it with gh issue view 9 --comments.  return to the user once you've read the issue and give them a summary of the item",
+                "start planning work on GitHub issue #9. Read it with gh issue view https://example.test/9 --comments.  return to the user once you've read the issue and give them a summary of the item",
             },
           ],
         ],
       ],
+      repository: {
+        prompt: "Enter the GitHub issue repository as owner/repo",
+        title: "Issue Repository for project",
+        value: "Golf-With-GIlligan/gilligan-mono",
+      },
+      repositoryRequests: ["/project"],
       sourceActive: ["main"],
       sourceItems: [
         { kind: -1, label: "Local" },
@@ -603,7 +642,7 @@ describe("view provider", () => {
     expect(createWorkspace).not.toHaveBeenCalled();
   });
 
-  test.each(["branches", "source", "name"])(
+  test.each(["repository", "branches", "source", "name"])(
     "stops at the %s step before creating a Workspace",
     async (step) => {
       let receive: ((message: unknown) => void) | undefined;
@@ -674,14 +713,26 @@ describe("view provider", () => {
       const provider = new MischiefView(
         {
           createWorkspace,
-          listOpenIssues: () =>
-            Promise.resolve([
+          listOpenIssues: async (
+            _root: string,
+            chooseRepository: (
+              defaultRepository: string
+            ) => Promise<string | undefined>
+          ): Promise<unknown[] | undefined> => {
+            if (
+              step === "repository" &&
+              !(await chooseRepository("owner/project"))
+            ) {
+              return undefined;
+            }
+            return [
               {
                 number: 7,
                 title: "Create Workspace",
                 url: "https://example.test/7",
               },
-            ]),
+            ];
+          },
           open: () =>
             Promise.resolve({
               projects: [{ name: "project", root: "/project", workspaces: [] }],
@@ -715,29 +766,36 @@ describe("view provider", () => {
       } as never);
 
       receive?.({ path: "/project", type: "openIssues" });
-      await vi.waitFor(() => expect(picker.show).toHaveBeenCalledOnce());
-      picker.selectedItems = [picker.items[0] as { issue: unknown }];
-      accept?.();
-      if (step !== "branches") {
+      if (step !== "repository") {
         await vi.waitFor(() => {
-          if (!sourcePicker.show.mock.calls.length) {
-            throw new Error("Source picker is not open");
+          if (!picker.show.mock.calls.length) {
+            throw new Error("Issue picker is not open");
           }
         });
-        if (step === "source") {
-          sourceHidden?.();
-        } else {
-          sourcePicker.selectedItems = [
-            sourcePicker.items.find((item) => item.branch) as {
-              branch: { name: string };
-            },
-          ];
-          sourceAccept?.();
+        picker.selectedItems = [picker.items[0] as { issue: unknown }];
+        accept?.();
+        if (step !== "branches") {
+          await vi.waitFor(() => {
+            if (!sourcePicker.show.mock.calls.length) {
+              throw new Error("Source picker is not open");
+            }
+          });
+          if (step === "source") {
+            sourceHidden?.();
+          } else {
+            sourcePicker.selectedItems = [
+              sourcePicker.items.find((item) => item.branch) as {
+                branch: { name: string };
+              },
+            ];
+            sourceAccept?.();
+          }
         }
       }
       await vi.waitFor(() =>
         expect({
           information: vscode.showInformationMessage.mock.calls,
+          issueShows: picker.show.mock.calls.length,
           namePrompts: vscode.showInputBox.mock.calls.length,
           sourceRequests: sourceBranches.mock.calls.length,
           sourceShows: sourcePicker.show.mock.calls.length,
@@ -745,9 +803,10 @@ describe("view provider", () => {
         }).toStrictEqual({
           information:
             step === "branches" ? [["No source branches for project."]] : [],
-          namePrompts: step === "name" ? 1 : 0,
-          sourceRequests: 1,
-          sourceShows: step === "branches" ? 0 : 1,
+          issueShows: step === "repository" ? 0 : 1,
+          namePrompts: step === "repository" || step === "name" ? 1 : 0,
+          sourceRequests: step === "repository" ? 0 : 1,
+          sourceShows: step === "repository" || step === "branches" ? 0 : 1,
           workspaceCreations: 0,
         })
       );

@@ -11,7 +11,7 @@ This Markdown plan is an explicitly requested, noncanonical working artifact. Re
 Let a user start issue work from a managed Git Project without leaving the Mischief workflow:
 
 1. click an icon-only button on a Project;
-2. choose one of that repository's open GitHub issues from a native VS Code picker;
+2. choose one of the configured issue repository's open GitHub issues from a native VS Code picker;
 3. optionally open the issue on GitHub;
 4. choose the source branch for the work;
 5. confirm or edit a generated branch/Workspace name;
@@ -24,7 +24,7 @@ The implementation should reuse the existing Project → Workspace → Thread fl
 
 ## Confirmed decisions
 
-- GitHub access uses the installed `gh` CLI, run with the Project root as its working directory. `gh` owns repository inference and authentication.
+- GitHub access uses the installed `gh` CLI, run with the Project root as its working directory. The first issue action asks for an `owner/repo`, defaults it from `origin`, and stores it as the local Git config value `mischief.githubIssueRepo`.
 - The issue picker uses VS Code's native `QuickPick`.
 - Only open issues are listed.
 - Pressing Enter on an issue starts work. An inline external-link button opens that issue on GitHub without starting work.
@@ -48,10 +48,12 @@ The button must have both `title="Open GitHub Issues"` and `aria-label="Open Git
 
 ### Issue picker
 
-On click, Mischief runs this command from the selected Project root:
+On the first click for a Project, Mischief prompts for the GitHub issue repository as `owner/repo`, defaulting to the repository parsed from `origin`. Cancellation stops without mutation. After a successful issue request, Mischief saves the choice in the Project's local Git config as `mischief.githubIssueRepo`; linked Workspaces share that config.
+
+Mischief then runs this command from the selected Project root:
 
 ```text
-gh issue list --state open --limit 1000 --json number,title,url
+gh issue list --repo <owner/repo> --state open --limit 1000 --json number,title,url
 ```
 
 After the command succeeds, Mischief opens a native VS Code picker titled `Open Issues · <project name>`. Preserve the order returned by `gh`.
@@ -158,10 +160,10 @@ interface PendingWorkspaceStart {
 }
 ```
 
-A normal New Workspace action stores only `path`. An issue Workspace stores `path` and this prompt, substituting the selected issue number:
+A normal New Workspace action stores only `path`. An issue Workspace stores `path` and this prompt, substituting the selected issue number and URL:
 
 ```text
-start planning work on GitHub issue #123. Read it with gh issue view 123 --comments.  return to the user once you've read the issue and give them a summary of the item
+start planning work on GitHub issue #123. Read it with gh issue view https://github.com/owner/repo/issues/123 --comments.  return to the user once you've read the issue and give them a summary of the item
 ```
 
 The destination extension host already identifies the current Workspace during initialization. When its canonical path matches a pending record, it must:
@@ -213,7 +215,10 @@ interface GitHubIssue {
 }
 
 issueWorkspaceName(issue: GitHubIssue): string
-listOpenIssues(projectRoot: string): Promise<GitHubIssue[]>
+listOpenIssues(
+  projectRoot: string,
+  chooseRepository: (defaultRepository: string) => Promise<string | undefined>
+): Promise<GitHubIssue[] | undefined>
 sourceBranches(projectRoot: string): Promise<GitSourceBranch[]>
 createWorkspace(
   projectRoot: string,
@@ -290,7 +295,7 @@ Run the focused Webview test. Confirm the existing New Workspace and Remove Memb
 
 Add a `Projects` interface test with fixed `gh` JSON containing two known issues. Call `Projects.listOpenIssues()` and expect exact `GitHubIssue` literals. Add one malformed fixture and expect a useful rejection.
 
-The external process fake must also reject unless arguments include `issue list`, `--state open`, and the expected Project working directory. This assertion protects the user-visible open-only and repository-scoping requirements at the external-system seam without testing the internal GitHub adapter directly.
+The external process fake must also reject unless arguments include `issue list`, `--repo <selected repository>`, `--state open`, and the expected Project working directory. This assertion protects the user-visible open-only and repository-scoping requirements at the external-system seam without testing the internal GitHub adapter directly.
 
 **Green**
 
@@ -447,7 +452,7 @@ Update the existing `MischiefView` startup test to store a pending record with a
 3. one Thread created; and
 4. the exact prompt sent once.
 
-Use the requested prompt as a literal expected value so punctuation and issue-number substitution cannot drift.
+Use the requested prompt as a literal expected value so punctuation, issue-number substitution, and repository targeting through the issue URL cannot drift.
 
 **Green**
 
@@ -522,9 +527,9 @@ Perform one Extension Development Host walkthrough:
 
 | File | Purpose |
 | --- | --- |
-| `src/projects/github.ts` | Internal `gh` invocation and issue-response validation |
-| `src/projects/git.ts` | Source refs, origin divergence, remote-only filtering, and source-based worktree creation |
-| `src/projects/projects.ts` | Managed-Project issue/branch interfaces, issue-name generation, and optional Workspace source ref |
+| `src/projects/github.ts` | Explicit-repository `gh` invocation and issue-response validation |
+| `src/projects/git.ts` | Issue-repository config, source refs, origin divergence, remote-only filtering, and source-based worktree creation |
+| `src/projects/projects.ts` | Managed-Project issue-repository, issue/branch, issue-name, and Workspace-creation behavior |
 | `src/projects/projects.test.ts` | Project-level issue behavior, name generation, real-Git branch inventory, and source-commit Workspace checks |
 | `src/webview/protocol.ts` | Typed `openIssues` Webview message |
 | `src/webview/projects/projects-pane.tsx` | Accessible icon-only Project action |
@@ -533,12 +538,12 @@ Perform one Extension Development Host walkthrough:
 | `src/view.test.ts` | VS Code workflow, cancellation, external opening, and destination startup checks |
 | `README.md` | `gh` prerequisite and issue workflow documentation |
 
-Do not add dependencies, configuration keys, commands, an `issues/` domain module, an embedded issue view, or a generic process abstraction.
+Do not add dependencies, commands, an `issues/` domain module, an embedded issue view, or a generic process abstraction.
 
 ## Definition of done
 
 - The Open GitHub Issues Project action is icon-only, keyboard reachable, and accessible by name.
-- It lists only open issues for the selected Project's inferred GitHub repository.
+- It asks once for the Project's issue repository, defaults to `origin`, and lists only that repository's open issues.
 - Any listed issue can be opened on GitHub without starting work.
 - Accepting an issue requires explicit source-branch and name confirmation before mutation.
 - Local branches precede remote-only origin branches and show accurate locally-known divergence.

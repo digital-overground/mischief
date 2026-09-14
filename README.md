@@ -37,6 +37,8 @@ Mischief then offers four recommended Pi add-ons: Todo, Ask User, Ponytail, and 
 
 Starting a Workspace from a GitHub issue requires the GitHub CLI (`gh`). Authenticate with `gh auth login`; private repositories require an authenticated CLI session. Use `gh auth refresh` when credentials expire.
 
+The first time you open issues for a Project, Mischief asks for the GitHub issue repository as `owner/repo`, defaulting to the Project's `origin`. The choice is stored in that Project's local Git config as `mischief.githubIssueRepo`, so linked Workspaces use it too. This allows a Project's code and issues to live in different repositories. Remove the key with `git config --local --unset mischief.githubIssueRepo` to choose again.
+
 ## Security and compatibility
 
 Mischief, MagPi ACP, and Pi run locally with the same filesystem and process access as the VS Code extension host. Review Agent permission requests before approving them. Mischief supports desktop VS Code with local or remote folders; untrusted and virtual Workspaces are not supported.

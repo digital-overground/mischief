@@ -8,11 +8,15 @@ import type {
 import {
   createGitWorkspace,
   discoverGitProject,
+  getGitHubIssueRepository,
+  normalizeGitHubRepository,
+  setGitHubIssueRepository,
   sourceBranches as listGitSourceBranches,
 } from "./git";
 import type { GitSourceBranch, GitWorkspace } from "./git";
 import { listOpenGitHubIssues } from "./github";
 
+export { normalizeGitHubRepository } from "./git";
 export type { GitSourceBranch } from "./git";
 
 export const normalizeWorkspaceName = (name: string): string =>
@@ -148,7 +152,10 @@ export class Projects {
     );
   }
 
-  async listOpenIssues(projectRoot: string): Promise<GitHubIssue[]> {
+  async listOpenIssues(
+    projectRoot: string,
+    chooseRepository: (defaultRepository: string) => Promise<string | undefined>
+  ): Promise<GitHubIssue[] | undefined> {
     const root = await realpath(projectRoot);
     if (
       !this.database
@@ -160,7 +167,22 @@ export class Projects {
     ) {
       throw new Error("Project is not in Mischief");
     }
-    return listOpenGitHubIssues(root);
+    const issueRepository = await getGitHubIssueRepository(root);
+    const selected = issueRepository.configured
+      ? issueRepository.repository
+      : await chooseRepository(issueRepository.repository);
+    if (selected === undefined) {
+      return undefined;
+    }
+    const repository = normalizeGitHubRepository(selected);
+    if (!repository) {
+      throw new Error("Enter a GitHub repository as owner/repo");
+    }
+    const issues = await listOpenGitHubIssues(root, repository);
+    if (!issueRepository.configured) {
+      await setGitHubIssueRepository(root, repository);
+    }
+    return issues;
   }
 
   async sourceBranches(projectRoot: string): Promise<GitSourceBranch[]> {
