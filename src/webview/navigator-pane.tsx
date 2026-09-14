@@ -115,16 +115,24 @@ const WorkspaceNode = ({
         className={`row workspace-row${workspace.current && !expanded ? " selected" : ""}`}
       >
         <button
-          className="row-open workspace-toggle"
+          className="workspace-disclosure workspace-toggle"
           type="button"
           title={`${expanded ? "Collapse" : "Expand"} ${workspace.name}`}
           aria-label={`${expanded ? "Collapse" : "Expand"} ${workspace.name}`}
           aria-expanded={expanded}
           onClick={onToggle}
         >
-          <span className="workspace-disclosure" aria-hidden="true">
-            {expanded ? "▾" : "▸"}
-          </span>
+          {expanded ? "▾" : "▸"}
+        </button>
+        <button
+          className="row-open workspace-open"
+          type="button"
+          title={workspace.path}
+          aria-label={`Open ${workspace.name}`}
+          onClick={() =>
+            postMessage({ path: workspace.path, type: "openWorkspace" })
+          }
+        >
           {workspace.color ? (
             <span
               aria-hidden="true"

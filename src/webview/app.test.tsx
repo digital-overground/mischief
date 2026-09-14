@@ -562,6 +562,21 @@ describe("React webview", () => {
       remoteRename: null,
       toggleMessages: [[{ id: "error-thread", type: "renameThread" }]],
     });
+    const remoteWorkspaceTitle = document.querySelector<HTMLElement>(
+      ".workspace-node:not(.current) .workspace-label"
+    );
+    if (!remoteWorkspaceTitle) {
+      throw new Error("Missing remote Workspace title");
+    }
+    postMessage.mockClear();
+    await act(() => remoteWorkspaceTitle.click());
+    expect({
+      expanded: remoteToggle.getAttribute("aria-expanded"),
+      messages: postMessage.mock.calls,
+    }).toStrictEqual({
+      expanded: "true",
+      messages: [[{ path: "/remote", type: "openWorkspace" }]],
+    });
     await unmount();
   });
 
