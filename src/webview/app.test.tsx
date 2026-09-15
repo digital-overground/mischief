@@ -580,6 +580,281 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("groups terminal and file operations into compact expandable rows", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (state.type !== "state" || !state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    state.threads.selected.items = [
+      {
+        id: "command-1",
+        kind: "tool",
+        output: "Checks passed",
+        status: "completed",
+        title: "pnpm check --filter package-with-an-excessively-long-name",
+        toolKind: "execute",
+      },
+      {
+        id: "command-2",
+        kind: "tool",
+        status: "in_progress",
+        title: "git status --short",
+        toolKind: "execute",
+      },
+      { id: "assistant", kind: "assistant", text: "Next" },
+      {
+        id: "command-3",
+        kind: "tool",
+        output: "One test failed",
+        status: "failed",
+        title: "gh pr checks",
+        toolKind: "execute",
+      },
+      {
+        id: "command-4",
+        kind: "tool",
+        status: "completed",
+        title: "rg -n TODO src",
+        toolKind: "execute",
+      },
+      {
+        id: "read",
+        kind: "tool",
+        locations: [
+          {
+            line: 12,
+            path: "src/components/a-file-with-an-excessively-long-name.ts",
+          },
+        ],
+        status: "pending",
+        title: "read",
+        toolKind: "read",
+      },
+      {
+        diffs: [{ newText: "new", oldText: "old", path: "src/b.ts" }],
+        id: "edit",
+        kind: "tool",
+        locations: [{ line: 20, path: "src/b.ts" }],
+        status: "completed",
+        title: "edit",
+        toolKind: "edit",
+      },
+      {
+        diffs: [{ newText: "created", path: "src/c.ts" }],
+        id: "write",
+        kind: "tool",
+        locations: [{ path: "src/c.ts" }],
+        status: "completed",
+        title: "write",
+        toolKind: "edit",
+      },
+      {
+        id: "search",
+        kind: "tool",
+        status: "completed",
+        title: "web_search",
+        toolKind: "other",
+      },
+    ];
+
+    await act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+
+    const terminalGroups = [
+      ...document.querySelectorAll<HTMLElement>(".terminal-group"),
+    ];
+    const fileGroup = document.querySelector<HTMLElement>(
+      ".file-operations-group"
+    );
+    if (!terminalGroups[0] || !terminalGroups[1] || !fileGroup) {
+      throw new Error("Missing operation groups");
+    }
+    expect({
+      fileIcons: [
+        ...fileGroup.querySelectorAll<HTMLElement>(
+          ".tool-operation > summary > .entry-icon"
+        ),
+      ].map((icon) => icon.getAttribute("aria-label")),
+      fileRows: [...fileGroup.querySelectorAll(".tool-operation summary")].map(
+        (summary) => summary.textContent
+      ),
+      fileTargets: [
+        ...fileGroup.querySelectorAll<HTMLElement>(".tool-operation-target"),
+      ].map((target) => ({ text: target.textContent, title: target.title })),
+      groupHeadings: [...document.querySelectorAll(".tool-group-heading")].map(
+        (heading) => heading.textContent
+      ),
+      groupIcons: [
+        ...document.querySelectorAll<HTMLElement>(
+          ".tool-group-heading [role='img']"
+        ),
+      ].map((icon) => icon.getAttribute("aria-label")),
+      operationStatuses: [
+        ...document.querySelectorAll<HTMLElement>(".tool-operation-status"),
+      ].map((status) => ({
+        className: status.className,
+        label: status.getAttribute("aria-label"),
+      })),
+      terminalIcons: terminalGroups.flatMap((group) =>
+        [
+          ...group.querySelectorAll<HTMLElement>(
+            ".tool-operation > summary > .entry-icon"
+          ),
+        ].map((icon) => ({
+          className: icon.className,
+          label: icon.getAttribute("aria-label"),
+        }))
+      ),
+      terminalRows: terminalGroups.map((group) =>
+        [...group.querySelectorAll(".tool-operation summary")].map(
+          (summary) => summary.textContent
+        )
+      ),
+      terminalTargets: [
+        ...document.querySelectorAll<HTMLElement>(
+          ".terminal-group .tool-operation-target"
+        ),
+      ].map((target) => ({
+        className: target.className,
+        text: target.textContent,
+        title: target.title,
+      })),
+      ungroupedTools: document.querySelectorAll(".entry.tool:not(.tool-group)")
+        .length,
+    }).toStrictEqual({
+      fileIcons: ["Read", "Edit", "Write"],
+      fileRows: [
+        "Read · a-file-with-an-excessively-long-name.ts:12",
+        "Edit · b.ts:20",
+        "Write · c.ts",
+      ],
+      fileTargets: [
+        {
+          text: "a-file-with-an-excessively-long-name.ts:12",
+          title: "src/components/a-file-with-an-excessively-long-name.ts:12",
+        },
+        { text: "b.ts:20", title: "src/b.ts:20" },
+        { text: "c.ts", title: "src/c.ts" },
+      ],
+      groupHeadings: ["Terminal", "Terminal", "File operations"],
+      groupIcons: ["Terminal", "Terminal", "File operations"],
+      operationStatuses: [
+        {
+          className: "tool-operation-status completed",
+          label: "Completed",
+        },
+        {
+          className: "tool-operation-status in_progress",
+          label: "In progress",
+        },
+        { className: "tool-operation-status failed", label: "Failed" },
+        {
+          className: "tool-operation-status completed",
+          label: "Completed",
+        },
+        { className: "tool-operation-status pending", label: "Pending" },
+        {
+          className: "tool-operation-status completed",
+          label: "Completed",
+        },
+        {
+          className: "tool-operation-status completed",
+          label: "Completed",
+        },
+      ],
+      terminalIcons: [
+        {
+          className: "entry-icon",
+          label: "Package manager",
+        },
+        {
+          className: "entry-icon",
+          label: "Git command",
+        },
+        {
+          className: "entry-icon",
+          label: "GitHub CLI",
+        },
+        {
+          className: "entry-icon",
+          label: "Command",
+        },
+      ],
+      terminalRows: [
+        [
+          "pnpm check --filter package-with-an-excessively-long-name",
+          "git status --short",
+        ],
+        ["gh pr checks", "rg -n TODO src"],
+      ],
+      terminalTargets: [
+        {
+          className: "tool-operation-target terminal-command",
+          text: "pnpm check --filter package-with-an-excessively-long-name",
+          title: "pnpm check --filter package-with-an-excessively-long-name",
+        },
+        {
+          className: "tool-operation-target terminal-command",
+          text: "git status --short",
+          title: "git status --short",
+        },
+        {
+          className: "tool-operation-target terminal-command",
+          text: "gh pr checks",
+          title: "gh pr checks",
+        },
+        {
+          className: "tool-operation-target terminal-command",
+          text: "rg -n TODO src",
+          title: "rg -n TODO src",
+        },
+      ],
+      ungroupedTools: 1,
+    });
+
+    const [firstCommand, secondCommand] =
+      terminalGroups[0].querySelectorAll<HTMLDetailsElement>(".tool-operation");
+    if (!(firstCommand && secondCommand)) {
+      throw new Error("Missing Terminal operations");
+    }
+    await act(() => firstCommand.querySelector("summary")?.click());
+    expect({
+      firstOpen: firstCommand.open,
+      output: firstCommand.querySelector(".tool-body")?.textContent,
+      secondOpen: secondCommand.open,
+    }).toStrictEqual({
+      firstOpen: true,
+      output: "OutputChecks passed",
+      secondOpen: false,
+    });
+
+    const openLocation = fileGroup.querySelector<HTMLButtonElement>(
+      '[title="Open file"]'
+    );
+    const openDiff = fileGroup.querySelector<HTMLButtonElement>(
+      '[title="Open diff"]'
+    );
+    if (!(openLocation && openDiff)) {
+      throw new Error("Missing file actions");
+    }
+    postMessage.mockClear();
+    await act(() => openLocation.click());
+    await act(() => openDiff.click());
+    expect(postMessage.mock.calls).toStrictEqual([
+      [
+        {
+          line: 12,
+          path: "src/components/a-file-with-an-excessively-long-name.ts",
+          type: "openLocation",
+        },
+      ],
+      [{ path: "src/b.ts", type: "openDiff" }],
+    ]);
+    await unmount();
+  });
+
   test("applies streaming transcript items without replacing history or composer text", async () => {
     const unmount = await renderApp();
     const state: HostToWebviewMessage = {

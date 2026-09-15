@@ -1015,6 +1015,20 @@ describe("view provider", () => {
     );
   });
 
+  test("keeps operation targets compact and statuses visual", () => {
+    const style = readFileSync("media/webview.css", "utf-8");
+
+    expect(style).toMatch(
+      /\.tool-operation-target \{[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;[\s\S]*\.terminal-command \{[^}]*font-family: var\(--mischief-mono-font\);/u
+    );
+    expect(style).toMatch(
+      /\.tool-operation-status:is\(\.pending, \.in_progress\)::before \{[^}]*animation: thread-status-frame/u
+    );
+    expect(style).toMatch(
+      /\.entry\.thought \{[^}]*--entry-accent: var\(--vscode-charts-purple,[\s\S]*\.entry\.tool \{[^}]*--entry-accent: var\(--vscode-charts-orange,[\s\S]*\.entry\.file-operations-group \{[^}]*--entry-accent: var\(--vscode-charts-blue,/u
+    );
+  });
+
   test("sends only the changed transcript item while streaming", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     let emit: ((change: unknown) => void) | undefined;

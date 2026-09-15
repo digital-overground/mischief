@@ -449,6 +449,9 @@ const toolUpdate = (
     update._meta as { terminal_output?: { data?: unknown } } | null | undefined
   )?.terminal_output?.data;
   return {
+    ...(update.kind !== undefined && update.kind !== null
+      ? { toolKind: update.kind }
+      : {}),
     ...(update.title !== undefined && update.title !== null
       ? { title: update.title }
       : {}),

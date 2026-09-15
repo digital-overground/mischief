@@ -144,6 +144,7 @@ describe("ACP adapter", () => {
             type: "diff",
           },
         ],
+        kind: "edit",
         rawInput: { path: "a.ts" },
         sessionUpdate: "tool_call",
         status: "completed",
@@ -156,6 +157,7 @@ describe("ACP adapter", () => {
       status: "completed",
       title: "Edit file",
       toolCallId: "tool-1",
+      toolKind: "edit",
       type: "tool",
     });
   });

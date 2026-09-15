@@ -29,6 +29,7 @@ describe("transcript reducer", () => {
       output: "result",
       title: "Run command",
       toolCallId: "tool-1",
+      toolKind: "execute",
       type: "tool",
     });
     reduceTranscript(items, {
@@ -68,6 +69,7 @@ describe("transcript reducer", () => {
         output: "result\nline 1\nline 2",
         status: "completed",
         title: "Run command",
+        toolKind: "execute",
       },
       {
         allCompleted: false,
@@ -75,6 +77,44 @@ describe("transcript reducer", () => {
         kind: "plan",
         planEntries: [{ content: "Inspect", status: "completed" }],
         text: "✓ Inspect",
+        title: "Plan",
+      },
+    ]);
+  });
+
+  test("omits todo calls while retaining their plan updates", () => {
+    const items: TranscriptItem[] = [];
+
+    expect(
+      reduceTranscript(items, {
+        title: "todo",
+        toolCallId: "todo-1",
+        toolKind: "other",
+        type: "tool",
+      })
+    ).toBeUndefined();
+    expect(
+      reduceTranscript(items, {
+        output: "Updated #1 (in_progress → completed)",
+        status: "completed",
+        toolCallId: "todo-1",
+        type: "tool",
+      })
+    ).toBeUndefined();
+    reduceTranscript(items, {
+      allCompleted: false,
+      entries: [{ content: "Implement", status: "in_progress" }],
+      text: "• Implement",
+      type: "plan",
+    });
+
+    expect(items).toStrictEqual([
+      {
+        allCompleted: false,
+        id: "plan",
+        kind: "plan",
+        planEntries: [{ content: "Implement", status: "in_progress" }],
+        text: "• Implement",
         title: "Plan",
       },
     ]);

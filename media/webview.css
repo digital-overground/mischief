@@ -723,11 +723,14 @@ article.entry {
   font-family: var(--mischief-ui-font);
 }
 .entry.thought {
-  --entry-accent: var(--vscode-charts-yellow);
+  --entry-accent: var(--vscode-charts-purple, var(--vscode-charts-yellow));
   color: var(--vscode-descriptionForeground);
 }
 .entry.tool {
   --entry-accent: var(--vscode-charts-orange, var(--vscode-charts-yellow));
+}
+.entry.file-operations-group {
+  --entry-accent: var(--vscode-charts-blue, var(--vscode-textLink-foreground));
 }
 .entry.completed-plan {
   --entry-accent: var(--vscode-charts-green);
@@ -778,21 +781,69 @@ pre {
   font-family: var(--mischief-mono-font);
   line-height: 1.35;
 }
-.thinking-group {
+.thinking-group,
+.tool-group {
   display: block;
 }
-.thinking-heading {
+.thinking-heading,
+.tool-group-heading {
   display: flex;
   align-items: center;
   gap: 8px;
+  color: var(--vscode-descriptionForeground);
   font-family: var(--mischief-ui-font);
   font-weight: 500;
 }
-.thinking-content {
+.thinking-content,
+.tool-group-content {
   margin: 8px 0 0 6px;
   border-left: 1px solid
     color-mix(in srgb, var(--entry-accent) 45%, transparent);
   padding-left: 15px;
+}
+.tool-operation + .tool-operation {
+  margin-top: 7px;
+}
+.tool-operation-description {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+.tool-operation-label,
+.tool-operation-separator,
+.tool-operation-status {
+  flex: none;
+}
+.tool-operation-target {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.terminal-command {
+  font-family: var(--mischief-mono-font);
+}
+.tool-operation-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+}
+.tool-operation-status.completed {
+  color: var(--vscode-charts-green);
+}
+.tool-operation-status.failed {
+  color: var(--vscode-errorForeground);
+}
+.tool-operation-status:is(.pending, .in_progress) {
+  color: var(--vscode-textLink-foreground);
+  font-family: var(--mischief-mono-font);
+}
+.tool-operation-status:is(.pending, .in_progress)::before {
+  content: "⠋";
+  animation: thread-status-frame 600ms step-end infinite;
 }
 .thinking-item {
   font-weight: 600;
@@ -884,7 +935,8 @@ pre {
   border: 0;
   border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
 }
-details.entry > summary {
+details.entry > summary,
+details.tool-operation > summary {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -893,7 +945,8 @@ details.entry > summary {
   font-family: var(--mischief-ui-font);
   list-style: none;
 }
-details.entry > summary::-webkit-details-marker {
+details.entry > summary::-webkit-details-marker,
+details.tool-operation > summary::-webkit-details-marker {
   display: none;
 }
 .tool-body {
@@ -1205,8 +1258,11 @@ fieldset.interaction-field {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .plan-task-indicator::before {
+  .plan-task-indicator::before,
+  .tool-operation-status:is(.pending, .in_progress)::before {
     animation: none;
+  }
+  .plan-task-indicator::before {
     opacity: 0.7;
   }
 }

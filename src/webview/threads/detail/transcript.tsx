@@ -76,7 +76,73 @@ const ThinkingGroup = ({
   </section>
 );
 
-const ToolItem = ({
+const statusLabel = (status?: string): string =>
+  status ? ` · ${status.replaceAll("_", " ")}` : "";
+
+const ToolOperationStatus = ({
+  status,
+}: {
+  status?: string;
+}): React.JSX.Element | null => {
+  if (!status) {
+    return null;
+  }
+  const text = status.replaceAll("_", " ");
+  const label = `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+  const className = `tool-operation-status ${status}`;
+  if (status === "pending" || status === "in_progress") {
+    return (
+      <span className={className} title={label} role="img" aria-label={label} />
+    );
+  }
+  let icon: "circle" | "circleCheck" | "circleSlash" = "circle";
+  if (status === "completed") {
+    icon = "circleCheck";
+  } else if (status === "failed") {
+    icon = "circleSlash";
+  }
+  return <Icon className={className} kind={icon} title={label} />;
+};
+
+const ToolBody = ({
+  item,
+}: {
+  item: RenderedTranscriptItem;
+}): React.JSX.Element => (
+  <div className="tool-body">
+    {item.input ? <LabelledPre label="Input" text={item.input} /> : null}
+    {item.output ? <LabelledPre label="Output" text={item.output} /> : null}
+    {item.locations?.map((location) => (
+      <button
+        className="link"
+        title="Open file"
+        key={`${location.path}:${location.line ?? ""}`}
+        onClick={() =>
+          postMessage({
+            ...(location.line ? { line: location.line } : {}),
+            path: location.path,
+            type: "openLocation",
+          })
+        }
+      >
+        {location.path}
+        {location.line ? `:${location.line}` : ""}
+      </button>
+    ))}
+    {item.diffs?.map((diff) => (
+      <button
+        className="link"
+        title="Open diff"
+        key={diff.path}
+        onClick={() => postMessage({ path: diff.path, type: "openDiff" })}
+      >
+        Open diff · {diff.path}
+      </button>
+    ))}
+  </div>
+);
+
+const GenericToolItem = ({
   item,
 }: {
   item: RenderedTranscriptItem;
@@ -86,42 +152,175 @@ const ToolItem = ({
       <Icon className="entry-icon" kind="tool" title="Tool" />
       <span>
         {item.title || "Tool call"}
-        {item.status ? ` · ${item.status}` : ""}
+        {statusLabel(item.status)}
       </span>
     </summary>
-    <div className="tool-body">
-      {item.input ? <LabelledPre label="Input" text={item.input} /> : null}
-      {item.output ? <LabelledPre label="Output" text={item.output} /> : null}
-      {item.locations?.map((location) => (
-        <button
-          className="link"
-          title="Open file"
-          key={`${location.path}:${location.line ?? ""}`}
-          onClick={() =>
-            postMessage({
-              ...(location.line ? { line: location.line } : {}),
-              path: location.path,
-              type: "openLocation",
-            })
-          }
-        >
-          {location.path}
-          {location.line ? `:${location.line}` : ""}
-        </button>
-      ))}
-      {item.diffs?.map((diff) => (
-        <button
-          className="link"
-          title="Open diff"
-          key={diff.path}
-          onClick={() => postMessage({ path: diff.path, type: "openDiff" })}
-        >
-          Open diff · {diff.path}
-        </button>
-      ))}
-    </div>
+    <ToolBody item={item} />
   </details>
 );
+
+type FileOperation = "read" | "edit" | "write";
+type ToolGroupKind = "terminal" | "files";
+
+const fileOperations = {
+  edit: { icon: "pencil", label: "Edit" },
+  read: { icon: "eye", label: "Read" },
+  write: { icon: "save", label: "Write" },
+} as const;
+
+enum ToolOperationIcon {
+  Git = "git",
+  GitHub = "github",
+  PackageManager = "package-manager",
+  Terminal = "terminal",
+}
+
+const toolOperationIcons = {
+  [ToolOperationIcon.Git]: { icon: "gitBranch", title: "Git command" },
+  [ToolOperationIcon.GitHub]: { icon: "github", title: "GitHub CLI" },
+  [ToolOperationIcon.PackageManager]: {
+    icon: "package",
+    title: "Package manager",
+  },
+  [ToolOperationIcon.Terminal]: { icon: "terminal", title: "Command" },
+} as const;
+
+const packageManagers = new Set(["bun", "npm", "npx", "pnpm", "yarn"]);
+
+const commandOperationIcon = (command: string): ToolOperationIcon => {
+  // ponytail: direct executables only; use shell parsing if compound commands need icons.
+  const [executable = ""] = command.trimStart().split(/\s+/u);
+  if (executable === "git") {
+    return ToolOperationIcon.Git;
+  }
+  if (executable === "gh") {
+    return ToolOperationIcon.GitHub;
+  }
+  return packageManagers.has(executable)
+    ? ToolOperationIcon.PackageManager
+    : ToolOperationIcon.Terminal;
+};
+
+const fileOperationKind = (
+  item: RenderedTranscriptItem
+): FileOperation | undefined => {
+  if (item.toolKind === "read") {
+    return "read";
+  }
+  if (item.toolKind !== "edit") {
+    return;
+  }
+  return item.title?.toLowerCase() === "write" ? "write" : "edit";
+};
+
+const toolOperation = (item?: RenderedTranscriptItem) => {
+  if (item?.kind !== "tool") {
+    return;
+  }
+  if (item.toolKind === "execute") {
+    const command = item.title || "";
+    const iconClass = commandOperationIcon(command);
+    const operationIcon = toolOperationIcons[iconClass];
+    return {
+      group: "terminal" as const,
+      icon: operationIcon.icon,
+      iconTitle: operationIcon.title,
+      label: undefined,
+      target: command || undefined,
+      targetTitle: command || undefined,
+    };
+  }
+  const kind = fileOperationKind(item);
+  if (!kind) {
+    return;
+  }
+  const operation = fileOperations[kind];
+  const location = item.locations?.[0];
+  const path = location?.path ?? item.diffs?.[0]?.path;
+  const line = location?.line ? `:${location.line}` : "";
+  return {
+    group: "files" as const,
+    ...operation,
+    iconTitle: operation.label,
+    target: path ? `${path.split(/[\\/]/u).at(-1) || path}${line}` : undefined,
+    targetTitle: path ? `${path}${line}` : undefined,
+  };
+};
+
+const toolGroupKind = (
+  item?: RenderedTranscriptItem
+): ToolGroupKind | undefined => toolOperation(item)?.group;
+
+const ToolOperationItem = ({
+  item,
+}: {
+  item: RenderedTranscriptItem;
+}): React.JSX.Element | null => {
+  const operation = toolOperation(item);
+  return operation ? (
+    <details className="tool-operation">
+      <summary>
+        <Icon
+          className="entry-icon"
+          kind={operation.icon}
+          title={operation.iconTitle}
+        />
+        <span className="tool-operation-description">
+          {operation.label ? (
+            <span className="tool-operation-label">{operation.label}</span>
+          ) : null}
+          {operation.target ? (
+            <>
+              {operation.label ? (
+                <span className="tool-operation-separator">{" · "}</span>
+              ) : null}
+              <span
+                className={`tool-operation-target${
+                  operation.group === "terminal" ? " terminal-command" : ""
+                }`}
+                title={operation.targetTitle}
+              >
+                {operation.target}
+              </span>
+            </>
+          ) : null}
+        </span>
+        <ToolOperationStatus status={item.status} />
+      </summary>
+      <ToolBody item={item} />
+    </details>
+  ) : null;
+};
+
+const ToolGroup = ({
+  group,
+  items,
+}: {
+  group: ToolGroupKind;
+  items: RenderedTranscriptItem[];
+}): React.JSX.Element => {
+  const terminal = group === "terminal";
+  const label = terminal ? "Terminal" : "File operations";
+  return (
+    <section
+      className={`entry tool tool-group ${terminal ? "terminal-group" : "file-operations-group"}`}
+    >
+      <div className="tool-group-heading">
+        <Icon
+          className="entry-icon"
+          kind={terminal ? "terminal" : "file"}
+          title={label}
+        />
+        {label}
+      </div>
+      <div className="tool-group-content">
+        {items.map((item) => (
+          <ToolOperationItem item={item} key={item.id} />
+        ))}
+      </div>
+    </section>
+  );
+};
 
 const entryMeta: Partial<
   Record<
@@ -152,7 +351,7 @@ const TranscriptEntry = ({
     );
   }
   if (item.kind === "tool") {
-    return <ToolItem item={item} />;
+    return <GenericToolItem item={item} />;
   }
   const meta = entryMeta[item.kind] ?? {
     icon: "alert",
@@ -186,17 +385,35 @@ const TranscriptNodes = memo(
       if (!item) {
         break;
       }
-      if (item.kind !== "thought") {
-        nodes.push(<TranscriptEntry item={item} key={item.id} />);
-        index += 1;
+      if (item.kind === "thought") {
+        const thoughts: RenderedTranscriptItem[] = [];
+        while (items[index]?.kind === "thought") {
+          thoughts.push(items[index] as RenderedTranscriptItem);
+          index += 1;
+        }
+        nodes.push(
+          <ThinkingGroup items={thoughts} key={`thought:${item.id}`} />
+        );
         continue;
       }
-      const thoughts: RenderedTranscriptItem[] = [];
-      while (items[index]?.kind === "thought") {
-        thoughts.push(items[index] as RenderedTranscriptItem);
-        index += 1;
+      const group = toolGroupKind(item);
+      if (group) {
+        const operations: RenderedTranscriptItem[] = [];
+        while (toolGroupKind(items[index]) === group) {
+          operations.push(items[index] as RenderedTranscriptItem);
+          index += 1;
+        }
+        nodes.push(
+          <ToolGroup
+            group={group}
+            items={operations}
+            key={`${group}:${item.id}`}
+          />
+        );
+        continue;
       }
-      nodes.push(<ThinkingGroup items={thoughts} key={`thought:${item.id}`} />);
+      nodes.push(<TranscriptEntry item={item} key={item.id} />);
+      index += 1;
     }
     return <>{nodes}</>;
   }
@@ -235,6 +452,10 @@ export const Transcript = ({
     [streamedItems]
   );
   const tailWasUpdated = streamed.some((item) => item.id === tail?.id);
+  const committed = useMemo(
+    () => (tail && !tailWasUpdated ? [...history, tail] : history),
+    [history, tail, tailWasUpdated]
+  );
   let content: ReactNode;
   if (setup) {
     content = (
@@ -262,8 +483,7 @@ export const Transcript = ({
   } else if (history.length || tail || streamed.length) {
     content = (
       <>
-        <TranscriptNodes items={history} />
-        {tail && !tailWasUpdated ? <TranscriptEntry item={tail} /> : null}
+        <TranscriptNodes items={committed} />
         <TranscriptNodes items={streamed} />
       </>
     );

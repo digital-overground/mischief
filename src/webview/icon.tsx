@@ -5,22 +5,29 @@ type IconKind =
   | "brain"
   | "chat"
   | "circle"
+  | "circleSlash"
   | "history"
   | "maximize"
   | "minimize"
   | "fork"
   | "rollback"
   | "circleCheck"
+  | "eye"
+  | "file"
   | "folderGit2"
+  | "github"
   | "gitBranch"
+  | "package"
   | "pencil"
   | "plan"
   | "plus"
   | "question"
+  | "save"
   | "send"
   | "signpost"
   | "spool"
   | "stop"
+  | "terminal"
   | "tool"
   | "user"
   | "x";
@@ -76,6 +83,24 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="m9 12 2 2 4-4" />
     </>
   ),
+  circleSlash: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="m4.93 4.93 14.14 14.14" />
+    </>
+  ),
+  eye: (
+    <>
+      <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+      <circle cx="12" cy="12" r="3" />
+    </>
+  ),
+  file: (
+    <>
+      <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z" />
+      <path d="M14 2v6h6" />
+    </>
+  ),
   folderGit2: (
     <>
       <path d="M18 19a5 5 0 0 1-5-5v8" />
@@ -100,6 +125,12 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M18 9a9 9 0 0 1-9 9" />
     </>
   ),
+  github: (
+    <>
+      <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.28-.36 6.72-1.61 6.72-7.05A5.5 5.5 0 0 0 19.22 3.61 5.07 5.07 0 0 0 19.08.67S17.9.29 15 2.15a13.38 13.38 0 0 0-7 0C5.1.29 3.92.67 3.92.67a5.07 5.07 0 0 0-.14 2.94 5.5 5.5 0 0 0-1.5 3.84c0 5.44 3.44 6.69 6.72 7.05A4.8 4.8 0 0 0 8 18v4" />
+      <path d="M9 18c-4.51 2-5-2-7-2" />
+    </>
+  ),
   history: (
     <>
       <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
@@ -121,6 +152,14 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
       <path d="M3 16h3a2 2 0 0 1 2 2v3" />
       <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
+    </>
+  ),
+  package: (
+    <>
+      <path d="m7.5 4.27 9 5.15" />
+      <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+      <path d="m3.3 7 8.7 5 8.7-5" />
+      <path d="M12 22V12" />
     </>
   ),
   pencil: (
@@ -157,6 +196,13 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
     </>
   ),
+  save: (
+    <>
+      <path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+      <path d="M17 21v-8H7v8" />
+      <path d="M7 3v5h8" />
+    </>
+  ),
   send: (
     <>
       <path d="m5 12 7-7 7 7" />
@@ -177,6 +223,12 @@ const paths: Record<IconKind, React.ReactNode> = {
     </>
   ),
   stop: <rect width="18" height="18" x="3" y="3" rx="2" />,
+  terminal: (
+    <>
+      <path d="m4 17 6-6-6-6" />
+      <path d="M12 19h8" />
+    </>
+  ),
   tool: (
     <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-8 8l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 8-8z" />
   ),

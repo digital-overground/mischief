@@ -33,15 +33,21 @@ const appendMessage = (
 const upsertTool = (
   items: TranscriptItem[],
   update: AgentToolUpdate
-): TranscriptItem => {
+): TranscriptItem | undefined => {
   const id = `tool:${update.toolCallId}`;
   let item = items.find((candidate) => candidate.id === id);
   if (!item) {
+    if (update.title === "todo" || update.title === undefined) {
+      return undefined;
+    }
     item = { id, kind: "tool" };
     items.push(item);
   }
   if (update.title !== undefined) {
     item.title = update.title;
+  }
+  if (update.toolKind !== undefined) {
+    item.toolKind = update.toolKind;
   }
   if (update.status !== undefined) {
     item.status = update.status;

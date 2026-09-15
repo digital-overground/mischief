@@ -72,8 +72,21 @@ export type AgentElicitationResponse =
   | { action: "accept"; values: Record<string, unknown> }
   | { action: "cancel" };
 
+export type AgentToolKind =
+  | "read"
+  | "edit"
+  | "delete"
+  | "move"
+  | "search"
+  | "execute"
+  | "think"
+  | "fetch"
+  | "switch_mode"
+  | "other";
+
 export interface AgentToolUpdate {
   toolCallId: string;
+  toolKind?: AgentToolKind;
   title?: string;
   status?: string;
   input?: string;
@@ -200,6 +213,7 @@ export interface TranscriptItem {
   images?: PromptImage[];
   title?: string;
   status?: string;
+  toolKind?: AgentToolKind;
   input?: string;
   output?: string;
   locations?: { path: string; line?: number }[];
