@@ -580,6 +580,53 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("renders an answered ask_user as a question and user reply", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (state.type !== "state" || !state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    const question = "Which transcript style should we use?";
+    const answer = "Plain conversation text";
+    state.threads.selected.items = [
+      {
+        id: "ask-user",
+        input: JSON.stringify({ question }),
+        kind: "tool",
+        output: `User answered: ${answer}`,
+        status: "completed",
+        title: "ask_user",
+        toolKind: "other",
+      },
+    ];
+
+    await act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+
+    const result = document.querySelector(".ask-user-result");
+    expect({
+      answer: result?.querySelector(".ask-user-answer")?.textContent,
+      content: result?.querySelector(".ask-user-content")?.textContent,
+      entries: [...document.querySelectorAll("#transcript > .entry")].map(
+        ({ className }) => className
+      ),
+      icon: result?.querySelector(".entry-icon")?.getAttribute("aria-label"),
+      question: result?.querySelector(".ask-user-question")?.textContent,
+      title: result?.querySelector(".ask-user-title")?.textContent,
+      toolBody: result?.querySelector(".tool-body"),
+    }).toStrictEqual({
+      answer,
+      content: `${question}${answer}`,
+      entries: ["entry ask-user-result"],
+      icon: "Question",
+      question,
+      title: "Question",
+      toolBody: null,
+    });
+    await unmount();
+  });
+
   test("groups terminal and file operations into compact expandable rows", async () => {
     const unmount = await renderApp();
     const state = threadState("selected", []);

@@ -758,6 +758,28 @@ article.entry {
   margin-top: 1px;
   color: var(--entry-accent);
 }
+.entry.ask-user-result {
+  --entry-accent: var(
+    --vscode-charts-yellow,
+    var(--vscode-descriptionForeground)
+  );
+}
+.ask-user-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--entry-accent);
+  font-family: var(--mischief-ui-font);
+  font-weight: 500;
+}
+.ask-user-question {
+  color: var(--entry-accent);
+  font-weight: 600;
+}
+.ask-user-answer {
+  margin-top: 7px;
+  color: var(--vscode-foreground);
+}
 .entry-content {
   flex: 1;
 }
@@ -795,7 +817,8 @@ pre {
   font-weight: 500;
 }
 .thinking-content,
-.tool-group-content {
+.tool-group-content,
+.ask-user-content {
   margin: 8px 0 0 6px;
   border-left: 1px solid
     color-mix(in srgb, var(--entry-accent) 45%, transparent);

@@ -159,6 +159,48 @@ const GenericToolItem = ({
   </details>
 );
 
+const askUserQuestion = (input?: string): string | undefined => {
+  if (!input) {
+    return;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(input);
+  } catch {
+    return;
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return;
+  }
+  const { question } = parsed as Record<string, unknown>;
+  return typeof question === "string" ? question : undefined;
+};
+
+const AskUserItem = ({
+  item,
+}: {
+  item: RenderedTranscriptItem;
+}): React.JSX.Element => {
+  const question = askUserQuestion(item.input);
+  const answerPrefix = "User answered: ";
+  if (!question || !item.output?.startsWith(answerPrefix)) {
+    return <GenericToolItem item={item} />;
+  }
+  const answer = item.output.slice(answerPrefix.length);
+  return (
+    <section className="entry ask-user-result">
+      <div className="ask-user-title">
+        <Icon className="entry-icon" kind="question" title="Question" />
+        Question
+      </div>
+      <div className="ask-user-content">
+        <div className="body ask-user-question">{question}</div>
+        <div className="body ask-user-answer">{answer}</div>
+      </div>
+    </section>
+  );
+};
+
 type FileOperation = "read" | "edit" | "write";
 type ToolGroupKind = "terminal" | "files";
 
@@ -351,7 +393,11 @@ const TranscriptEntry = ({
     );
   }
   if (item.kind === "tool") {
-    return <GenericToolItem item={item} />;
+    return item.title === "ask_user" ? (
+      <AskUserItem item={item} />
+    ) : (
+      <GenericToolItem item={item} />
+    );
   }
   const meta = entryMeta[item.kind] ?? {
     icon: "alert",

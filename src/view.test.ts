@@ -1027,6 +1027,12 @@ describe("view provider", () => {
     expect(style).toMatch(
       /\.entry\.thought \{[^}]*--entry-accent: var\(--vscode-charts-purple,[\s\S]*\.entry\.tool \{[^}]*--entry-accent: var\(--vscode-charts-orange,[\s\S]*\.entry\.file-operations-group \{[^}]*--entry-accent: var\(--vscode-charts-blue,/u
     );
+    expect(style).toMatch(
+      /\.entry\.ask-user-result \{[^}]*--entry-accent: var\([^}]*--vscode-charts-yellow,[^}]*--vscode-descriptionForeground[\s\S]*\.ask-user-title \{[^}]*color: var\(--entry-accent\);[\s\S]*\.ask-user-question \{[^}]*color: var\(--entry-accent\);[\s\S]*\.ask-user-answer \{[^}]*color: var\(--vscode-foreground\);/u
+    );
+    expect(style).toMatch(
+      /\.thinking-content,\s*\.tool-group-content,\s*\.ask-user-content \{[^}]*margin: 8px 0 0 6px;[^}]*border-left: 1px solid[^}]*padding-left: 15px;/u
+    );
   });
 
   test("sends only the changed transcript item while streaming", async () => {
