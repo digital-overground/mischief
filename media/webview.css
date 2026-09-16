@@ -1,4 +1,20 @@
 :root {
+  /* HumanLayer Tokyo Night Storm */
+  --hl-bg: #24283b;
+  --hl-bg-alt: #1f2335;
+  --hl-fg: #c0caf5;
+  --hl-fg-dim: #a9b1d6;
+  --hl-accent: #7aa2f7;
+  --hl-accent-dim: #3d59a1;
+  --hl-accent-alt: #bb9af7;
+  --hl-border: #3b4261;
+  --hl-hover: #414868;
+  --hl-success: #9ece6a;
+  --hl-warning: #e0af68;
+  --hl-error: #f7768e;
+  --hl-cyan: #7dcfff;
+  --hl-selection: #6f7bb640;
+  --hl-shadow: rgb(0 0 0 / 40%);
   --mischief-ui-font:
     "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
@@ -10,6 +26,42 @@
   box-sizing: border-box;
 }
 body {
+  --vscode-button-background: var(--hl-accent) !important;
+  --vscode-button-border: var(--hl-border) !important;
+  --vscode-button-foreground: var(--hl-bg-alt) !important;
+  --vscode-button-secondaryBackground: var(--hl-border) !important;
+  --vscode-button-secondaryForeground: var(--hl-fg) !important;
+  --vscode-charts-blue: var(--hl-accent) !important;
+  --vscode-charts-green: var(--hl-success) !important;
+  --vscode-charts-orange: var(--hl-warning) !important;
+  --vscode-charts-purple: var(--hl-accent-alt) !important;
+  --vscode-charts-yellow: var(--hl-warning) !important;
+  --vscode-descriptionForeground: var(--hl-fg-dim) !important;
+  --vscode-editor-background: var(--hl-bg) !important;
+  --vscode-editorHoverWidget-background: var(--hl-bg-alt) !important;
+  --vscode-editorHoverWidget-border: var(--hl-border) !important;
+  --vscode-editorHoverWidget-foreground: var(--hl-fg) !important;
+  --vscode-editorWidget-background: var(--hl-bg-alt) !important;
+  --vscode-editorWidget-foreground: var(--hl-fg) !important;
+  --vscode-errorForeground: var(--hl-error) !important;
+  --vscode-focusBorder: var(--hl-accent) !important;
+  --vscode-foreground: var(--hl-fg) !important;
+  --vscode-input-background: var(--hl-bg-alt) !important;
+  --vscode-input-border: var(--hl-border) !important;
+  --vscode-input-foreground: var(--hl-fg) !important;
+  --vscode-list-activeSelectionBackground: var(--hl-accent-dim) !important;
+  --vscode-list-activeSelectionForeground: var(--hl-fg) !important;
+  --vscode-list-hoverBackground: var(--hl-hover) !important;
+  --vscode-panel-border: var(--hl-border) !important;
+  --vscode-sideBar-background: var(--hl-bg) !important;
+  --vscode-sideBarSectionHeader-background: var(--hl-bg-alt) !important;
+  --vscode-sideBarSectionHeader-border: var(--hl-border) !important;
+  --vscode-textBlockQuote-border: var(--hl-border) !important;
+  --vscode-textCodeBlock-background: var(--hl-bg-alt) !important;
+  --vscode-textLink-foreground: var(--hl-accent) !important;
+  --vscode-toolbar-hoverBackground: var(--hl-accent-dim) !important;
+  --vscode-widget-border: var(--hl-border) !important;
+  --vscode-widget-shadow: var(--hl-shadow) !important;
   margin: 0;
   height: 100vh;
   padding: 0;
@@ -18,6 +70,10 @@ body {
   background: var(--vscode-sideBar-background);
   font-family: var(--mischief-ui-font);
   font-size: 13px;
+}
+::selection {
+  color: var(--hl-fg);
+  background: var(--hl-selection);
 }
 #root {
   height: 100%;
@@ -670,17 +726,26 @@ article.entry {
   font-family: var(--mischief-ui-font);
 }
 .entry.thought {
-  --entry-accent: var(--vscode-charts-purple, var(--vscode-charts-yellow));
+  --entry-accent: var(--hl-accent-alt);
   color: var(--vscode-descriptionForeground);
 }
 .entry.tool {
-  --entry-accent: var(--vscode-charts-orange, var(--vscode-charts-yellow));
+  --entry-accent: var(--hl-warning);
+}
+.entry.terminal-group {
+  --entry-accent: var(--hl-success);
 }
 .entry.file-operations-group {
-  --entry-accent: var(--vscode-charts-blue, var(--vscode-textLink-foreground));
+  --entry-accent: var(--hl-accent);
+}
+.entry.web-group {
+  --entry-accent: var(--hl-cyan);
+}
+.entry.tools-group {
+  --entry-accent: var(--hl-accent-alt);
 }
 .entry.completed-plan {
-  --entry-accent: var(--vscode-charts-green);
+  --entry-accent: var(--hl-success);
 }
 .completed-plan-title {
   display: flex;
@@ -706,10 +771,7 @@ article.entry {
   color: var(--entry-accent);
 }
 .entry.ask-user-result {
-  --entry-accent: var(
-    --vscode-charts-yellow,
-    var(--vscode-descriptionForeground)
-  );
+  --entry-accent: var(--hl-warning);
 }
 .ask-user-title {
   display: flex;

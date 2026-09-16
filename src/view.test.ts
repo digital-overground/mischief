@@ -1061,6 +1061,20 @@ describe("view provider", () => {
     );
   });
 
+  test("uses HumanLayer's Tokyo Night Storm palette", () => {
+    const style = readFileSync("media/webview.css", "utf-8");
+
+    expect(style).toMatch(
+      /:root \{[^}]*--hl-bg: #24283b;[^}]*--hl-bg-alt: #1f2335;[^}]*--hl-fg: #c0caf5;[^}]*--hl-fg-dim: #a9b1d6;[^}]*--hl-accent: #7aa2f7;[^}]*--hl-accent-alt: #bb9af7;[^}]*--hl-border: #3b4261;[^}]*--hl-success: #9ece6a;[^}]*--hl-warning: #e0af68;[^}]*--hl-error: #f7768e;/u
+    );
+    expect(style).toMatch(
+      /body \{[^}]*--vscode-foreground: var\(--hl-fg\) !important;[^}]*--vscode-sideBar-background: var\(--hl-bg\) !important;/u
+    );
+    expect(style).toMatch(
+      /\.entry\.terminal-group \{[^}]*--entry-accent: var\(--hl-success\);[\s\S]*\.entry\.file-operations-group \{[^}]*--entry-accent: var\(--hl-accent\);[\s\S]*\.entry\.web-group \{[^}]*--entry-accent: var\(--hl-cyan\);[\s\S]*\.entry\.tools-group \{[^}]*--entry-accent: var\(--hl-accent-alt\);/u
+    );
+  });
+
   test("keeps operation targets compact and statuses visual", () => {
     const style = readFileSync("media/webview.css", "utf-8");
 
@@ -1071,10 +1085,10 @@ describe("view provider", () => {
       /\.tool-operation-status:is\(\.pending, \.in_progress\)::before \{[^}]*animation: thread-status-frame/u
     );
     expect(style).toMatch(
-      /\.entry\.thought \{[^}]*--entry-accent: var\(--vscode-charts-purple,[\s\S]*\.entry\.tool \{[^}]*--entry-accent: var\(--vscode-charts-orange,[\s\S]*\.entry\.file-operations-group \{[^}]*--entry-accent: var\(--vscode-charts-blue,/u
+      /\.entry\.thought \{[^}]*--entry-accent: var\(--hl-accent-alt\);[\s\S]*\.entry\.tool \{[^}]*--entry-accent: var\(--hl-warning\);/u
     );
     expect(style).toMatch(
-      /\.entry\.ask-user-result \{[^}]*--entry-accent: var\([^}]*--vscode-charts-yellow,[^}]*--vscode-descriptionForeground[\s\S]*\.ask-user-title \{[^}]*color: var\(--entry-accent\);[\s\S]*\.ask-user-question \{[^}]*color: var\(--entry-accent\);[\s\S]*\.ask-user-answer \{[^}]*color: var\(--vscode-foreground\);/u
+      /\.entry\.ask-user-result \{[^}]*--entry-accent: var\(--hl-warning\);[\s\S]*\.ask-user-title \{[^}]*color: var\(--entry-accent\);[\s\S]*\.ask-user-question \{[^}]*color: var\(--entry-accent\);[\s\S]*\.ask-user-answer \{[^}]*color: var\(--vscode-foreground\);/u
     );
     expect(style).toMatch(
       /\.thinking-content,\s*\.tool-group-content,\s*\.ask-user-content \{[^}]*margin: 8px 0 0 6px;[^}]*border-left: 1px solid[^}]*padding-left: 15px;/u
