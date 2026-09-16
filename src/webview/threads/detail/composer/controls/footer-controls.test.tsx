@@ -77,7 +77,7 @@ describe("Footer controls", () => {
     ).toBeTruthy();
   });
 
-  test("opens user messages in order at the pointer and closes with Escape", async () => {
+  test("opens user and agent messages in order at the pointer and closes with Escape", async () => {
     await act(() =>
       renderFooter({
         items: [
@@ -105,6 +105,7 @@ describe("Footer controls", () => {
     expect({
       actionText: list?.textContent?.includes("Fork") ?? true,
       active: document.activeElement === list,
+      kinds: entries.map((entry) => entry.className),
       left: list?.style.left,
       messages: [...document.querySelectorAll(".history-message")].map(
         (message) => message.textContent
@@ -114,9 +115,14 @@ describe("Footer controls", () => {
     }).toStrictEqual({
       actionText: false,
       active: true,
+      kinds: [
+        "history-entry user",
+        "history-entry assistant",
+        "history-entry user",
+      ],
       left: "200px",
-      messages: ["First request", "Most recent request"],
-      rowTabIndexes: [0, 0],
+      messages: ["First request", "Response", "Most recent request"],
+      rowTabIndexes: [0, 0, 0],
       width: "814px",
     });
 
@@ -141,7 +147,7 @@ describe("Footer controls", () => {
       );
     await act(() => rollback?.click());
     expect(postMessage).toHaveBeenCalledWith({
-      id: "user-2",
+      id: "assistant",
       type: "rollbackThread",
     });
 

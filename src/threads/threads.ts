@@ -361,7 +361,7 @@ const hasPromptContent = (text: string, images: PromptImage[]): boolean =>
   Boolean(text.trim() || images.length);
 
 const agentMessageId = (messageId: string): string =>
-  messageId.startsWith("user:") ? messageId.slice(5) : messageId;
+  messageId.replace(/^(?:assistant|user):/u, "");
 
 const stopStreaming = (runtime: Runtime): void => {
   if (runtime.streamingTimer) {
@@ -833,7 +833,9 @@ export class Threads {
       : undefined;
     const runtime = record ? this.runtimes.get(record.id) : undefined;
     const message = runtime?.items.find(
-      (item) => item.id === messageId && item.kind === "user"
+      (item) =>
+        item.id === messageId &&
+        (item.kind === "user" || item.kind === "assistant")
     );
     if (!record?.sessionId || !runtime || !message || !this.workspace) {
       return;
@@ -863,7 +865,7 @@ export class Threads {
     await this.register(fork);
     await this.load(fork);
     const forkRuntime = this.runtimes.get(fork.id);
-    if (forkRuntime && message.text) {
+    if (forkRuntime && message.kind === "user" && message.text) {
       forkRuntime.drafts.push(message.text);
     }
     this.emit();
@@ -875,7 +877,9 @@ export class Threads {
       : undefined;
     const runtime = record ? this.runtimes.get(record.id) : undefined;
     const message = runtime?.items.find(
-      (item) => item.id === messageId && item.kind === "user"
+      (item) =>
+        item.id === messageId &&
+        (item.kind === "user" || item.kind === "assistant")
     );
     if (!record?.sessionId || !runtime || !message) {
       return;
@@ -887,8 +891,12 @@ export class Threads {
       record.sessionId,
       agentMessageId(messageId)
     );
-    runtime.items = runtime.items.slice(0, runtime.items.indexOf(message));
-    if (message.text) {
+    const index = runtime.items.indexOf(message);
+    runtime.items = runtime.items.slice(
+      0,
+      message.kind === "assistant" ? index + 1 : index
+    );
+    if (message.kind === "user" && message.text) {
       runtime.drafts.push(message.text);
     }
     record.error = undefined;

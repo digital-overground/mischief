@@ -63,6 +63,7 @@ class FakeAgent {
   readonly promptResolvers: ((response: AgentPromptResult) => void)[] = [];
   promptImages: PromptImage[] = [];
   promptCalls = 0;
+  responseCount = 0;
   readonly permissionStarted = this.permissionStartedDeferred.promise;
   readonly elicitationStarted = this.elicitationStartedDeferred.promise;
   readonly firstPromptStarted = this.firstPromptStartedDeferred.promise;
@@ -130,6 +131,7 @@ class FakeAgent {
           });
           handlers.update({
             kind: "assistant",
+            messageId: "pi-assistant-1",
             text: "Restored.",
             type: "message",
           });
@@ -143,6 +145,7 @@ class FakeAgent {
           if (this.promptCalls === 1) {
             handlers.update({
               kind: "assistant",
+              messageId: "pi-assistant-held-1",
               text: "Partial",
               type: "message",
             });
@@ -234,7 +237,13 @@ class FakeAgent {
           this.markPermissionStarted();
           this.permissionResponse = await response;
         }
-        handlers.update({ kind: "assistant", text: "Done.", type: "message" });
+        this.responseCount += 1;
+        handlers.update({
+          kind: "assistant",
+          messageId: `pi-assistant-${this.responseCount}`,
+          text: "Done.",
+          type: "message",
+        });
         handlers.update({ title: "Fix tests", type: "sessionInfo" });
         return { stopReason: "completed" };
       },
@@ -602,6 +611,35 @@ describe("threads module", () => {
     });
   });
 
+  test("forks at an agent response without restoring a draft", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Fork after the response");
+    const message = threads
+      .snapshot()
+      .selected?.items.find((item) => item.kind === "assistant");
+    if (!message) {
+      throw new Error("Missing agent response");
+    }
+
+    await threads.fork(message.id);
+
+    expect(agent.forkCalls).toStrictEqual([
+      {
+        cwd: "/workspace",
+        messageId: "pi-assistant-1",
+        sessionId: "session-1",
+      },
+    ]);
+    expect(threads.snapshot().selected).toMatchObject({
+      drafts: [],
+      id: expect.any(String),
+      items: [],
+      name: "Fix tests (fork)",
+    });
+  });
+
   test("rolls back before the selected user message and restores its draft", async () => {
     const agent = new FakeAgent();
     const threads = createThreads(agent.factory);
@@ -626,6 +664,33 @@ describe("threads module", () => {
     expect(threads.snapshot().selected).toMatchObject({
       drafts: ["Restore me"],
       items: [],
+    });
+  });
+
+  test("rolls back through the selected agent response without restoring a draft", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Keep this turn");
+    await threads.prompt("Remove this turn");
+    const message = threads
+      .snapshot()
+      .selected?.items.find((item) => item.kind === "assistant");
+    if (!message) {
+      throw new Error("Missing agent response");
+    }
+
+    await threads.rollback(message.id);
+
+    expect(agent.rollbackCalls).toStrictEqual([
+      { messageId: "pi-assistant-1", sessionId: "session-1" },
+    ]);
+    expect(threads.snapshot().selected).toMatchObject({
+      drafts: [],
+      items: [
+        { kind: "user", text: "Keep this turn" },
+        { kind: "assistant", text: "Done." },
+      ],
     });
   });
 
@@ -929,7 +994,11 @@ describe("threads module", () => {
 
     expect(restored.snapshot().selected?.items).toMatchObject([
       { id: "user:pi-user-1", kind: "user", text: "Restore me" },
-      { kind: "assistant", text: "Restored." },
+      {
+        id: "assistant:pi-assistant-1",
+        kind: "assistant",
+        text: "Restored.",
+      },
     ]);
 
     await restored.rollback("user:pi-user-1");

@@ -10,7 +10,10 @@ export const HistoryControl = ({
 }: {
   selected?: RenderedThreadDetail;
 }): React.JSX.Element => {
-  const messages = selected?.items.filter((item) => item.kind === "user") ?? [];
+  const messages =
+    selected?.items.filter(
+      (item) => item.kind === "user" || item.kind === "assistant"
+    ) ?? [];
   const list = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{
     bottom: number;
@@ -67,7 +70,7 @@ export const HistoryControl = ({
       <button
         className="action"
         id="history"
-        title="User message history"
+        title="Message history"
         aria-controls="history-list"
         aria-expanded={Boolean(position)}
         disabled={!messages.length}
@@ -80,13 +83,17 @@ export const HistoryControl = ({
           id="history-list"
           ref={list}
           role="dialog"
-          aria-label="User message history"
+          aria-label="Message history"
           tabIndex={-1}
           style={position}
           onClick={(event) => event.stopPropagation()}
         >
           {messages.map((message) => (
-            <div className="history-entry" key={message.id} tabIndex={0}>
+            <div
+              className={`history-entry ${message.kind}`}
+              key={message.id}
+              tabIndex={0}
+            >
               <span className="history-message" title={message.text}>
                 {message.text}
               </span>

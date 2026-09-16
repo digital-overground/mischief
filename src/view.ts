@@ -655,7 +655,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
     if (data.type === "rollbackThread" && typeof data.id === "string") {
       const confirmed = await vscode.window.showWarningMessage(
-        "Rollback this Thread? The selected message and everything after it will leave the active branch.",
+        "Rollback this Thread? The Thread will return to the selected point and later messages will leave the active branch.",
         { modal: true },
         "Rollback"
       );

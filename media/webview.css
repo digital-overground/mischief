@@ -511,6 +511,16 @@ select:disabled {
   position: relative;
   outline: none;
 }
+.history-entry.user {
+  margin: 2px 4px;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  background: var(--vscode-editor-background, var(--vscode-sideBar-background));
+  font-family: var(--mischief-mono-font);
+}
+.history-entry.assistant {
+  font-family: var(--mischief-ui-font);
+}
 .history-entry:hover,
 .history-entry:focus-within {
   background: var(--vscode-list-hoverBackground);

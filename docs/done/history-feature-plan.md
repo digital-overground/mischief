@@ -4,13 +4,14 @@
 
 ## Scope
 
-Add a footer History button that opens the user messages in the selected Thread. Fork and rollback are deferred to Phase 2.
+Add a footer History button that opens user messages and Agent responses in the selected Thread. Fork and rollback use Pi's native tree semantics.
 
 ## Phase 1: History popup
 
 - Add a **History** button beside the existing footer controls.
-- Derive entries from `selected.items` where `kind === "user"`.
+- Derive entries from `selected.items` where `kind === "user"` or `kind === "assistant"`.
 - Preserve transcript order, with the newest message at the bottom.
+- Differentiate user and Agent entries using the transcript's card and typography treatment.
 - Render each message on one line with no wrapping and CSS ellipsis truncation.
 - Limit the list height to `500px` and scroll it to the bottom when opened.
 - Position the popup at the mouse `clientX` when the button is clicked.
@@ -31,14 +32,14 @@ Default behavior: preserve the 500px minimum and allow the popup to extend left 
 
 ## Phase 2: Fork and rollback
 
-The current `Threads`/ACP seam does not expose these operations.
+The `Threads`/ACP seam delegates both operations to MagPi and Pi's native session tree.
 
 ### Fork
 
 Extend MagPi ACP to:
 
-1. map the selected Mischief user-message ID to the Pi session entry;
-2. create a new Pi session from that entry using Pi's native fork/session machinery;
+1. map the selected Mischief message ID to the exact Pi session entry;
+2. create a new Pi session using Pi's native fork/session machinery, branching before a user message or at an Agent response as `/tree` does;
 3. return the new session ID; and
 4. register and select the resulting Mischief Thread.
 
@@ -52,15 +53,15 @@ MagPi ACP already has a private rewind capability:
 _magpi-acp/session/rewind
 ```
 
-It maps client message IDs to Pi user messages and navigates the native Pi tree. Mischief needs a typed Agent operation for rollback, followed by reloading the current transcript from ACP.
+It maps client message IDs to Pi messages and navigates the native Pi tree. User-message selection moves before that prompt and restores it as a draft; Agent-response selection keeps that response as the active leaf, matching `/tree`.
 
 Rollback should:
 
 - cancel any active turn first;
 - require explicit confirmation;
 - invoke native Pi tree navigation;
-- reload the active branch;
-- remove abandoned messages from the visible transcript; and
+- move the visible transcript to the selected point;
+- restore a selected user prompt as an editable draft; and
 - preserve Pi's underlying tree history.
 
 ## Implementation order
