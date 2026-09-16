@@ -481,6 +481,21 @@ const toolUpdate = (
   };
 };
 
+const sessionPreview = (
+  meta: Record<string, unknown> | null | undefined
+): { preview?: string; previewRole?: "user" | "assistant" } => {
+  const value = meta?.magPiAcp;
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const { preview, previewRole } = value as Record<string, unknown>;
+  return typeof preview === "string" &&
+    preview.length <= 160 &&
+    (previewRole === "user" || previewRole === "assistant")
+    ? { preview, previewRole }
+    : {};
+};
+
 const visibleMessageText = (
   update: SessionUpdate["sessionUpdate"],
   text: string
@@ -696,6 +711,38 @@ class AcpConnection implements AgentConnection {
         configOptions: configOptions(session.configOptions),
         sessionId: session.sessionId,
       };
+    });
+  }
+
+  history(cwd: string) {
+    return AcpConnection.call(async () => {
+      await this.start();
+      const sessions = [];
+      let cursor: string | undefined;
+      do {
+        // Pagination is cursor-dependent and must remain sequential.
+        // oxlint-disable-next-line no-await-in-loop
+        const page = await this.requireConnection().listSessions({
+          cwd,
+          ...(cursor ? { cursor } : {}),
+        });
+        sessions.push(
+          ...page.sessions
+            .filter((session) => session.cwd === cwd)
+            .map((session) => ({
+              cwd: session.cwd,
+              ...sessionPreview(session._meta),
+              sessionId: session.sessionId,
+              ...(session.title ? { title: session.title } : {}),
+              ...(session.updatedAt &&
+              Number.isFinite(Date.parse(session.updatedAt))
+                ? { updatedAt: session.updatedAt }
+                : {}),
+            }))
+        );
+        cursor = page.nextCursor ?? undefined;
+      } while (cursor);
+      return sessions;
     });
   }
 

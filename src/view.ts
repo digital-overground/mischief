@@ -20,6 +20,7 @@ import type {
 } from "./projects/projects";
 import type {
   PromptImage,
+  ThreadHistoryEntry,
   ThreadInteractionResponse,
   Threads,
   ThreadsChange,
@@ -98,6 +99,27 @@ interface GitHubIssueQuickPickItem extends vscode.QuickPickItem {
 interface SourceBranchQuickPickItem extends vscode.QuickPickItem {
   branch?: GitSourceBranch;
 }
+
+interface ThreadHistoryQuickPickItem extends vscode.QuickPickItem {
+  entry: ThreadHistoryEntry;
+}
+
+const historyTime = (value: string, now = Date.now()): string => {
+  const elapsed = Math.max(0, now - Date.parse(value));
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 1) {
+    return "now";
+  }
+  if (minutes < 60) {
+    return `${minutes}min`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours}h`;
+  }
+  const days = Math.floor(hours / 24);
+  return days <= 5 ? `${days}d` : new Date(value).toLocaleDateString();
+};
 
 const interactionResponse = (
   value: unknown
@@ -605,6 +627,10 @@ export class MischiefView implements vscode.WebviewViewProvider {
       await this.newThread();
       return true;
     }
+    if (data.type === "threadHistory") {
+      await this.showThreadHistory();
+      return true;
+    }
     if (data.type === "setupContinue") {
       const selected = Array.isArray(data.selected)
         ? data.selected
@@ -738,6 +764,53 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
     if (data.type === "openDiff" && typeof data.path === "string") {
       await this.openDiff(data.path);
+    }
+  }
+
+  private async showThreadHistory(): Promise<void> {
+    const loading = vscode.window.createQuickPick();
+    loading.busy = true;
+    loading.placeholder = "Loading previous Threads…";
+    loading.title = "Thread History";
+    let cancelled = false;
+    const hidden = loading.onDidHide(() => {
+      cancelled = true;
+    });
+    loading.show();
+    const entries = await this.threads.history();
+    hidden.dispose();
+    loading.hide();
+    loading.dispose();
+    if (cancelled) {
+      return;
+    }
+    if (!entries.length) {
+      await vscode.window.showInformationMessage(
+        "No previous Threads in this Workspace."
+      );
+      return;
+    }
+    const selected =
+      await vscode.window.showQuickPick<ThreadHistoryQuickPickItem>(
+        entries.map((entry) => ({
+          entry,
+          label: entry.title,
+          ...(entry.updatedAt
+            ? { description: historyTime(entry.updatedAt) }
+            : {}),
+          ...(entry.preview && entry.previewRole
+            ? {
+                detail: `${entry.previewRole === "user" ? "You" : "Agent"}: ${entry.preview}`,
+              }
+            : {}),
+        })),
+        {
+          placeHolder: "Select a Thread to reopen",
+          title: "Thread History",
+        }
+      );
+    if (selected) {
+      await this.threads.reopen(selected.entry);
     }
   }
 

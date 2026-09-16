@@ -48,6 +48,23 @@ export interface AgentPromptResult {
   stopReason: "completed" | "cancelled";
 }
 
+export interface AgentHistoryEntry {
+  sessionId: string;
+  cwd: string;
+  title?: string;
+  updatedAt?: string;
+  preview?: string;
+  previewRole?: "user" | "assistant";
+}
+
+export interface ThreadHistoryEntry {
+  sessionId: string;
+  title: string;
+  updatedAt?: string;
+  preview?: string;
+  previewRole?: "user" | "assistant";
+}
+
 export interface PromptImage {
   data: string;
   mimeType: string;
@@ -146,6 +163,7 @@ export interface AgentConnection {
     cwd: string,
     messageId: string
   ) => Promise<AgentSession>;
+  history: (cwd: string) => Promise<AgentHistoryEntry[]>;
   load: (sessionId: string, cwd: string) => Promise<AgentSession>;
   prompt: (
     sessionId: string,
@@ -443,6 +461,80 @@ export class Threads {
   onChange(listener: (change?: ThreadsChange) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  async history(): Promise<ThreadHistoryEntry[]> {
+    const { workspace } = this;
+    if (!workspace) {
+      return [];
+    }
+    const connection = this.createConnection({
+      elicitation: () => Promise.resolve({ action: "cancel" }),
+      error: () => null,
+      permission: () => Promise.resolve({ cancelled: true }),
+      update: () => null,
+    });
+    try {
+      const registered = new Set(
+        this.stored.flatMap((record) =>
+          record.sessionId ? [record.sessionId] : []
+        )
+      );
+      const history = await connection.history(workspace);
+      return history
+        .filter(
+          (entry) => entry.cwd === workspace && !registered.has(entry.sessionId)
+        )
+        .map((entry) => ({
+          ...(entry.preview && entry.previewRole
+            ? { preview: entry.preview, previewRole: entry.previewRole }
+            : {}),
+          sessionId: entry.sessionId,
+          title: entry.title?.trim() || "Untitled Thread",
+          ...(entry.updatedAt ? { updatedAt: entry.updatedAt } : {}),
+        }))
+        .toSorted((left, right) => {
+          if (!left.updatedAt) {
+            return right.updatedAt ? 1 : 0;
+          }
+          return right.updatedAt
+            ? right.updatedAt.localeCompare(left.updatedAt)
+            : -1;
+        });
+    } finally {
+      connection.dispose();
+    }
+  }
+
+  async reopen(entry: ThreadHistoryEntry): Promise<void> {
+    const { workspace } = this;
+    if (!workspace) {
+      return;
+    }
+    const existing = this.stored.find(
+      (record) => record.sessionId === entry.sessionId
+    );
+    if (existing) {
+      await this.select(existing.id);
+      return;
+    }
+    const now = new Date().toISOString();
+    const record: StoredThread = {
+      createdAt: now,
+      id: randomUUID(),
+      name: entry.title,
+      sessionId: entry.sessionId,
+      status: "idle",
+      updatedAt: entry.updatedAt ?? now,
+      workspace,
+    };
+    this.stored.unshift(record);
+    this.selectedId = record.id;
+    this.viewedId = record.id;
+    this.draft = false;
+    await this.register(record);
+    await this.load(record);
+    this.emit();
   }
 
   async newThread(): Promise<void> {

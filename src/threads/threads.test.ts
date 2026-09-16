@@ -36,6 +36,7 @@ const deferred = (): Deferred => {
 class FakeAgent {
   createCalls = 0;
   loadCalls = 0;
+  loadRequests: { sessionId: string; cwd: string }[] = [];
   initialConfigOptions: ThreadConfigOption[] = [];
   failCreate = false;
   createError?: Error;
@@ -53,6 +54,15 @@ class FakeAgent {
     value: string | boolean;
   };
   disposed = false;
+  historyEntries: {
+    sessionId: string;
+    cwd: string;
+    title?: string;
+    updatedAt?: string;
+    preview?: string;
+    previewRole?: "user" | "assistant";
+  }[] = [];
+  historyCalls: string[] = [];
   forkCalls: { sessionId: string; cwd: string; messageId: string }[] = [];
   rollbackCalls: { sessionId: string; messageId: string }[] = [];
   update?: AgentHandlers["update"];
@@ -120,8 +130,13 @@ class FakeAgent {
           sessionId: "forked-session",
         });
       },
-      load: (sessionId) => {
+      history: (cwd) => {
+        this.historyCalls.push(cwd);
+        return Promise.resolve(this.historyEntries);
+      },
+      load: (sessionId, cwd) => {
         this.loadCalls += 1;
+        this.loadRequests.push({ cwd, sessionId });
         if (this.replayOnLoad) {
           handlers.update({
             kind: "user",
@@ -979,6 +994,86 @@ describe("threads module", () => {
         { indicator: "idle", needsAttention: false },
         { id: firstId, indicator: "idle", needsAttention: false },
       ],
+    });
+  });
+
+  test("lists inactive Agent Threads for the current Workspace newest-first", async () => {
+    const agent = new FakeAgent();
+    agent.historyEntries = [
+      {
+        cwd: "/workspace",
+        sessionId: "session-1",
+        title: "Already open",
+        updatedAt: "2026-09-16T09:00:00.000Z",
+      },
+      {
+        cwd: "/workspace",
+        preview: "Fix the login cache",
+        previewRole: "user",
+        sessionId: "session-newest",
+        title: "Newest",
+        updatedAt: "2026-09-16T12:00:00.000Z",
+      },
+      {
+        cwd: "/other",
+        sessionId: "other-workspace",
+        title: "Other Workspace",
+        updatedAt: "2026-09-16T13:00:00.000Z",
+      },
+      { cwd: "/workspace", sessionId: "session-unknown" },
+    ];
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Register this session");
+
+    await expect(threads.history()).resolves.toStrictEqual([
+      {
+        preview: "Fix the login cache",
+        previewRole: "user",
+        sessionId: "session-newest",
+        title: "Newest",
+        updatedAt: "2026-09-16T12:00:00.000Z",
+      },
+      { sessionId: "session-unknown", title: "Untitled Thread" },
+    ]);
+    expect(agent.historyCalls).toStrictEqual(["/workspace"]);
+    expect(agent.disposed).toBeTruthy();
+  });
+
+  test("reopens an Agent session once as the selected durable Thread", async () => {
+    const agent = new FakeAgent();
+    agent.replayOnLoad = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    const entry = {
+      sessionId: "previous-session",
+      title: "Previous Thread",
+      updatedAt: "2026-09-15T12:00:00.000Z",
+    };
+
+    await threads.reopen(entry);
+    await threads.reopen(entry);
+
+    expect(database.snapshot().threads).toMatchObject([
+      {
+        name: "Previous Thread",
+        sessionId: "previous-session",
+        updatedAt: "2026-09-15T12:00:00.000Z",
+        workspace: "/workspace",
+      },
+    ]);
+    expect(database.snapshot().selections).toMatchObject([
+      { threadId: database.snapshot().threads[0]?.id, workspace: "/workspace" },
+    ]);
+    expect(agent.loadRequests).toStrictEqual([
+      { cwd: "/workspace", sessionId: "previous-session" },
+    ]);
+    expect(threads.snapshot().selected).toMatchObject({
+      items: [
+        { kind: "user", text: "Restore me" },
+        { kind: "assistant", text: "Restored." },
+      ],
+      name: "Previous Thread",
     });
   });
 

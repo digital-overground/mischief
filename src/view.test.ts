@@ -23,6 +23,7 @@ const vscode = vi.hoisted(() => ({
   showErrorMessage: vi.fn<() => Promise<void>>(() => Promise.resolve()),
   showInformationMessage: vi.fn<() => Promise<void>>(() => Promise.resolve()),
   showInputBox: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+  showQuickPick: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   updateConfiguration: vi.fn<
     (key: string, value: unknown, target: number) => Promise<void>
   >(() => Promise.resolve()),
@@ -56,6 +57,7 @@ vi.mock(
         showErrorMessage: vscode.showErrorMessage,
         showInformationMessage: vscode.showInformationMessage,
         showInputBox: vscode.showInputBox,
+        showQuickPick: vscode.showQuickPick,
       },
       workspace: {
         getConfiguration: () => ({
@@ -550,6 +552,152 @@ describe("view provider", () => {
       sourceTitle: "Source Branch for #9",
     });
     vscode.assignWorkspaceColors = true;
+  });
+
+  test("shows inactive Thread history with compact times and reopens the selection", async () => {
+    let receive: ((message: unknown) => void) | undefined;
+    const now = new Date("2026-09-16T12:00:00.000Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const entries = [
+      {
+        preview: "Fix the login cache",
+        previewRole: "user" as const,
+        sessionId: "now",
+        title: "Now",
+        updatedAt: now.toISOString(),
+      },
+      {
+        sessionId: "minutes",
+        title: "Minutes",
+        updatedAt: "2026-09-16T11:47:00.000Z",
+      },
+      {
+        sessionId: "hours",
+        title: "Hours",
+        updatedAt: "2026-09-16T10:00:00.000Z",
+      },
+      {
+        sessionId: "days",
+        title: "Days",
+        updatedAt: "2026-09-12T12:00:00.000Z",
+      },
+      {
+        sessionId: "five-days",
+        title: "Five days",
+        updatedAt: "2026-09-11T12:00:00.000Z",
+      },
+      {
+        sessionId: "date",
+        title: "Date",
+        updatedAt: "2026-09-10T12:00:00.000Z",
+      },
+      { sessionId: "unknown", title: "Unknown" },
+    ];
+    const history = vi
+      .fn<() => Promise<typeof entries>>()
+      .mockResolvedValueOnce(entries)
+      .mockResolvedValueOnce(entries)
+      .mockResolvedValueOnce([]);
+    const reopen = vi.fn<() => Promise<void>>(() => Promise.resolve());
+    const loadingPicker = {
+      busy: false,
+      dispose: vi.fn<() => void>(),
+      hide: vi.fn<() => void>(),
+      onDidHide: vi.fn<(_listener: () => void) => { dispose: () => void }>(
+        () => ({ dispose: vi.fn<() => void>() })
+      ),
+      placeholder: "",
+      show: vi.fn<() => void>(),
+      title: "",
+    };
+    vscode.createQuickPick.mockReset().mockReturnValue(loadingPicker);
+    vscode.showInformationMessage.mockClear();
+    vscode.showQuickPick
+      .mockResolvedValueOnce(null)
+      .mockImplementationOnce((items: unknown) =>
+        Promise.resolve((items as unknown[])[1])
+      );
+    const provider = new MischiefView(
+      { open: () => Promise.resolve({ projects: [], ungrouped: [] }) } as never,
+      {
+        history,
+        onChange: vi.fn<() => void>(),
+        reopen,
+        snapshot: () => ({ threads: [], workspace: "/workspace" }),
+      } as never,
+      { fsPath: process.cwd() } as never,
+      { get: (_key: string, fallback: unknown) => fallback } as never,
+      profileDatabase() as never
+    );
+    await provider.resolveWebviewView({
+      onDidDispose: vi.fn<() => void>(),
+      webview: {
+        asWebviewUri: (uri: { fsPath: string }) => ({
+          toString: () => `webview:${uri.fsPath}`,
+        }),
+        cspSource: "webview-csp",
+        html: "",
+        onDidReceiveMessage: (listener: (message: unknown) => void) => {
+          receive = listener;
+        },
+        options: {},
+        postMessage: vi.fn<() => void>(),
+      },
+    } as never);
+
+    receive?.({ type: "threadHistory" });
+    expect({
+      busy: loadingPicker.busy,
+      placeholder: loadingPicker.placeholder,
+      shows: loadingPicker.show.mock.calls.length,
+      title: loadingPicker.title,
+    }).toStrictEqual({
+      busy: true,
+      placeholder: "Loading previous Threads…",
+      shows: 1,
+      title: "Thread History",
+    });
+    await vi.runAllTimersAsync();
+    expect(reopen).not.toHaveBeenCalled();
+    receive?.({ type: "threadHistory" });
+    await vi.runAllTimersAsync();
+
+    const firstCall = vscode.showQuickPick.mock.calls[0] as unknown as [
+      { label: string; description?: string }[],
+      { placeHolder: string; title: string },
+    ];
+    expect(firstCall).toStrictEqual([
+      [
+        {
+          description: "now",
+          detail: "You: Fix the login cache",
+          entry: entries[0],
+          label: "Now",
+        },
+        { description: "13min", entry: entries[1], label: "Minutes" },
+        { description: "2h", entry: entries[2], label: "Hours" },
+        { description: "4d", entry: entries[3], label: "Days" },
+        { description: "5d", entry: entries[4], label: "Five days" },
+        {
+          description: new Date(
+            entries[5].updatedAt ?? ""
+          ).toLocaleDateString(),
+          entry: entries[5],
+          label: "Date",
+        },
+        { entry: entries[6], label: "Unknown" },
+      ],
+      { placeHolder: "Select a Thread to reopen", title: "Thread History" },
+    ]);
+    expect(reopen).toHaveBeenCalledExactlyOnceWith(entries[1]);
+
+    receive?.({ type: "threadHistory" });
+    await vi.runAllTimersAsync();
+    expect(vscode.showInformationMessage).toHaveBeenCalledExactlyOnceWith(
+      "No previous Threads in this Workspace."
+    );
+    vi.useRealTimers();
   });
 
   test("cancels the issue picker without mutation and reports no open issues", async () => {

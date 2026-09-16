@@ -560,6 +560,9 @@ describe("React webview", () => {
       closeIcons: document.querySelectorAll(
         '[aria-label="Close Workspace"] .thread-action-icon'
       ).length,
+      history: document.querySelectorAll(
+        '.workspace-node.current [aria-label="Thread History"]'
+      ).length,
       newThread: document.querySelectorAll(
         '.workspace-node.current [aria-label="New Thread"]'
       ).length,
@@ -574,6 +577,9 @@ describe("React webview", () => {
       openWorkspaceWindows: document.querySelectorAll(
         '.workspace-node:not(.current) [aria-label$=" Window"]'
       ).length,
+      remoteHistory: document.querySelectorAll(
+        '.workspace-node:not(.current) [aria-label="Thread History"]'
+      ).length,
       remove: document.querySelectorAll(
         '.workspace-node.current [aria-label="Remove Thread"]'
       ).length,
@@ -586,10 +592,12 @@ describe("React webview", () => {
       attention: 2,
       branchIcons: 2,
       closeIcons: 2,
+      history: 1,
       newThread: 1,
       newThreadMatchesFooter: true,
       newWorkspaceIcons: 1,
       openWorkspaceWindows: 1,
+      remoteHistory: 0,
       remove: 2,
       rename: 2,
       untitledButtons: 0,
@@ -620,6 +628,16 @@ describe("React webview", () => {
       collapsed: { expanded: "false", workspaces: 0 },
       expanded: { expanded: "true", workspaces: 2 },
     });
+
+    const history = document.querySelector<HTMLButtonElement>(
+      '.workspace-node.current [aria-label="Thread History"]'
+    );
+    if (!history) {
+      throw new Error("Missing Thread History control");
+    }
+    postMessage.mockClear();
+    await act(() => history.click());
+    const historyMessage = [...postMessage.mock.calls];
 
     const [, renameError] = document.querySelectorAll<HTMLButtonElement>(
       '.workspace-node.current [aria-label="Rename Thread"]'
@@ -670,6 +688,7 @@ describe("React webview", () => {
     await act(() => remoteThread.click());
     expect({
       collapsed,
+      historyMessage,
       reexpanded,
       remoteMessage: postMessage.mock.calls,
       remoteRemove: document.querySelector(
@@ -685,6 +704,7 @@ describe("React webview", () => {
         headerSelected: true,
         selectedThread: null,
       },
+      historyMessage: [[{ type: "threadHistory" }]],
       reexpanded: {
         expanded: "true",
         headerSelected: false,

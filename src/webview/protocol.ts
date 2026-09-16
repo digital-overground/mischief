@@ -58,7 +58,7 @@ export type HostToWebviewMessage =
 
 export type WebviewToHostMessage =
   | {
-      type: "ready" | "contextItems" | "newThread";
+      type: "ready" | "contextItems" | "newThread" | "threadHistory";
     }
   | {
       type:

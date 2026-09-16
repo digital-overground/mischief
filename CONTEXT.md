@@ -41,7 +41,7 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 ## Thread behavior
 
 - A new Thread can be started from its Workspace row or from the selected Workspace’s Thread-section toolbar. An empty new Thread appears only in the transcript composer, without a Thread-list row. Mischief registers it when its first prompt is sent; an empty Thread is not durable. If that attempt fails, the Thread remains durable in a failed state and can be retried. ACP can name the Thread from a quick summary at that point; the user may rename it afterward.
-- Mischief registers only Threads it creates or explicitly tracks; arbitrary ACP session history creates neither Thread registrations nor Projects. Removing a Thread unregisters it from Mischief without deleting Agent-owned ACP/Pi history.
+- Mischief registers only Threads it creates or explicitly tracks. Agent session history remains unregistered until the user reopens one entry from the current Workspace's Thread History; removing that Thread unregisters it without deleting Agent-owned ACP/Pi history.
 - Focusing a Thread opens or reuses its Workspace, then restores the Thread transcript. On activation, Mischief expands the current Workspace and restores its last-selected Thread, falling back to its newest Thread. If the Workspace has no Threads, the bottom section immediately shows an unregistered New Thread composer.
 - Threads are the user-facing conversations; there is no separate Agents collection or view. The fixed Agent is metadata and runtime ownership for each Thread.
 - Threads in the selected Workspace are ordered newest-first by creation time. Each Thread row shows its name, a running/idle/waiting/error indicator, and time since its last message using compact units such as `13min`, `2h`, or `4d`. Waiting means the Agent needs a permission or elicitation response. MagPi requests that interaction through ACP; Mischief renders it inline in the Thread transcript and returns the user’s response through ACP. V1 relies on Thread-row indicators for waiting and errors.
@@ -102,7 +102,7 @@ The exact split is allowed to shrink if a file does not earn its own behavior. `
 
 - Durable background ownership of in-flight turns.
 - Proposed VS Code Chat APIs.
-- Importing all existing Pi sessions.
+- Automatically or bulk importing all existing Pi sessions.
 - Configuring or selecting additional ACP Agents.
 - Displaying ACP context usage and cost in the Thread header.
 - Filters, selection sending, status-bar decoration, background waiting/error notifications, and other convenience features not required for the first vertical slice.

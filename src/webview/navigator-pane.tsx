@@ -168,12 +168,20 @@ const WorkspaceNode = ({
           </IconButton>
         )}
         {workspace.current ? (
-          <IconButton
-            title="New Thread"
-            onClick={() => postMessage({ type: "newThread" })}
-          >
-            <SvgIcon className="thread-action-icon" kind="chat" />
-          </IconButton>
+          <>
+            <IconButton
+              title="Thread History"
+              onClick={() => postMessage({ type: "threadHistory" })}
+            >
+              <SvgIcon className="thread-action-icon" kind="history" />
+            </IconButton>
+            <IconButton
+              title="New Thread"
+              onClick={() => postMessage({ type: "newThread" })}
+            >
+              <SvgIcon className="thread-action-icon" kind="chat" />
+            </IconButton>
+          </>
         ) : null}
         <IconButton
           title="Close Workspace"
