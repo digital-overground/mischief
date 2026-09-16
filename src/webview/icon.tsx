@@ -6,6 +6,7 @@ type IconKind =
   | "chat"
   | "circle"
   | "circleSlash"
+  | "download"
   | "history"
   | "maximize"
   | "minimize"
@@ -13,16 +14,19 @@ type IconKind =
   | "rollback"
   | "circleCheck"
   | "eye"
+  | "externalLink"
   | "file"
   | "folderGit2"
   | "github"
   | "gitBranch"
+  | "globe"
   | "package"
   | "pencil"
   | "plan"
   | "plus"
   | "question"
   | "save"
+  | "search"
   | "send"
   | "signpost"
   | "spool"
@@ -89,6 +93,20 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="m4.93 4.93 14.14 14.14" />
     </>
   ),
+  download: (
+    <>
+      <path d="M12 3v12" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M5 21h14" />
+    </>
+  ),
+  externalLink: (
+    <>
+      <path d="M15 3h6v6" />
+      <path d="M10 14 21 3" />
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    </>
+  ),
   eye: (
     <>
       <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
@@ -129,6 +147,13 @@ const paths: Record<IconKind, React.ReactNode> = {
     <>
       <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3.28-.36 6.72-1.61 6.72-7.05A5.5 5.5 0 0 0 19.22 3.61 5.07 5.07 0 0 0 19.08.67S17.9.29 15 2.15a13.38 13.38 0 0 0-7 0C5.1.29 3.92.67 3.92.67a5.07 5.07 0 0 0-.14 2.94 5.5 5.5 0 0 0-1.5 3.84c0 5.44 3.44 6.69 6.72 7.05A4.8 4.8 0 0 0 8 18v4" />
       <path d="M9 18c-4.51 2-5-2-7-2" />
+    </>
+  ),
+  globe: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M2 12h20" />
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2" />
     </>
   ),
   history: (
@@ -201,6 +226,12 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
       <path d="M17 21v-8H7v8" />
       <path d="M7 3v5h8" />
+    </>
+  ),
+  search: (
+    <>
+      <circle cx="11" cy="11" r="8" />
+      <path d="m21 21-4.3-4.3" />
     </>
   ),
   send: (

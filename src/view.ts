@@ -443,6 +443,14 @@ export class MischiefView implements vscode.WebviewViewProvider {
     this.render();
   }
 
+  setAllExpanded(expanded: boolean): void {
+    const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
+    void postMessage?.({
+      expanded,
+      type: "setAllExpanded",
+    } satisfies HostToWebviewMessage);
+  }
+
   showSettings(): void {
     const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
     void postMessage?.({
@@ -580,6 +588,17 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
     if (data.type === "contextItems") {
       await this.sendContextItems();
+      return true;
+    }
+    if (
+      data.type === "navigatorExpanded" &&
+      typeof data.expanded === "boolean"
+    ) {
+      await vscode.commands.executeCommand(
+        "setContext",
+        "mischief.navigatorAllExpanded",
+        data.expanded
+      );
       return true;
     }
     if (data.type === "newThread") {

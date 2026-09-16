@@ -159,7 +159,7 @@ const GenericToolItem = ({
   </details>
 );
 
-const askUserQuestion = (input?: string): string | undefined => {
+const jsonField = (input: string | undefined, field: string): unknown => {
   if (!input) {
     return;
   }
@@ -169,12 +169,31 @@ const askUserQuestion = (input?: string): string | undefined => {
   } catch {
     return;
   }
-  if (!parsed || typeof parsed !== "object") {
-    return;
-  }
-  const { question } = parsed as Record<string, unknown>;
-  return typeof question === "string" ? question : undefined;
+  return parsed && typeof parsed === "object"
+    ? (parsed as Record<string, unknown>)[field]
+    : undefined;
 };
+
+const jsonStringField = (
+  input: string | undefined,
+  field: string
+): string | undefined => {
+  const value = jsonField(input, field);
+  return typeof value === "string" ? value : undefined;
+};
+
+const fetchUrl = (input?: string): string | undefined => {
+  const urls = jsonField(input, "urls");
+  if (typeof urls === "string") {
+    return urls;
+  }
+  return Array.isArray(urls)
+    ? urls.find((url): url is string => typeof url === "string")
+    : undefined;
+};
+
+const askUserQuestion = (input?: string): string | undefined =>
+  jsonStringField(input, "question");
 
 const AskUserItem = ({
   item,
@@ -202,7 +221,60 @@ const AskUserItem = ({
 };
 
 type FileOperation = "read" | "edit" | "write";
-type ToolGroupKind = "terminal" | "files";
+type ToolGroupKind = "terminal" | "files" | "web" | "tools";
+
+const webTools = new Set(["web_fetch", "web_search"]);
+
+const toolGroups = {
+  files: {
+    className: "file-operations-group",
+    icon: "file",
+    label: "File operations",
+  },
+  terminal: {
+    className: "terminal-group",
+    icon: "terminal",
+    label: "Terminal",
+  },
+  tools: { className: "tools-group", icon: "tool", label: "Tools" },
+  web: { className: "web-group", icon: "globe", label: "Web" },
+} as const;
+
+const genericToolOperation = (item: RenderedTranscriptItem) => {
+  const title = item.title || "Tool call";
+  const group: ToolGroupKind = webTools.has(title) ? "web" : "tools";
+  if (title === "web_fetch") {
+    const target = fetchUrl(item.input) ?? title;
+    return {
+      group,
+      icon: "download" as const,
+      iconTitle: "Fetch",
+      label: undefined,
+      target,
+      targetTitle: target,
+    };
+  }
+  if (title === "web_search" || title === "session_search") {
+    const target = jsonStringField(item.input, "query") ?? title;
+    return {
+      group,
+      icon: "search" as const,
+      iconTitle: "Search",
+      label: undefined,
+      target,
+      targetTitle: target,
+    };
+  }
+  const metadata = toolGroups[group];
+  return {
+    group,
+    icon: metadata.icon,
+    iconTitle: "Tool",
+    label: undefined,
+    target: title,
+    targetTitle: title,
+  };
+};
 
 const fileOperations = {
   edit: { icon: "pencil", label: "Edit" },
@@ -256,7 +328,7 @@ const fileOperationKind = (
 };
 
 const toolOperation = (item?: RenderedTranscriptItem) => {
-  if (item?.kind !== "tool") {
+  if (item?.kind !== "tool" || item.title === "ask_user") {
     return;
   }
   if (item.toolKind === "execute") {
@@ -274,7 +346,7 @@ const toolOperation = (item?: RenderedTranscriptItem) => {
   }
   const kind = fileOperationKind(item);
   if (!kind) {
-    return;
+    return genericToolOperation(item);
   }
   const operation = fileOperations[kind];
   const location = item.locations?.[0];
@@ -341,19 +413,16 @@ const ToolGroup = ({
   group: ToolGroupKind;
   items: RenderedTranscriptItem[];
 }): React.JSX.Element => {
-  const terminal = group === "terminal";
-  const label = terminal ? "Terminal" : "File operations";
+  const metadata = toolGroups[group];
   return (
-    <section
-      className={`entry tool tool-group ${terminal ? "terminal-group" : "file-operations-group"}`}
-    >
+    <section className={`entry tool tool-group ${metadata.className}`}>
       <div className="tool-group-heading">
         <Icon
           className="entry-icon"
-          kind={terminal ? "terminal" : "file"}
-          title={label}
+          kind={metadata.icon}
+          title={metadata.label}
         />
-        {label}
+        {metadata.label}
       </div>
       <div className="tool-group-content">
         {items.map((item) => (

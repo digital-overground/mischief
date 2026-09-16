@@ -198,6 +198,12 @@ export const activate = async (
       view.addWorkspace()
     ),
     vscode.commands.registerCommand("mischief.refresh", () => view.refresh()),
+    vscode.commands.registerCommand("mischief.expandAll", () =>
+      view.setAllExpanded(true)
+    ),
+    vscode.commands.registerCommand("mischief.collapseAll", () =>
+      view.setAllExpanded(false)
+    ),
     vscode.commands.registerCommand("mischief.newThread", () =>
       view.newThread()
     ),

@@ -965,6 +965,44 @@ describe("view provider", () => {
     });
   });
 
+  test("toggles Expand All and Collapse All in the native Mischief title bar", () => {
+    const manifest = JSON.parse(readFileSync("package.json", "utf-8")) as {
+      contributes: {
+        commands: { command: string; icon?: string; title: string }[];
+        menus: Record<string, { command: string; group: string }[]>;
+      };
+    };
+
+    expect(manifest.contributes.commands).toStrictEqual(
+      expect.arrayContaining([
+        {
+          command: "mischief.expandAll",
+          icon: "$(expand-all)",
+          title: "Mischief: Expand All",
+        },
+        {
+          command: "mischief.collapseAll",
+          icon: "$(collapse-all)",
+          title: "Mischief: Collapse All",
+        },
+      ])
+    );
+    expect(manifest.contributes.menus["view/title"]).toStrictEqual(
+      expect.arrayContaining([
+        {
+          command: "mischief.expandAll",
+          group: "navigation@3",
+          when: "view == mischief.view && !mischief.navigatorAllExpanded",
+        },
+        {
+          command: "mischief.collapseAll",
+          group: "navigation@3",
+          when: "view == mischief.view && mischief.navigatorAllExpanded",
+        },
+      ])
+    );
+  });
+
   test("static webview shell loads the React bundle", () => {
     const html = readFileSync("media/webview.html", "utf-8");
     const style = readFileSync("media/webview.css", "utf-8");
@@ -978,6 +1016,14 @@ describe("view provider", () => {
     expect(style).toMatch(
       /footer \{[^}]*flex: none;[\s\S]*#processing::before \{[^}]*animation: thread-status-frame/u
     );
+  });
+
+  test("anchors the Thread directly beneath content-sized navigation", () => {
+    const style = readFileSync("media/webview.css", "utf-8");
+
+    expect(style).toMatch(/#navigator \{[^}]*flex: 0 1 auto;/u);
+    expect(style).toMatch(/#thread \{[^}]*flex: 1 0 72px;/u);
+    expect(style).not.toContain(".resizer");
   });
 
   test("keeps Navigator metadata and hover actions compact", () => {
@@ -1247,6 +1293,82 @@ describe("view provider", () => {
           type: "state",
         })
       )
+    );
+  });
+
+  test("posts Expand All and Collapse All requests to the Navigator", async () => {
+    const postMessage = vi.fn<(message: unknown) => void>();
+    const provider = new MischiefView(
+      {} as never,
+      {
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({ threads: [] }),
+      } as never,
+      { fsPath: process.cwd() } as never,
+      {} as never,
+      profileDatabase() as never
+    );
+    await provider.resolveWebviewView({
+      onDidDispose: vi.fn<() => void>(),
+      webview: {
+        asWebviewUri: (uri: { fsPath: string }) => ({
+          toString: () => `webview:${uri.fsPath}`,
+        }),
+        cspSource: "webview-csp",
+        html: "",
+        onDidReceiveMessage: vi.fn<() => void>(),
+        options: {},
+        postMessage,
+      },
+    } as never);
+    postMessage.mockClear();
+
+    provider.setAllExpanded(true);
+    provider.setAllExpanded(false);
+
+    expect(postMessage.mock.calls).toStrictEqual([
+      [{ expanded: true, type: "setAllExpanded" }],
+      [{ expanded: false, type: "setAllExpanded" }],
+    ]);
+  });
+
+  test("updates the native toggle after Navigator expansion changes", async () => {
+    let receive: ((message: unknown) => void) | undefined;
+    const provider = new MischiefView(
+      {} as never,
+      {
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({ threads: [] }),
+      } as never,
+      { fsPath: process.cwd() } as never,
+      {} as never,
+      profileDatabase() as never
+    );
+    await provider.resolveWebviewView({
+      onDidDispose: vi.fn<() => void>(),
+      webview: {
+        asWebviewUri: (uri: { fsPath: string }) => ({
+          toString: () => `webview:${uri.fsPath}`,
+        }),
+        cspSource: "webview-csp",
+        html: "",
+        onDidReceiveMessage: (listener: (message: unknown) => void) => {
+          receive = listener;
+        },
+        options: {},
+        postMessage: vi.fn<() => void>(),
+      },
+    } as never);
+    vscode.executeCommand.mockClear();
+
+    receive?.({ expanded: true, type: "navigatorExpanded" });
+    receive?.({ expanded: false, type: "navigatorExpanded" });
+
+    await vi.waitFor(() =>
+      expect(vscode.executeCommand.mock.calls).toStrictEqual([
+        ["setContext", "mischief.navigatorAllExpanded", true],
+        ["setContext", "mischief.navigatorAllExpanded", false],
+      ])
     );
   });
 

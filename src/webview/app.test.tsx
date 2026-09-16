@@ -136,8 +136,48 @@ describe("React webview", () => {
     await unmount();
   });
 
-  test("maximizes the current Thread and restores the pane layout", async () => {
+  test("keeps the Project list visible while maximizing the current Thread", async () => {
     const unmount = await renderApp();
+    await act(() => {
+      window.dispatchEvent(
+        new MessageEvent<HostToWebviewMessage>("message", {
+          data: {
+            font: "Test Mono",
+            projects: {
+              projects: [
+                {
+                  name: "project",
+                  root: "/project",
+                  workspaces: [
+                    {
+                      ahead: 0,
+                      behind: 0,
+                      changes: 0,
+                      current: true,
+                      linked: false,
+                      name: "workspace",
+                      path: "/workspace",
+                    },
+                    {
+                      ahead: 0,
+                      behind: 0,
+                      changes: 0,
+                      current: false,
+                      linked: true,
+                      name: "remote",
+                      path: "/remote",
+                    },
+                  ],
+                },
+              ],
+              ungrouped: [],
+            },
+            threads: { threads: [], workspace: "/workspace" },
+            type: "state",
+          },
+        })
+      );
+    });
     const navigator = document.querySelector<HTMLElement>("#navigator");
     const thread = document.querySelector<HTMLElement>("#thread");
     const maximize =
@@ -145,29 +185,93 @@ describe("React webview", () => {
     if (!navigator || !thread || !maximize) {
       throw new Error("Missing pane controls");
     }
-    expect(navigator.querySelector(":scope > header")).toBeNull();
-    navigator.style.flexBasis = "140px";
     const maximizeIcon = maximize.innerHTML;
 
     await act(() => maximize.click());
     expect({
       iconChanged: maximize.innerHTML !== maximizeIcon,
       maximized: maximize.getAttribute("aria-pressed"),
-      navigator: navigator.classList.contains("collapsed"),
-      thread: thread.classList.contains("collapsed"),
+      navigatorHidden: navigator.classList.contains("collapsed"),
+      projectExpanded: document
+        .querySelector(".project-toggle")
+        ?.getAttribute("aria-expanded"),
+      projectNames: [...document.querySelectorAll(".group-row .name")].map(
+        (name) => name.textContent
+      ),
+      resizer: document.querySelector(".resizer"),
+      threadHidden: thread.classList.contains("collapsed"),
+      workspaces: document.querySelectorAll(".workspace-node").length,
     }).toStrictEqual({
       iconChanged: true,
       maximized: "true",
-      navigator: true,
-      thread: false,
+      navigatorHidden: false,
+      projectExpanded: "false",
+      projectNames: ["project"],
+      resizer: null,
+      threadHidden: false,
+      workspaces: 0,
     });
 
     await act(() => maximize.click());
     expect({
-      basis: navigator.style.flexBasis,
-      collapsed: navigator.classList.contains("collapsed"),
       maximized: maximize.getAttribute("aria-pressed"),
-    }).toStrictEqual({ basis: "140px", collapsed: false, maximized: "false" });
+      projectExpanded: document
+        .querySelector(".project-toggle")
+        ?.getAttribute("aria-expanded"),
+      workspacesExpanded: [
+        ...document.querySelectorAll(".workspace-toggle"),
+      ].map((toggle) => toggle.getAttribute("aria-expanded")),
+    }).toStrictEqual({
+      maximized: "false",
+      projectExpanded: "true",
+      workspacesExpanded: ["true", "true"],
+    });
+
+    postMessage.mockClear();
+    await act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { expanded: false, type: "setAllExpanded" },
+        })
+      );
+    });
+    expect({
+      maximized: maximize.getAttribute("aria-pressed"),
+      navigatorState: postMessage.mock.calls,
+      projectExpanded: document
+        .querySelector(".project-toggle")
+        ?.getAttribute("aria-expanded"),
+      workspaces: document.querySelectorAll(".workspace-node").length,
+    }).toStrictEqual({
+      maximized: "true",
+      navigatorState: [[{ expanded: false, type: "navigatorExpanded" }]],
+      projectExpanded: "false",
+      workspaces: 0,
+    });
+
+    postMessage.mockClear();
+    await act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { expanded: true, type: "setAllExpanded" },
+        })
+      );
+    });
+    expect({
+      maximized: maximize.getAttribute("aria-pressed"),
+      navigatorState: postMessage.mock.calls,
+      projectExpanded: document
+        .querySelector(".project-toggle")
+        ?.getAttribute("aria-expanded"),
+      workspacesExpanded: [
+        ...document.querySelectorAll(".workspace-toggle"),
+      ].map((toggle) => toggle.getAttribute("aria-expanded")),
+    }).toStrictEqual({
+      maximized: "false",
+      navigatorState: [[{ expanded: true, type: "navigatorExpanded" }]],
+      projectExpanded: "true",
+      workspacesExpanded: ["true", "true"],
+    });
     await unmount();
   });
 
@@ -467,6 +571,9 @@ describe("React webview", () => {
       newWorkspaceIcons: document.querySelectorAll(
         '[aria-label="New Workspace"] .thread-action-icon'
       ).length,
+      openWorkspaceWindows: document.querySelectorAll(
+        '.workspace-node:not(.current) [aria-label$=" Window"]'
+      ).length,
       remove: document.querySelectorAll(
         '.workspace-node.current [aria-label="Remove Thread"]'
       ).length,
@@ -482,9 +589,36 @@ describe("React webview", () => {
       newThread: 1,
       newThreadMatchesFooter: true,
       newWorkspaceIcons: 1,
+      openWorkspaceWindows: 1,
       remove: 2,
       rename: 2,
       untitledButtons: 0,
+    });
+
+    const projectTitle = document.querySelector<HTMLElement>(
+      ".navigator-group > .group-row .name"
+    );
+    const projectToggle = document.querySelector<HTMLButtonElement>(
+      ".navigator-group > .group-row .project-toggle"
+    );
+    if (!projectTitle || !projectToggle) {
+      throw new Error("Missing Project toggle");
+    }
+    await act(() => projectTitle.click());
+    const projectCollapsed = {
+      expanded: projectToggle.getAttribute("aria-expanded"),
+      workspaces: document.querySelectorAll(".workspace-node").length,
+    };
+    await act(() => projectTitle.click());
+    expect({
+      collapsed: projectCollapsed,
+      expanded: {
+        expanded: projectToggle.getAttribute("aria-expanded"),
+        workspaces: document.querySelectorAll(".workspace-node").length,
+      },
+    }).toStrictEqual({
+      collapsed: { expanded: "false", workspaces: 0 },
+      expanded: { expanded: "true", workspaces: 2 },
     });
 
     const [, renameError] = document.querySelectorAll<HTMLButtonElement>(
@@ -495,17 +629,16 @@ describe("React webview", () => {
     }
     postMessage.mockClear();
     await act(() => renameError.click());
-    expect(postMessage).toHaveBeenCalledExactlyOnceWith({
-      id: "error-thread",
-      type: "renameThread",
-    });
 
     const [currentToggle, remoteToggle] =
       document.querySelectorAll<HTMLButtonElement>(".workspace-toggle");
-    if (!(currentToggle && remoteToggle)) {
+    const currentWorkspaceTitle = document.querySelector<HTMLElement>(
+      ".workspace-node.current .workspace-label"
+    );
+    if (!(currentToggle && remoteToggle && currentWorkspaceTitle)) {
       throw new Error("Missing Workspace toggles");
     }
-    await act(() => currentToggle.click());
+    await act(() => currentWorkspaceTitle.click());
     const collapsed = {
       expanded: currentToggle.getAttribute("aria-expanded"),
       headerSelected: document
@@ -515,7 +648,7 @@ describe("React webview", () => {
         ".workspace-node.current .thread-row.selected"
       ),
     };
-    await act(() => currentToggle.click());
+    await act(() => currentWorkspaceTitle.click());
     const reexpanded = {
       expanded: currentToggle.getAttribute("aria-expanded"),
       headerSelected: document
@@ -560,22 +693,43 @@ describe("React webview", () => {
       remoteMessage: [[{ id: "remote-thread", type: "selectThread" }]],
       remoteRemove: null,
       remoteRename: null,
-      toggleMessages: [[{ id: "error-thread", type: "renameThread" }]],
+      toggleMessages: [
+        [{ id: "error-thread", type: "renameThread" }],
+        [{ expanded: true, type: "navigatorExpanded" }],
+      ],
     });
     const remoteWorkspaceTitle = document.querySelector<HTMLElement>(
       ".workspace-node:not(.current) .workspace-label"
     );
-    if (!remoteWorkspaceTitle) {
-      throw new Error("Missing remote Workspace title");
+    const openWorkspaceWindow = document.querySelector<HTMLButtonElement>(
+      '.workspace-node:not(.current) [aria-label="Open remote Window"]'
+    );
+    if (!remoteWorkspaceTitle || !openWorkspaceWindow) {
+      throw new Error("Missing remote Workspace controls");
     }
     postMessage.mockClear();
     await act(() => remoteWorkspaceTitle.click());
-    expect({
+    const remoteCollapsed = {
       expanded: remoteToggle.getAttribute("aria-expanded"),
-      messages: postMessage.mock.calls,
+      messages: [...postMessage.mock.calls],
+    };
+    postMessage.mockClear();
+    await act(() => openWorkspaceWindow.click());
+    expect({
+      collapsed: remoteCollapsed,
+      opened: {
+        expanded: remoteToggle.getAttribute("aria-expanded"),
+        messages: postMessage.mock.calls,
+      },
     }).toStrictEqual({
-      expanded: "true",
-      messages: [[{ path: "/remote", type: "openWorkspace" }]],
+      collapsed: {
+        expanded: "false",
+        messages: [[{ expanded: false, type: "navigatorExpanded" }]],
+      },
+      opened: {
+        expanded: "false",
+        messages: [[{ path: "/remote", type: "openWorkspace" }]],
+      },
     });
     await unmount();
   });
@@ -697,10 +851,36 @@ describe("React webview", () => {
         toolKind: "edit",
       },
       {
-        id: "search",
+        id: "search-1",
+        input:
+          '{"query":"current VS Code extension APIs for grouping transcript tool calls"}',
+        kind: "tool",
+        status: "in_progress",
+        title: "web_search",
+        toolKind: "other",
+      },
+      {
+        id: "fetch",
+        input:
+          '{"urls":"https://example.com/documentation/a-page-with-a-very-long-name"}',
         kind: "tool",
         status: "completed",
-        title: "web_search",
+        title: "web_fetch",
+        toolKind: "other",
+      },
+      {
+        id: "search-2",
+        input: '{"query":"previous tool grouping decisions"}',
+        kind: "tool",
+        status: "in_progress",
+        title: "session_search",
+        toolKind: "other",
+      },
+      {
+        id: "other",
+        kind: "tool",
+        status: "completed",
+        title: "todo",
         toolKind: "other",
       },
     ];
@@ -768,8 +948,24 @@ describe("React webview", () => {
         text: target.textContent,
         title: target.title,
       })),
+      toolsIcons: [
+        ...document.querySelectorAll<HTMLElement>(
+          ".tools-group .tool-operation > summary > .entry-icon"
+        ),
+      ].map((icon) => icon.getAttribute("aria-label")),
+      toolsRows: [
+        ...document.querySelectorAll(".tools-group .tool-operation summary"),
+      ].map((summary) => summary.textContent),
       ungroupedTools: document.querySelectorAll(".entry.tool:not(.tool-group)")
         .length,
+      webIcons: [
+        ...document.querySelectorAll<HTMLElement>(
+          ".web-group .tool-operation > summary > .entry-icon"
+        ),
+      ].map((icon) => icon.getAttribute("aria-label")),
+      webRows: [
+        ...document.querySelectorAll(".web-group .tool-operation summary"),
+      ].map((summary) => summary.textContent),
     }).toStrictEqual({
       fileIcons: ["Read", "Edit", "Write"],
       fileRows: [
@@ -785,8 +981,14 @@ describe("React webview", () => {
         { text: "b.ts:20", title: "src/b.ts:20" },
         { text: "c.ts", title: "src/c.ts" },
       ],
-      groupHeadings: ["Terminal", "Terminal", "File operations"],
-      groupIcons: ["Terminal", "Terminal", "File operations"],
+      groupHeadings: [
+        "Terminal",
+        "Terminal",
+        "File operations",
+        "Web",
+        "Tools",
+      ],
+      groupIcons: ["Terminal", "Terminal", "File operations", "Web", "Tools"],
       operationStatuses: [
         {
           className: "tool-operation-status completed",
@@ -805,6 +1007,22 @@ describe("React webview", () => {
         {
           className: "tool-operation-status completed",
           label: "Completed",
+        },
+        {
+          className: "tool-operation-status completed",
+          label: "Completed",
+        },
+        {
+          className: "tool-operation-status in_progress",
+          label: "In progress",
+        },
+        {
+          className: "tool-operation-status completed",
+          label: "Completed",
+        },
+        {
+          className: "tool-operation-status in_progress",
+          label: "In progress",
         },
         {
           className: "tool-operation-status completed",
@@ -858,7 +1076,14 @@ describe("React webview", () => {
           title: "rg -n TODO src",
         },
       ],
-      ungroupedTools: 1,
+      toolsIcons: ["Search", "Tool"],
+      toolsRows: ["previous tool grouping decisions", "todo"],
+      ungroupedTools: 0,
+      webIcons: ["Search", "Fetch"],
+      webRows: [
+        "current VS Code extension APIs for grouping transcript tool calls",
+        "https://example.com/documentation/a-page-with-a-very-long-name",
+      ],
     });
 
     const [firstCommand, secondCommand] =

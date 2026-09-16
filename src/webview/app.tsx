@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { postMessage } from "./bridge";
 import { ButtonTooltip } from "./button-tooltip";
 import { NavigatorPane } from "./navigator-pane";
-import { PaneLayout } from "./pane-layout";
 import type { HostToWebviewMessage, RenderedTranscriptItem } from "./protocol";
 import { ThreadView } from "./threads/detail/thread-view";
 
@@ -18,6 +17,7 @@ export const App = (): React.JSX.Element => {
   const [snapshot, setSnapshot] = useState(initialState);
   const [assignWorkspaceColors, setAssignWorkspaceColors] = useState(true);
   const [contextItems, setContextItems] = useState<string[]>([]);
+  const [expandAllRequest, setExpandAllRequest] = useState(0);
   const [threadMaximized, setThreadMaximized] = useState(false);
   const [transcript, setTranscript] = useState<{
     items: RenderedTranscriptItem[];
@@ -37,6 +37,11 @@ export const App = (): React.JSX.Element => {
         }
       } else if (event.data.type === "contextItems") {
         setContextItems(event.data.items);
+      } else if (event.data.type === "setAllExpanded") {
+        if (event.data.expanded) {
+          setExpandAllRequest((request) => request + 1);
+        }
+        setThreadMaximized(!event.data.expanded);
       } else if (event.data.type === "state") {
         setSnapshot(event.data);
         setTranscript({ items: [], streaming: false });
@@ -88,27 +93,28 @@ export const App = (): React.JSX.Element => {
 
   return (
     <>
-      <PaneLayout
-        navigator={
-          <NavigatorPane
-            projects={snapshot.projects}
-            threads={snapshot.threads}
-          />
-        }
-        threadMaximized={threadMaximized}
-        thread={
-          <ThreadView
-            contextItems={contextItems}
-            setup={snapshot.setup}
-            snapshot={snapshot.threads}
-            threadMaximized={threadMaximized}
-            transcript={transcript}
-            onToggleMaximized={() =>
-              setThreadMaximized((maximized) => !maximized)
+      <main>
+        <NavigatorPane
+          collapseAll={threadMaximized}
+          expandAllRequest={expandAllRequest}
+          projects={snapshot.projects}
+          threads={snapshot.threads}
+          onExpand={() => setThreadMaximized(false)}
+        />
+        <ThreadView
+          contextItems={contextItems}
+          setup={snapshot.setup}
+          snapshot={snapshot.threads}
+          threadMaximized={threadMaximized}
+          transcript={transcript}
+          onToggleMaximized={() => {
+            if (threadMaximized) {
+              setExpandAllRequest((request) => request + 1);
             }
-          />
-        }
-      />
+            setThreadMaximized(!threadMaximized);
+          }}
+        />
+      </main>
       <dialog
         id="settings-dialog"
         ref={settingsDialog}

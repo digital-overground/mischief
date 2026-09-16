@@ -68,7 +68,7 @@ export const ThreadView = ({
     transcriptItems.findLast((item) => item.kind === "plan" && item.text) ??
     selected?.items.find((item) => item.kind === "plan" && item.text);
   const maximizeLabel = threadMaximized
-    ? "Restore Pane Layout"
+    ? "Expand Navigator"
     : "Maximize Current Thread";
   return (
     <section id="thread">

@@ -89,6 +89,16 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "mischief.expandAll",
+        "title": "Mischief: Expand All",
+        "icon": "$(expand-all)"
+      },
+      {
+        "command": "mischief.collapseAll",
+        "title": "Mischief: Collapse All",
+        "icon": "$(collapse-all)"
+      },
+      {
         "command": "mischief.newThread",
         "title": "Mischief: New Thread"
       },
@@ -109,6 +119,16 @@
           "command": "mischief.refresh",
           "when": "view == mischief.view",
           "group": "navigation@2"
+        },
+        {
+          "command": "mischief.expandAll",
+          "when": "view == mischief.view && !mischief.navigatorAllExpanded",
+          "group": "navigation@3"
+        },
+        {
+          "command": "mischief.collapseAll",
+          "when": "view == mischief.view && mischief.navigatorAllExpanded",
+          "group": "navigation@3"
         },
         {
           "command": "mischief.settings",

@@ -53,6 +53,7 @@ export type HostToWebviewMessage =
       streaming: boolean;
     }
   | { type: "contextItems"; items: string[] }
+  | { type: "setAllExpanded"; expanded: boolean }
   | { type: "showSettings"; assignWorkspaceColors: boolean };
 
 export type WebviewToHostMessage =
@@ -87,6 +88,7 @@ export type WebviewToHostMessage =
     }
   | { type: "prompt"; text: string; images: PromptImage[] }
   | { type: "setupContinue"; selected: string[] }
+  | { type: "navigatorExpanded"; expanded: boolean }
   | { type: "setAssignWorkspaceColors"; value: boolean }
   | { type: "removeSteering" | "sendSteering"; id: string }
   | { type: "setConfig"; id: string; value: string | boolean }
