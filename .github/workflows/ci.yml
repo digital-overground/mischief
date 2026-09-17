@@ -19,3 +19,19 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+
+  release-policy:
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require a versioned dev release
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_BRANCH: ${{ github.head_ref }}
+        run: |
+          test "$HEAD_BRANCH" = dev
+          git show "$BASE_SHA:package.json" > /tmp/base-package.json
+          test "$(node -p "require('./package.json').version")" != "$(node -p "require('/tmp/base-package.json').version")"

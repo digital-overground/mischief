@@ -3,8 +3,10 @@ name: Publish
 on:
   workflow_dispatch:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+    paths:
+      - package.json
 
 permissions:
   contents: read
@@ -34,7 +36,6 @@ jobs:
       - name: Publish
         if: github.event_name == 'push'
         run: |
-          test "${GITHUB_REF_NAME#v}" = "$(node -p "require('./package.json').version")"
           pnpm install --frozen-lockfile
           pnpm check
           pnpm exec vsce publish --azure-credential --no-dependencies
