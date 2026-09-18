@@ -39,9 +39,33 @@ export type ThreadConfigOption =
       currentValue: boolean;
     };
 
+export interface AgentSessionOperations {
+  forkPicker: boolean;
+  treePicker: boolean;
+}
+
 export interface AgentSession {
   sessionId: string;
   configOptions: ThreadConfigOption[];
+  operations: AgentSessionOperations;
+}
+
+export interface AgentForkTarget {
+  entryId: string;
+  text: string;
+}
+
+export interface AgentTreeTarget {
+  entryId: string;
+  role: "user" | "assistant";
+  text: string;
+  depth: number;
+  activeBranch: boolean;
+  current: boolean;
+}
+
+export interface AgentTreeNavigationResult {
+  draft?: string;
 }
 
 export interface AgentPromptResult {
@@ -161,16 +185,21 @@ export interface AgentConnection {
   fork: (
     sessionId: string,
     cwd: string,
-    messageId: string
+    entryId: string
   ) => Promise<AgentSession>;
+  forkTargets: (sessionId: string) => Promise<AgentForkTarget[]>;
   history: (cwd: string) => Promise<AgentHistoryEntry[]>;
   load: (sessionId: string, cwd: string) => Promise<AgentSession>;
+  navigateTree: (
+    sessionId: string,
+    entryId: string
+  ) => Promise<AgentTreeNavigationResult>;
   prompt: (
     sessionId: string,
     text: string,
-    messageId: string,
     images: PromptImage[]
   ) => Promise<AgentPromptResult>;
+  treeTargets: (sessionId: string) => Promise<AgentTreeTarget[]>;
   rollback: (sessionId: string, messageId: string) => Promise<void>;
   setConfig: (
     sessionId: string,
@@ -350,6 +379,7 @@ interface StoredThread {
 
 interface Runtime {
   connection: AgentConnection;
+  operations: AgentSessionOperations;
   status: ThreadStatus;
   streaming: boolean;
   usage?: ThreadUsage;
@@ -748,7 +778,6 @@ export class Threads {
       const result = await runtime.connection.prompt(
         record.sessionId,
         pending.text,
-        pending.id,
         pending.images
       );
       if (result.stopReason === "cancelled") {
@@ -1193,6 +1222,7 @@ export class Threads {
       runtime.setup ??= (async () => {
         const setup = await runtime.connection.create(record.workspace);
         runtime.configOptions = setup.configOptions ?? [];
+        runtime.operations = setup.operations;
         this.emit();
         return setup.sessionId;
       })();
@@ -1225,6 +1255,7 @@ export class Threads {
         record.workspace
       );
       runtime.configOptions = setup.configOptions ?? [];
+      runtime.operations = setup.operations;
       stopStreaming(runtime);
       runtime.status = "idle";
       record.error = undefined;
@@ -1265,6 +1296,7 @@ export class Threads {
       }),
       drafts: [],
       items: [],
+      operations: { forkPicker: false, treePicker: false },
       pending: [],
       status: record.status,
       streaming: false,

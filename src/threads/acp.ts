@@ -31,10 +31,14 @@ import type {
   AgentError,
   AgentElicitationRequest,
   AgentElicitationResponse,
+  AgentForkTarget,
   AgentHandlers,
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentToolUpdate,
+  AgentTreeNavigationResult,
+  AgentTreeTarget,
+  AgentSessionOperations,
   AgentUpdate,
   ElicitationField,
   PromptImage,
@@ -51,6 +55,13 @@ export interface AgentLaunch {
 
 const MAX_CONTEXT_BYTES = 1_000_000;
 const MAX_CONTEXT_FILES = 20;
+
+export const FORK_PICKER_CAPABILITY = "magpi-acp/fork-picker";
+export const TREE_PICKER_CAPABILITY = "magpi-acp/tree-picker";
+export const FORK_MESSAGES_METHOD = "_magpi-acp/session/fork-messages";
+export const TREE_METHOD = "_magpi-acp/session/tree";
+export const NAVIGATE_TREE_METHOD = "_magpi-acp/session/navigate-tree";
+export const FORK_ENTRY_ID_META = "magpi-acp/fork-entry-id";
 
 const referencedPaths = (text: string): string[] => [
   ...new Set(
@@ -767,12 +778,168 @@ const toAgentError = (error: unknown, launch?: AgentLaunch): AgentError =>
         authentication: terminalAuthentication(error, launch),
       });
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === "object" && !Array.isArray(value));
+
+const invalidResponse = (name: string): Error =>
+  new Error(`Invalid MagPi ${name} response`);
+
+export const sessionOperations = (
+  agentCapabilities: unknown
+): AgentSessionOperations => {
+  const meta =
+    isRecord(agentCapabilities) && isRecord(agentCapabilities._meta)
+      ? agentCapabilities._meta
+      : undefined;
+  return {
+    forkPicker: meta?.[FORK_PICKER_CAPABILITY] === true,
+    treePicker: meta?.[TREE_PICKER_CAPABILITY] === true,
+  };
+};
+
+export const decodeForkTargets = (value: unknown): AgentForkTarget[] => {
+  if (!isRecord(value) || !Array.isArray(value.messages)) {
+    throw invalidResponse("fork messages");
+  }
+  return value.messages.map((candidate) => {
+    if (
+      !isRecord(candidate) ||
+      typeof candidate.entryId !== "string" ||
+      !candidate.entryId.trim() ||
+      typeof candidate.text !== "string"
+    ) {
+      throw invalidResponse("fork messages");
+    }
+    return { entryId: candidate.entryId, text: candidate.text };
+  });
+};
+
+interface NativeTreeNode {
+  children: NativeTreeNode[];
+  entry: Record<string, unknown> & { id: string; type: string };
+}
+
+const decodeTreeNode = (value: unknown): NativeTreeNode => {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.entry) ||
+    !Array.isArray(value.children)
+  ) {
+    throw invalidResponse("tree");
+  }
+  if (
+    typeof value.entry.id !== "string" ||
+    !value.entry.id.trim() ||
+    typeof value.entry.type !== "string"
+  ) {
+    throw invalidResponse("tree");
+  }
+  return {
+    children: value.children.map(decodeTreeNode),
+    entry: value.entry as NativeTreeNode["entry"],
+  };
+};
+
+const messageText = (message: Record<string, unknown>): string | undefined => {
+  if (typeof message.content === "string") {
+    return message.content;
+  }
+  if (!Array.isArray(message.content)) {
+    return undefined;
+  }
+  const text = message.content
+    .filter(
+      (content): content is Record<string, unknown> =>
+        isRecord(content) &&
+        content.type === "text" &&
+        typeof content.text === "string"
+    )
+    .map((content) => content.text as string)
+    .join("");
+  return text || undefined;
+};
+
+export const decodeTreeTargets = (value: unknown): AgentTreeTarget[] => {
+  if (!isRecord(value) || !Array.isArray(value.tree)) {
+    throw invalidResponse("tree");
+  }
+  if (value.leafId !== null && typeof value.leafId !== "string") {
+    throw invalidResponse("tree");
+  }
+  const roots = value.tree.map(decodeTreeNode);
+  const active = new WeakMap<NativeTreeNode, boolean>();
+  const markActive = (node: NativeTreeNode): boolean => {
+    const result =
+      node.entry.id === value.leafId || node.children.some(markActive);
+    active.set(node, result);
+    return result;
+  };
+  for (const root of roots) {
+    markActive(root);
+  }
+  const targets: AgentTreeTarget[] = [];
+  const visit = (node: NativeTreeNode, depth: number): void => {
+    const { children, entry } = node;
+    const message = isRecord(entry.message) ? entry.message : undefined;
+    const { role } = message ?? {};
+    if (
+      entry.type !== "message" ||
+      !message ||
+      (role !== "user" && role !== "assistant")
+    ) {
+      for (const child of children) {
+        visit(child, depth + 1);
+      }
+      return;
+    }
+    targets.push({
+      activeBranch: active.get(node) === true,
+      current: entry.id === value.leafId,
+      depth,
+      entryId: entry.id,
+      role,
+      text:
+        messageText(message) ??
+        (role === "user" ? "Image prompt" : "Assistant message"),
+    });
+    for (const child of children) {
+      visit(child, depth + 1);
+    }
+  };
+  for (const root of roots) {
+    visit(root, 0);
+  }
+  return targets;
+};
+
+export const decodeTreeNavigationResult = (
+  value: unknown
+): AgentTreeNavigationResult => {
+  if (
+    !isRecord(value) ||
+    (value.leafId !== null && typeof value.leafId !== "string")
+  ) {
+    throw invalidResponse("tree navigation");
+  }
+  if (value.draft === undefined || value.draft === null || value.draft === "") {
+    return {};
+  }
+  if (typeof value.draft !== "string") {
+    throw invalidResponse("tree navigation");
+  }
+  return { draft: value.draft };
+};
+
 class AcpConnection implements AgentConnection {
   private child?: ChildProcessWithoutNullStreams;
   private connection?: ClientSideConnection;
   private cwd?: string;
   private starting?: Promise<void>;
   private disposed = false;
+  private operations: AgentSessionOperations = {
+    forkPicker: false,
+    treePicker: false,
+  };
   private readonly launch: AgentLaunch;
   private readonly handlers: AgentHandlers;
   private readonly log: (message: string) => void;
@@ -797,24 +964,37 @@ class AcpConnection implements AgentConnection {
       });
       return {
         configOptions: configOptions(session.configOptions),
+        operations: this.operations,
         sessionId: session.sessionId,
       };
     });
   }
 
-  fork(sessionId: string, cwd: string, messageId: string) {
+  fork(sessionId: string, cwd: string, entryId: string) {
     return this.call(async () => {
       await this.start();
       const session = await this.requireConnection().unstable_forkSession({
-        _meta: { "magpi-acp/client-message-id": messageId },
+        _meta: { [FORK_ENTRY_ID_META]: entryId },
         cwd,
         mcpServers: [],
         sessionId,
       });
       return {
         configOptions: configOptions(session.configOptions),
+        operations: this.operations,
         sessionId: session.sessionId,
       };
+    });
+  }
+
+  forkTargets(sessionId: string) {
+    return this.call(async () => {
+      await this.start();
+      const response = await this.requireConnection().request<
+        unknown,
+        { sessionId: string }
+      >(FORK_MESSAGES_METHOD, { sessionId });
+      return decodeForkTargets(response);
     });
   }
 
@@ -859,20 +1039,40 @@ class AcpConnection implements AgentConnection {
         mcpServers: [],
         sessionId,
       });
-      return { configOptions: configOptions(session.configOptions), sessionId };
+      return {
+        configOptions: configOptions(session.configOptions),
+        operations: this.operations,
+        sessionId,
+      };
     });
   }
 
-  prompt(
-    sessionId: string,
-    text: string,
-    messageId: string,
-    images: PromptImage[]
-  ) {
+  navigateTree(sessionId: string, entryId: string) {
+    return this.call(async () => {
+      await this.start();
+      const response = await this.requireConnection().request<
+        unknown,
+        { entryId: string; sessionId: string }
+      >(NAVIGATE_TREE_METHOD, { entryId, sessionId });
+      return decodeTreeNavigationResult(response);
+    });
+  }
+
+  treeTargets(sessionId: string) {
+    return this.call(async () => {
+      await this.start();
+      const response = await this.requireConnection().request<
+        unknown,
+        { sessionId: string }
+      >(TREE_METHOD, { sessionId });
+      return decodeTreeTargets(response);
+    });
+  }
+
+  prompt(sessionId: string, text: string, images: PromptImage[]) {
     return this.call(async () => {
       await this.start();
       const response = await this.requireConnection().prompt({
-        _meta: { "magpi-acp/client-message-id": messageId },
         prompt: await promptContent(this.cwd, text, images),
         sessionId,
       });
@@ -1048,7 +1248,8 @@ class AcpConnection implements AgentConnection {
       const [error] = await once(child, "error");
       throw error;
     };
-    await Promise.race([initialized, childError()]);
+    const response = await Promise.race([initialized, childError()]);
+    this.operations = sessionOperations(response.agentCapabilities);
   }
 
   private requireConnection(): ClientSideConnection {

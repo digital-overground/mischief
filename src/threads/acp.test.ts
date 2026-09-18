@@ -6,13 +6,152 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
 
 import {
+  decodeForkTargets,
+  decodeTreeNavigationResult,
+  decodeTreeTargets,
   elicitationRequest,
   promptContent,
+  sessionOperations,
   terminalAuthentication,
   translateSessionUpdate,
 } from "./acp";
 
 describe("ACP adapter", () => {
+  test("reads only literal native operation capabilities", () => {
+    expect(
+      sessionOperations({
+        _meta: {
+          "magpi-acp/fork-picker": true,
+          "magpi-acp/tree-picker": "true",
+        },
+      })
+    ).toStrictEqual({ forkPicker: true, treePicker: false });
+    expect(sessionOperations({ _meta: null })).toStrictEqual({
+      forkPicker: false,
+      treePicker: false,
+    });
+  });
+
+  test("decodes fork targets in Agent order", () => {
+    expect(
+      decodeForkTargets({
+        messages: [
+          { entryId: "user-1", text: "First" },
+          { entryId: "user-2", text: "Second\nline" },
+        ],
+      })
+    ).toStrictEqual([
+      { entryId: "user-1", text: "First" },
+      { entryId: "user-2", text: "Second\nline" },
+    ]);
+  });
+
+  test("rejects malformed fork responses as a whole", () => {
+    expect(() =>
+      decodeForkTargets({
+        messages: [{ entryId: "user-1", text: "First" }, { text: "No ID" }],
+      })
+    ).toThrow("Invalid MagPi fork messages response");
+  });
+
+  test("flattens visible tree messages in preorder", () => {
+    expect(
+      decodeTreeTargets({
+        leafId: "assistant-1",
+        tree: [
+          {
+            children: [
+              {
+                children: [],
+                entry: {
+                  id: "assistant-1",
+                  message: {
+                    content: [{ text: "Done", type: "text" }],
+                    role: "assistant",
+                  },
+                  type: "message",
+                },
+              },
+            ],
+            entry: {
+              id: "user-1",
+              message: { content: "Explain this", role: "user" },
+              type: "message",
+            },
+          },
+          {
+            children: [],
+            entry: { id: "custom-1", type: "compaction" },
+          },
+        ],
+      })
+    ).toStrictEqual([
+      {
+        activeBranch: true,
+        current: false,
+        depth: 0,
+        entryId: "user-1",
+        role: "user",
+        text: "Explain this",
+      },
+      {
+        activeBranch: true,
+        current: true,
+        depth: 1,
+        entryId: "assistant-1",
+        role: "assistant",
+        text: "Done",
+      },
+    ]);
+  });
+
+  test("uses role-specific fallback text and rejects malformed trees", () => {
+    expect(
+      decodeTreeTargets({
+        leafId: "user-1",
+        tree: [
+          {
+            children: [],
+            entry: {
+              id: "user-1",
+              message: {
+                content: [{ type: "image", url: "image" }],
+                role: "user",
+              },
+              type: "message",
+            },
+          },
+          {
+            children: [],
+            entry: {
+              id: "assistant-1",
+              message: { content: [], role: "assistant" },
+              type: "message",
+            },
+          },
+        ],
+      })
+    ).toMatchObject([
+      { current: true, text: "Image prompt" },
+      { text: "Assistant message" },
+    ]);
+    expect(() =>
+      decodeTreeTargets({ leafId: null, tree: [{ children: [] }] })
+    ).toThrow("Invalid MagPi tree response");
+  });
+
+  test("decodes optional tree navigation drafts", () => {
+    expect(
+      decodeTreeNavigationResult({ draft: "Try again", leafId: "user-1" })
+    ).toStrictEqual({ draft: "Try again" });
+    expect(
+      decodeTreeNavigationResult({ draft: null, leafId: "assistant-1" })
+    ).toStrictEqual({});
+    expect(() =>
+      decodeTreeNavigationResult({ draft: 42, leafId: "user-1" })
+    ).toThrow("Invalid MagPi tree navigation response");
+  });
+
   test("translates standard elicitation choice descriptions", () => {
     expect(
       elicitationRequest({

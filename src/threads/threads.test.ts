@@ -38,6 +38,7 @@ class FakeAgent {
   loadCalls = 0;
   loadRequests: { sessionId: string; cwd: string }[] = [];
   initialConfigOptions: ThreadConfigOption[] = [];
+  operations = { forkPicker: true, treePicker: true };
   failCreate = false;
   createError?: Error;
   replayOnLoad = false;
@@ -117,6 +118,7 @@ class FakeAgent {
         }
         return Promise.resolve({
           configOptions: this.initialConfigOptions,
+          operations: this.operations,
           sessionId: "session-1",
         });
       },
@@ -127,9 +129,11 @@ class FakeAgent {
         this.forkCalls.push({ cwd, messageId, sessionId });
         return Promise.resolve({
           configOptions: [],
+          operations: this.operations,
           sessionId: "forked-session",
         });
       },
+      forkTargets: () => Promise.resolve([]),
       history: (cwd) => {
         this.historyCalls.push(cwd);
         return Promise.resolve(this.historyEntries);
@@ -151,9 +155,14 @@ class FakeAgent {
             type: "message",
           });
         }
-        return Promise.resolve({ configOptions: [], sessionId });
+        return Promise.resolve({
+          configOptions: [],
+          operations: this.operations,
+          sessionId,
+        });
       },
-      prompt: async (_sessionId, _text, _messageId, images) => {
+      navigateTree: () => Promise.resolve({}),
+      prompt: async (_sessionId, _text, images) => {
         this.promptImages = images;
         if (this.holdPrompts) {
           this.promptCalls += 1;
@@ -270,6 +279,7 @@ class FakeAgent {
         this.configChange = { configId, sessionId, value };
         return Promise.resolve();
       },
+      treeTargets: () => Promise.resolve([]),
     };
   }
 }
