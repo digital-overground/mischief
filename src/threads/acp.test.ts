@@ -5,9 +5,142 @@ import { pathToFileURL } from "node:url";
 
 import { describe, expect, test } from "vitest";
 
-import { promptContent, translateSessionUpdate } from "./acp";
+import {
+  elicitationRequest,
+  promptContent,
+  terminalAuthentication,
+  translateSessionUpdate,
+} from "./acp";
 
 describe("ACP adapter", () => {
+  test("translates standard elicitation choice descriptions", () => {
+    expect(
+      elicitationRequest({
+        message: "Choose a mode",
+        mode: "form",
+        requestedSchema: {
+          properties: {
+            mode: {
+              oneOf: [
+                {
+                  const: "fast",
+                  description: "Use less thinking",
+                  title: "Fast",
+                },
+                {
+                  _meta: { magPiAcp: { description: "Legacy slow help" } },
+                  const: "slow",
+                  title: "Slow",
+                },
+              ],
+              type: "string",
+            },
+          },
+          type: "object",
+        },
+        sessionId: "session-1",
+      })
+    ).toStrictEqual({
+      fields: [
+        {
+          label: "mode",
+          name: "mode",
+          options: [
+            {
+              description: "Use less thinking",
+              name: "Fast",
+              value: "fast",
+            },
+            {
+              description: "Legacy slow help",
+              name: "Slow",
+              value: "slow",
+            },
+          ],
+          required: false,
+          type: "select",
+        },
+      ],
+      message: "Choose a mode",
+    });
+  });
+
+  test("rejects unknown elicitation property types", () => {
+    expect(() =>
+      elicitationRequest({
+        message: "Future input",
+        mode: "form",
+        requestedSchema: {
+          properties: {
+            future: { type: "future" },
+          },
+          type: "object",
+        },
+        sessionId: "session-1",
+      })
+    ).toThrow("Unsupported elicitation property schema");
+  });
+
+  test("prefers standard terminal authentication methods", () => {
+    expect(
+      terminalAuthentication(
+        {
+          data: {
+            authMethods: [
+              {
+                _meta: {
+                  "terminal-auth": {
+                    args: ["--old"],
+                    command: "old-agent",
+                  },
+                },
+                name: "Old login",
+              },
+              {
+                args: ["--login"],
+                env: { MAGPI_TOKEN: "new" },
+                name: "Log in",
+                type: "terminal",
+              },
+            ],
+          },
+        },
+        { args: ["--stdio"], command: "magpi", env: { BASE: "yes" } }
+      )
+    ).toStrictEqual({
+      args: ["--stdio", "--login"],
+      command: "magpi",
+      env: { BASE: "yes", MAGPI_TOKEN: "new" },
+      label: "Log in",
+    });
+  });
+
+  test("keeps the legacy terminal authentication fallback", () => {
+    expect(
+      terminalAuthentication({
+        data: {
+          authMethods: [
+            {
+              _meta: {
+                "terminal-auth": {
+                  args: ["--login"],
+                  command: "magpi-auth",
+                  env: { MAGPI_TOKEN: "old" },
+                  label: "Old login",
+                },
+              },
+            },
+          ],
+        },
+      })
+    ).toStrictEqual({
+      args: ["--login"],
+      command: "magpi-auth",
+      env: { MAGPI_TOKEN: "old" },
+      label: "Old login",
+    });
+  });
+
   test("embeds referenced Workspace files without allowing path escapes", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "mischief-context-"));
     const workspace = path.join(root, "workspace");

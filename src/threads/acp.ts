@@ -5,7 +5,13 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { ClientSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
+import {
+  ClientSideConnection,
+  CreateElicitationRequest as CreateElicitationRequestGuard,
+  ElicitationPropertySchema as ElicitationPropertySchemaGuard,
+  MultiSelectItems,
+  ndJsonStream,
+} from "@agentclientprotocol/sdk";
 import type {
   Client,
   ContentBlock,
@@ -204,14 +210,42 @@ const elicitationOptionDescription = (
   return typeof description === "string" ? description : undefined;
 };
 
+const optionDescription = (option: {
+  description?: string | null;
+  _meta?: Record<string, unknown> | null;
+}): string | undefined =>
+  option.description ?? elicitationOptionDescription(option._meta);
+
+type SupportedElicitationPropertySchema =
+  | Extract<ElicitationPropertySchema, { type: "string" }>
+  | Extract<ElicitationPropertySchema, { type: "number" }>
+  | Extract<ElicitationPropertySchema, { type: "integer" }>
+  | Extract<ElicitationPropertySchema, { type: "boolean" }>
+  | Extract<ElicitationPropertySchema, { type: "array" }>;
+
+const supportedElicitationSchema = (
+  schema: ElicitationPropertySchema
+): SupportedElicitationPropertySchema => {
+  if (
+    ElicitationPropertySchemaGuard.isString(schema) ||
+    ElicitationPropertySchemaGuard.isNumber(schema) ||
+    ElicitationPropertySchemaGuard.isInteger(schema) ||
+    ElicitationPropertySchemaGuard.isBoolean(schema) ||
+    ElicitationPropertySchemaGuard.isArray(schema)
+  ) {
+    return schema;
+  }
+  throw new Error("Unsupported elicitation property schema");
+};
+
 const elicitationOptions = (
   schema: ElicitationPropertySchema
 ): { value: string; name: string; description?: string }[] | undefined => {
-  if (schema.type === "string") {
+  if (ElicitationPropertySchemaGuard.isString(schema)) {
     if (schema.oneOf) {
       return schema.oneOf.map((option) => ({
-        ...(elicitationOptionDescription(option._meta)
-          ? { description: elicitationOptionDescription(option._meta) }
+        ...(optionDescription(option)
+          ? { description: optionDescription(option) }
           : {}),
         name: option.title,
         value: option.const,
@@ -220,35 +254,50 @@ const elicitationOptions = (
     if (schema.enum) {
       return schema.enum.map((value) => ({ name: value, value }));
     }
+    return undefined;
   }
-  if (schema.type === "array") {
-    if ("anyOf" in schema.items) {
+  if (ElicitationPropertySchemaGuard.isArray(schema)) {
+    if (MultiSelectItems.isTitled(schema.items)) {
       return schema.items.anyOf.map((option) => ({
-        ...(elicitationOptionDescription(option._meta)
-          ? { description: elicitationOptionDescription(option._meta) }
+        ...(optionDescription(option)
+          ? { description: optionDescription(option) }
           : {}),
         name: option.title,
         value: option.const,
       }));
     }
-    return schema.items.enum.map((value) => ({ name: value, value }));
+    if (MultiSelectItems.isString(schema.items)) {
+      return schema.items.enum.map((value) => ({ name: value, value }));
+    }
+    throw new Error("Unsupported elicitation choice schema");
   }
-  return undefined;
+  if (
+    ElicitationPropertySchemaGuard.isBoolean(schema) ||
+    ElicitationPropertySchemaGuard.isNumber(schema) ||
+    ElicitationPropertySchemaGuard.isInteger(schema)
+  ) {
+    return undefined;
+  }
+  throw new Error("Unsupported elicitation property schema");
 };
 
-const elicitationRequest = (
+export const elicitationRequest = (
   request: Extract<CreateElicitationRequest, { mode: "form" }>
 ): AgentElicitationRequest => {
   const required = new Set(request.requestedSchema.required);
   const fields = Object.entries(request.requestedSchema.properties ?? {}).map(
-    ([name, schema]) => {
+    ([name, rawSchema]) => {
+      const schema = supportedElicitationSchema(rawSchema);
       const options = elicitationOptions(schema);
       let type: ElicitationField["type"];
-      if (schema.type === "boolean") {
+      if (ElicitationPropertySchemaGuard.isBoolean(schema)) {
         type = "boolean";
-      } else if (schema.type === "number" || schema.type === "integer") {
+      } else if (
+        ElicitationPropertySchemaGuard.isNumber(schema) ||
+        ElicitationPropertySchemaGuard.isInteger(schema)
+      ) {
         type = "number";
-      } else if (schema.type === "array") {
+      } else if (ElicitationPropertySchemaGuard.isArray(schema)) {
         type = "multiselect";
       } else {
         type = options ? "select" : "text";
@@ -374,19 +423,25 @@ const elicitationValue = (
   schema: ElicitationPropertySchema,
   value: unknown
 ): ElicitationContentValue => {
-  if (schema.type === "string") {
+  if (ElicitationPropertySchemaGuard.isString(schema)) {
     return stringValue(name, schema, value);
   }
-  if (schema.type === "boolean") {
+  if (ElicitationPropertySchemaGuard.isBoolean(schema)) {
     if (typeof value !== "boolean") {
       throw new TypeError(`Invalid value for ${name}`);
     }
     return value;
   }
-  if (schema.type === "number" || schema.type === "integer") {
+  if (
+    ElicitationPropertySchemaGuard.isNumber(schema) ||
+    ElicitationPropertySchemaGuard.isInteger(schema)
+  ) {
     return numberValue(name, schema, value);
   }
-  return choicesValue(name, schema, value);
+  if (ElicitationPropertySchemaGuard.isArray(schema)) {
+    return choicesValue(name, schema, value);
+  }
+  throw new Error(`Unsupported elicitation property schema for ${name}`);
 };
 
 const elicitationContent = (
@@ -600,8 +655,83 @@ export const translateSessionUpdate = (
   }
 };
 
-const terminalAuthentication = (
-  error: unknown
+const stringArguments = (value: unknown): value is string[] =>
+  Array.isArray(value) &&
+  value.every((argument) => typeof argument === "string");
+
+const stringEnvironment = (value: unknown): value is Record<string, string> =>
+  Boolean(
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.values(value).every((entry) => typeof entry === "string")
+  );
+
+const standardTerminalAuthentication = (
+  method: unknown,
+  launch: AgentLaunch
+): TerminalAuthentication | undefined => {
+  if (!method || typeof method !== "object") {
+    return undefined;
+  }
+  const { args, env: rawEnv, name, type } = method as Record<string, unknown>;
+  if (
+    type !== "terminal" ||
+    (args !== undefined && !stringArguments(args)) ||
+    (rawEnv !== undefined && !stringEnvironment(rawEnv))
+  ) {
+    return undefined;
+  }
+  const launchArgs = args === undefined ? [] : (args as string[]);
+  const env = {
+    ...launch.env,
+    ...(rawEnv === undefined ? {} : (rawEnv as Record<string, string>)),
+  };
+  return {
+    args: [...launch.args, ...launchArgs],
+    command: launch.command,
+    ...(Object.keys(env).length ? { env } : {}),
+    label: typeof name === "string" ? name : "Authenticate",
+  };
+};
+
+const legacyTerminalAuthentication = (
+  method: unknown
+): TerminalAuthentication | undefined => {
+  if (!method || typeof method !== "object") {
+    return undefined;
+  }
+  const { _meta: rawMeta, name } = method as Record<string, unknown>;
+  const meta = rawMeta as Record<string, unknown> | null | undefined;
+  const privateLaunch = meta?.["terminal-auth"] as
+    | Record<string, unknown>
+    | null
+    | undefined;
+  const {
+    args,
+    command,
+    env: rawEnv,
+    label: privateLabel,
+  } = privateLaunch ?? {};
+  if (typeof command !== "string" || !stringArguments(args)) {
+    return undefined;
+  }
+  const env = stringEnvironment(rawEnv) ? rawEnv : undefined;
+  let label = typeof name === "string" ? name : "Authenticate";
+  if (typeof privateLabel === "string") {
+    label = privateLabel;
+  }
+  return {
+    args,
+    command,
+    ...(env && Object.keys(env).length ? { env } : {}),
+    label,
+  };
+};
+
+export const terminalAuthentication = (
+  error: unknown,
+  launch?: AgentLaunch
 ): TerminalAuthentication | undefined => {
   const data = (error as { data?: unknown } | null)?.data as
     | { authMethods?: unknown }
@@ -610,45 +740,19 @@ const terminalAuthentication = (
   if (!Array.isArray(data?.authMethods)) {
     return undefined;
   }
+  if (launch) {
+    for (const method of data.authMethods) {
+      const authentication = standardTerminalAuthentication(method, launch);
+      if (authentication) {
+        return authentication;
+      }
+    }
+  }
   for (const method of data.authMethods) {
-    if (!method || typeof method !== "object") {
-      continue;
+    const authentication = legacyTerminalAuthentication(method);
+    if (authentication) {
+      return authentication;
     }
-    const record = method as Record<string, unknown>;
-    const meta = record._meta as Record<string, unknown> | null | undefined;
-    const launch = meta?.["terminal-auth"] as
-      | Record<string, unknown>
-      | null
-      | undefined;
-    if (typeof launch?.command !== "string" || !Array.isArray(launch.args)) {
-      continue;
-    }
-    if (!launch.args.every((argument) => typeof argument === "string")) {
-      continue;
-    }
-    const rawEnv = launch.env;
-    const env =
-      rawEnv && typeof rawEnv === "object"
-        ? Object.fromEntries(
-            Object.entries(rawEnv).filter(
-              (entry): entry is [string, string] => typeof entry[1] === "string"
-            )
-          )
-        : undefined;
-    let label = "Authenticate";
-    if (typeof record.name === "string") {
-      label = record.name;
-    }
-    const { label: launchLabel } = launch;
-    if (typeof launchLabel === "string") {
-      label = launchLabel;
-    }
-    return {
-      args: launch.args as string[],
-      command: launch.command,
-      ...(env && Object.keys(env).length ? { env } : {}),
-      label,
-    };
   }
   return undefined;
 };
@@ -656,11 +760,11 @@ const terminalAuthentication = (
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const toAgentError = (error: unknown): AgentError =>
+const toAgentError = (error: unknown, launch?: AgentLaunch): AgentError =>
   error instanceof Error && "authentication" in error
     ? (error as AgentError)
     : Object.assign(new Error(errorMessage(error)), {
-        authentication: terminalAuthentication(error),
+        authentication: terminalAuthentication(error, launch),
       });
 
 class AcpConnection implements AgentConnection {
@@ -685,7 +789,7 @@ class AcpConnection implements AgentConnection {
 
   create(cwd: string) {
     this.cwd = cwd;
-    return AcpConnection.call(async () => {
+    return this.call(async () => {
       await this.start();
       const session = await this.requireConnection().newSession({
         cwd,
@@ -699,7 +803,7 @@ class AcpConnection implements AgentConnection {
   }
 
   fork(sessionId: string, cwd: string, messageId: string) {
-    return AcpConnection.call(async () => {
+    return this.call(async () => {
       await this.start();
       const session = await this.requireConnection().unstable_forkSession({
         _meta: { "magpi-acp/client-message-id": messageId },
@@ -715,7 +819,7 @@ class AcpConnection implements AgentConnection {
   }
 
   history(cwd: string) {
-    return AcpConnection.call(async () => {
+    return this.call(async () => {
       await this.start();
       const sessions = [];
       let cursor: string | undefined;
@@ -748,7 +852,7 @@ class AcpConnection implements AgentConnection {
 
   load(sessionId: string, cwd: string) {
     this.cwd = cwd;
-    return AcpConnection.call(async () => {
+    return this.call(async () => {
       await this.start();
       const session = await this.requireConnection().loadSession({
         cwd,
@@ -765,7 +869,7 @@ class AcpConnection implements AgentConnection {
     messageId: string,
     images: PromptImage[]
   ) {
-    return AcpConnection.call(async () => {
+    return this.call(async () => {
       await this.start();
       const response = await this.requireConnection().prompt({
         _meta: { "magpi-acp/client-message-id": messageId },
@@ -780,14 +884,14 @@ class AcpConnection implements AgentConnection {
   }
 
   cancel(sessionId: string): Promise<void> {
-    return AcpConnection.call(async () => {
+    return this.call(async () => {
       await this.start();
       await this.requireConnection().cancel({ sessionId });
     });
   }
 
   rollback(sessionId: string, messageId: string): Promise<void> {
-    return AcpConnection.call(async () => {
+    return this.call(async () => {
       await this.start();
       await this.requireConnection().extMethod("_magpi-acp/session/rewind", {
         clientMessageId: messageId,
@@ -801,7 +905,7 @@ class AcpConnection implements AgentConnection {
     configId: string,
     value: string | boolean
   ): Promise<void> {
-    return AcpConnection.call(async () => {
+    return this.call(async () => {
       await this.start();
       await this.requireConnection().setSessionConfigOption(
         typeof value === "boolean"
@@ -821,11 +925,11 @@ class AcpConnection implements AgentConnection {
     this.child = undefined;
   }
 
-  private static async call<T>(operation: () => Promise<T>): Promise<T> {
+  private async call<T>(operation: () => Promise<T>): Promise<T> {
     try {
       return await operation();
     } catch (error) {
-      throw toAgentError(error);
+      throw toAgentError(error, this.launch);
     }
   }
 
@@ -870,7 +974,8 @@ class AcpConnection implements AgentConnection {
           toAgentError(
             new Error(
               `MagPi ACP exited${code === null ? ` (${signal ?? "unknown"})` : ` (${code})`}`
-            )
+            ),
+            this.launch
           )
         );
       }
@@ -896,6 +1001,19 @@ class AcpConnection implements AgentConnection {
       },
     });
     const client: Client = {
+      createElicitation: async (request) => {
+        if (!CreateElicitationRequestGuard.isForm(request)) {
+          return { action: "decline" };
+        }
+        let translated: AgentElicitationRequest;
+        try {
+          translated = elicitationRequest(request);
+        } catch {
+          return { action: "decline" };
+        }
+        const response = await this.handlers.elicitation(translated);
+        return elicitationResponse(request, response);
+      },
       requestPermission: async (request) => {
         const response = await this.handlers.permission(
           permissionRequest(request)
@@ -909,15 +1027,6 @@ class AcpConnection implements AgentConnection {
         }
         return Promise.resolve();
       },
-      unstable_createElicitation: async (request) => {
-        if (request.mode !== "form") {
-          return { action: "decline" };
-        }
-        const response = await this.handlers.elicitation(
-          elicitationRequest(request)
-        );
-        return elicitationResponse(request, response);
-      },
     };
     const connection = new ClientSideConnection(
       () => client,
@@ -928,6 +1037,7 @@ class AcpConnection implements AgentConnection {
     const initialized = connection.initialize({
       clientCapabilities: {
         _meta: { "terminal-auth": true },
+        auth: { terminal: true },
         elicitation: { form: {} },
         plan: {},
       },

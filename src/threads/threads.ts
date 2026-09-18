@@ -804,6 +804,7 @@ export class Threads {
     }
     if (record.retryText !== undefined) {
       const runtime = this.runtimes.get(record.id);
+      runtime?.connection.dispose();
       if (!record.sessionId && runtime) {
         runtime.items = [];
       }

@@ -937,6 +937,15 @@ export class MischiefView implements vscode.WebviewViewProvider {
       shellPath: authentication.command,
       ...(authentication.env ? { env: authentication.env } : {}),
     });
+    const closed = vscode.window.onDidCloseTerminal((candidate) => {
+      if (candidate !== terminal) {
+        return;
+      }
+      closed.dispose();
+      if (candidate.exitStatus?.code === 0) {
+        void MischiefView.run(this.threads.retry());
+      }
+    });
     terminal.show();
   }
 
