@@ -73,6 +73,11 @@ export interface ThreadForkTargets {
   targets: AgentForkTarget[];
 }
 
+export interface ThreadTreeTargets {
+  threadId: string;
+  targets: AgentTreeTarget[];
+}
+
 export interface AgentPromptResult {
   stopReason: "completed" | "cancelled";
 }
@@ -350,6 +355,7 @@ export interface ThreadDetail {
   error?: string;
   drafts: string[];
   forkSupported?: boolean;
+  treeNavigationSupported?: boolean;
   sessionOperation?: boolean;
   steering: SteeringMessage[];
 }
@@ -957,7 +963,10 @@ export class Threads {
   }
 
   async forkTargets(): Promise<ThreadForkTargets> {
-    const { record, runtime } = this.requireForkContext(this.selectedId);
+    const { record, runtime } = this.requireSessionOperationContext(
+      this.selectedId,
+      "fork"
+    );
     return {
       targets: await runtime.connection.forkTargets(record.sessionId),
       threadId: record.id,
@@ -965,7 +974,10 @@ export class Threads {
   }
 
   async fork(threadId: string, target: AgentForkTarget): Promise<void> {
-    const { record, runtime } = this.requireForkContext(threadId);
+    const { record, runtime } = this.requireSessionOperationContext(
+      threadId,
+      "fork"
+    );
     if (!target.entryId.trim()) {
       throw new Error("Invalid fork target");
     }
@@ -996,6 +1008,46 @@ export class Threads {
       }
       await this.load(fork);
       this.runtimes.get(fork.id)?.drafts.push(target.text);
+    } finally {
+      runtime.sessionOperation = undefined;
+      this.emit();
+    }
+  }
+
+  async treeTargets(): Promise<ThreadTreeTargets> {
+    const { record, runtime } = this.requireSessionOperationContext(
+      this.selectedId,
+      "navigateTree"
+    );
+    return {
+      targets: await runtime.connection.treeTargets(record.sessionId),
+      threadId: record.id,
+    };
+  }
+
+  async navigateTree(threadId: string, target: AgentTreeTarget): Promise<void> {
+    const { record, runtime } = this.requireSessionOperationContext(
+      threadId,
+      "navigateTree"
+    );
+    if (!target.entryId.trim()) {
+      throw new Error("Invalid tree target");
+    }
+    runtime.sessionOperation = "navigateTree";
+    this.emit();
+    try {
+      const result = await runtime.connection.navigateTree(
+        record.sessionId,
+        target.entryId
+      );
+      runtime.items = [];
+      record.updatedAt = new Date().toISOString();
+      record.error = undefined;
+      record.authentication = undefined;
+      await this.reload(record, runtime);
+      if (target.role === "user" && result.draft) {
+        runtime.drafts.push(result.draft);
+      }
     } finally {
       runtime.sessionOperation = undefined;
       this.emit();
@@ -1129,6 +1181,9 @@ export class Threads {
       ...(record.error ? { error: record.error } : {}),
       drafts: runtime?.drafts ?? [],
       ...(runtime?.operations.forkPicker ? { forkSupported: true } : {}),
+      ...(runtime?.operations.treePicker
+        ? { treeNavigationSupported: true }
+        : {}),
       id: record.id,
       ...(runtime?.sessionOperation ? { sessionOperation: true } : {}),
       ...(runtime?.interaction ? { interaction: runtime.interaction } : {}),
@@ -1225,7 +1280,13 @@ export class Threads {
     if (!record.sessionId || this.runtimes.has(record.id)) {
       return;
     }
-    const runtime = this.runtime(record);
+    await this.reload(record, this.runtime(record));
+  }
+
+  private async reload(record: StoredThread, runtime: Runtime): Promise<void> {
+    if (!record.sessionId) {
+      return;
+    }
     try {
       const setup = await runtime.connection.load(
         record.sessionId,
@@ -1443,23 +1504,32 @@ export class Threads {
     return this.selectedId ? this.runtimes.get(this.selectedId) : undefined;
   }
 
-  private requireForkContext(threadId: string | undefined): {
+  private requireSessionOperationContext(
+    threadId: string | undefined,
+    operation: "fork" | "navigateTree"
+  ): {
     record: StoredThread & { sessionId: string };
     runtime: Runtime;
   } {
+    const title = operation === "fork" ? "Fork Thread" : "Navigate Thread Tree";
+    const verb = operation === "fork" ? "forking" : "navigating";
     if (!threadId || threadId !== this.selectedId) {
-      throw new Error("The selected Thread changed; reopen Fork Thread");
+      throw new Error(`The selected Thread changed; reopen ${title}`);
     }
     const record = this.findRecord(threadId);
     const runtime = this.runtimes.get(threadId);
     if (!record?.sessionId || !runtime || record.workspace !== this.workspace) {
-      throw new Error("Select a saved Thread before forking");
+      throw new Error(`Select a saved Thread before ${verb}`);
     }
     if (runtime.status !== "idle") {
-      throw new Error("Wait for the current turn to finish before forking");
+      throw new Error(`Wait for the current turn to finish before ${verb}`);
     }
-    if (!runtime.operations.forkPicker) {
-      throw new Error("This Agent does not support Fork Thread");
+    const supported =
+      operation === "fork"
+        ? runtime.operations.forkPicker
+        : runtime.operations.treePicker;
+    if (!supported) {
+      throw new Error(`This Agent does not support ${title}`);
     }
     if (runtime.sessionOperation) {
       throw new Error("Wait for the current Thread operation to finish");

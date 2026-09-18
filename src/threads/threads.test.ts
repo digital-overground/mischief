@@ -11,6 +11,7 @@ import type {
   AgentConnectionFactory,
   AgentHandlers,
   AgentPromptResult,
+  AgentTreeTarget,
   PromptImage,
   ThreadConfigOption,
   ThreadsChange,
@@ -69,6 +70,21 @@ class FakeAgent {
   forkTargetCalls: string[] = [];
   forkTargetEntries = [{ entryId: "pi-user-1", text: "Fork from here" }];
   forkGate?: Deferred;
+  treeTargetCalls: string[] = [];
+  treeTargetEntries: AgentTreeTarget[] = [
+    {
+      activeBranch: true,
+      current: true,
+      depth: 0,
+      entryId: "pi-user-1",
+      role: "user",
+      text: "Try this again",
+    },
+  ];
+  navigateTreeCalls: { sessionId: string; entryId: string }[] = [];
+  navigationResult: { draft?: string } = { draft: "Try this again" };
+  navigationError?: Error;
+  navigationGate?: Deferred;
   update?: AgentHandlers["update"];
   private readonly permissionStartedDeferred = deferred();
   private readonly elicitationStartedDeferred = deferred();
@@ -171,7 +187,14 @@ class FakeAgent {
           sessionId,
         });
       },
-      navigateTree: () => Promise.resolve({}),
+      navigateTree: async (sessionId, entryId) => {
+        this.navigateTreeCalls.push({ entryId, sessionId });
+        if (this.navigationError) {
+          throw this.navigationError;
+        }
+        await this.navigationGate?.promise;
+        return this.navigationResult;
+      },
       prompt: async (_sessionId, _text, images) => {
         this.promptImages = images;
         if (this.holdPrompts) {
@@ -285,7 +308,10 @@ class FakeAgent {
         this.configChange = { configId, sessionId, value };
         return Promise.resolve();
       },
-      treeTargets: () => Promise.resolve([]),
+      treeTargets: (sessionId) => {
+        this.treeTargetCalls.push(sessionId);
+        return Promise.resolve(this.treeTargetEntries);
+      },
     };
   }
 }
@@ -746,6 +772,205 @@ describe("threads module", () => {
         expect.objectContaining({ name: "Fix tests (fork)", status: "error" }),
       ])
     );
+  });
+
+  test("navigates to a native tree target and reloads the same Thread", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Old branch");
+    const [source] = threads.snapshot().threads;
+    if (!source) {
+      throw new Error("Missing source Thread");
+    }
+    const context = await threads.treeTargets();
+    const [target] = context.targets;
+    if (!target) {
+      throw new Error("Missing tree target");
+    }
+    agent.replayOnLoad = true;
+
+    await threads.navigateTree(context.threadId, target);
+
+    expect(agent.treeTargetCalls).toStrictEqual(["session-1"]);
+    expect(agent.navigateTreeCalls).toStrictEqual([
+      { entryId: "pi-user-1", sessionId: "session-1" },
+    ]);
+    expect(agent.loadRequests).toContainEqual({
+      cwd: "/workspace",
+      sessionId: "session-1",
+    });
+    expect(threads.snapshot()).toMatchObject({
+      selected: {
+        drafts: ["Try this again"],
+        id: source.id,
+        items: [
+          { kind: "user", text: "Restore me" },
+          { kind: "assistant", text: "Restored." },
+        ],
+      },
+      threads: [{ createdAt: source.createdAt, id: source.id }],
+    });
+  });
+
+  test("assistant tree navigation adds no draft and preserves existing drafts", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Old branch");
+    const first = await threads.treeTargets();
+    const [userTarget] = first.targets;
+    if (!userTarget) {
+      throw new Error("Missing user tree target");
+    }
+    await threads.navigateTree(first.threadId, userTarget);
+    agent.navigationResult = { draft: "Do not restore an assistant message" };
+    agent.treeTargetEntries = [
+      {
+        activeBranch: true,
+        current: true,
+        depth: 1,
+        entryId: "pi-assistant-1",
+        role: "assistant",
+        text: "Done",
+      },
+    ];
+    const second = await threads.treeTargets();
+    const [assistantTarget] = second.targets;
+    if (!assistantTarget) {
+      throw new Error("Missing assistant tree target");
+    }
+
+    await threads.navigateTree(second.threadId, assistantTarget);
+
+    expect(agent.navigateTreeCalls.at(-1)).toStrictEqual({
+      entryId: "pi-assistant-1",
+      sessionId: "session-1",
+    });
+    expect(threads.snapshot().selected?.drafts).toStrictEqual([
+      "Try this again",
+    ]);
+  });
+
+  test("rejects unavailable, running, and stale tree navigation", async () => {
+    const agent = new FakeAgent();
+    agent.operations.treePicker = false;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("First Thread");
+
+    await expect(threads.treeTargets()).rejects.toThrow(
+      "does not support Navigate Thread Tree"
+    );
+
+    agent.operations.treePicker = true;
+    agent.holdPrompts = true;
+    const running = threads.prompt("Still running");
+    await agent.firstPromptStarted;
+    await expect(threads.treeTargets()).rejects.toThrow(
+      "current turn to finish"
+    );
+    await threads.cancel();
+    await running;
+
+    await threads.newThread();
+    const context = await threads.treeTargets();
+    const [target] = context.targets;
+    if (!target) {
+      throw new Error("Missing tree target");
+    }
+    await threads.newThread();
+
+    await expect(
+      threads.navigateTree(context.threadId, target)
+    ).rejects.toThrow("selected Thread changed");
+    expect(agent.navigateTreeCalls).toStrictEqual([]);
+  });
+
+  test("tree navigation failure preserves the old transcript", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Old branch");
+    const context = await threads.treeTargets();
+    const [target] = context.targets;
+    if (!target) {
+      throw new Error("Missing tree target");
+    }
+    const oldItems = threads.snapshot().selected?.items;
+    agent.navigationError = new Error("Navigation failed");
+
+    await expect(
+      threads.navigateTree(context.threadId, target)
+    ).rejects.toThrow("Navigation failed");
+
+    expect(threads.snapshot().selected).toMatchObject({
+      items: oldItems,
+      status: "idle",
+    });
+    expect(threads.snapshot().selected?.sessionOperation).toBeUndefined();
+  });
+
+  test("tree replay failure clears stale transcript and remains retryable", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Old branch");
+    const context = await threads.treeTargets();
+    const [target] = context.targets;
+    if (!target) {
+      throw new Error("Missing tree target");
+    }
+    agent.failLoad = true;
+
+    await threads.navigateTree(context.threadId, target);
+
+    expect(threads.snapshot().selected).toMatchObject({
+      drafts: ["Try this again"],
+      error: "Load failed",
+      items: [],
+      status: "error",
+    });
+  });
+
+  test("tree navigation cannot send on its source or steal a newer selection", async () => {
+    const agent = new FakeAgent();
+    agent.navigationGate = deferred();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Source Thread");
+    const sourceId = threads.snapshot().selected?.id;
+    if (!sourceId) {
+      throw new Error("Missing source Thread");
+    }
+    await threads.newThread();
+    const otherId = threads.snapshot().selected?.id;
+    if (!otherId) {
+      throw new Error("Missing other Thread");
+    }
+    await threads.select(sourceId);
+    const context = await threads.treeTargets();
+    const [target] = context.targets;
+    if (!target) {
+      throw new Error("Missing tree target");
+    }
+
+    const navigating = threads.navigateTree(context.threadId, target);
+    expect(threads.snapshot().selected?.sessionOperation).toBeTruthy();
+    await expect(threads.prompt("Too soon")).rejects.toThrow(
+      "Thread operation to finish"
+    );
+    await threads.select(otherId);
+    agent.navigationGate.resolve();
+    await navigating;
+
+    expect(threads.snapshot().selected?.id).toBe(otherId);
+    await threads.select(sourceId);
+    expect(threads.snapshot().selected).toMatchObject({
+      drafts: ["Try this again"],
+      items: [],
+      status: "idle",
+    });
   });
 
   test("stopping a running Thread preserves output and restores queued prompts as drafts", async () => {

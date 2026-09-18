@@ -888,7 +888,7 @@ export const decodeTreeTargets = (value: unknown): AgentTreeTarget[] => {
       (role !== "user" && role !== "assistant")
     ) {
       for (const child of children) {
-        visit(child, depth + 1);
+        visit(child, depth);
       }
       return;
     }

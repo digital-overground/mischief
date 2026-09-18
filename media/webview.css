@@ -1408,7 +1408,8 @@ footer {
   padding: 2px 12px 4px;
 }
 #footer-new-thread,
-#footer-fork-thread {
+#footer-fork-thread,
+#footer-navigate-tree {
   flex: none;
   border: 0;
   background: transparent;
@@ -1421,12 +1422,14 @@ footer {
   justify-content: center;
 }
 #footer-new-thread .lucide,
-#footer-fork-thread .lucide {
+#footer-fork-thread .lucide,
+#footer-navigate-tree .lucide {
   width: 18px;
   height: 18px;
 }
 #usage,
-#footer-fork-thread {
+#footer-fork-thread,
+#footer-navigate-tree {
   border: 0;
   background: transparent;
 }

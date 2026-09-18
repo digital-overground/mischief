@@ -77,33 +77,68 @@ describe("Footer controls", () => {
     ).toBeTruthy();
   });
 
-  test("shows an id-free Fork Thread action only when supported", async () => {
+  test("shows id-free Thread operation actions only when supported", async () => {
     await act(() => renderFooter());
-    expect(document.querySelector("#footer-fork-thread")).toBeNull();
+    expect({
+      fork: document.querySelector("#footer-fork-thread"),
+      tree: document.querySelector("#footer-navigate-tree"),
+    }).toStrictEqual({ fork: null, tree: null });
 
-    await act(() => renderFooter({ forkSupported: true }));
+    await act(() =>
+      renderFooter({ forkSupported: true, treeNavigationSupported: true })
+    );
     const fork = document.querySelector<HTMLButtonElement>(
       'button[aria-label="Fork Thread"]'
     );
-    expect({ disabled: fork?.disabled, title: fork?.title }).toStrictEqual({
-      disabled: false,
-      title: "Fork Thread",
+    const tree = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Navigate Thread Tree"]'
+    );
+    expect({
+      fork: { disabled: fork?.disabled, title: fork?.title },
+      tree: { disabled: tree?.disabled, title: tree?.title },
+    }).toStrictEqual({
+      fork: { disabled: false, title: "Fork Thread" },
+      tree: { disabled: false, title: "Navigate Thread Tree" },
     });
 
     await act(() => fork?.click());
-    expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: "forkThread" });
+    await act(() => tree?.click());
+    expect(postMessage.mock.calls).toStrictEqual([
+      [{ type: "forkThread" }],
+      [{ type: "navigateThreadTree" }],
+    ]);
   });
 
-  test("disables Fork Thread and Send during a Thread operation", async () => {
+  test("disables Thread operations and Send during a Thread operation", async () => {
     await act(() =>
-      renderFooter({ forkSupported: true, sessionOperation: true })
+      renderFooter({
+        forkSupported: true,
+        sessionOperation: true,
+        treeNavigationSupported: true,
+      })
     );
 
     expect({
       fork: document.querySelector<HTMLButtonElement>("#footer-fork-thread")
         ?.disabled,
       send: document.querySelector<HTMLButtonElement>("#send")?.disabled,
-    }).toStrictEqual({ fork: true, send: true });
+      tree: document.querySelector<HTMLButtonElement>("#footer-navigate-tree")
+        ?.disabled,
+    }).toStrictEqual({ fork: true, send: true, tree: true });
+
+    await act(() =>
+      renderFooter({
+        forkSupported: true,
+        status: "running",
+        treeNavigationSupported: true,
+      })
+    );
+    expect({
+      fork: document.querySelector<HTMLButtonElement>("#footer-fork-thread")
+        ?.disabled,
+      tree: document.querySelector<HTMLButtonElement>("#footer-navigate-tree")
+        ?.disabled,
+    }).toStrictEqual({ fork: true, tree: true });
   });
 
   test("preserves the Agent's model option order", async () => {

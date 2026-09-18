@@ -80,7 +80,16 @@ describe("ACP adapter", () => {
             },
           },
           {
-            children: [],
+            children: [
+              {
+                children: [],
+                entry: {
+                  id: "user-2",
+                  message: { content: "Alternate", role: "user" },
+                  type: "message",
+                },
+              },
+            ],
             entry: { id: "custom-1", type: "compaction" },
           },
         ],
@@ -101,6 +110,14 @@ describe("ACP adapter", () => {
         entryId: "assistant-1",
         role: "assistant",
         text: "Done",
+      },
+      {
+        activeBranch: false,
+        current: false,
+        depth: 0,
+        entryId: "user-2",
+        role: "user",
+        text: "Alternate",
       },
     ]);
   });

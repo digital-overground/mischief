@@ -51,6 +51,19 @@ export const FooterControls = ({
           <SvgIcon kind="fork" />
         </button>
       ) : null}
+      {selected?.treeNavigationSupported ? (
+        <button
+          className="action"
+          id="footer-navigate-tree"
+          title="Navigate Thread Tree"
+          aria-label="Navigate Thread Tree"
+          type="button"
+          disabled={selected.status !== "idle" || selected.sessionOperation}
+          onClick={() => postMessage({ type: "navigateThreadTree" })}
+        >
+          <SvgIcon kind="gitBranch" />
+        </button>
+      ) : null}
       {selected?.usage && selected.usage.size > 0 ? (
         <UsageControl usage={selected.usage} key={selected.id} />
       ) : null}

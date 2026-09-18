@@ -20,6 +20,7 @@ import type {
 } from "./projects/projects";
 import type {
   AgentForkTarget,
+  AgentTreeTarget,
   PromptImage,
   ThreadHistoryEntry,
   ThreadInteractionResponse,
@@ -107,6 +108,10 @@ interface ThreadHistoryQuickPickItem extends vscode.QuickPickItem {
 
 interface ForkQuickPickItem extends vscode.QuickPickItem {
   target: AgentForkTarget;
+}
+
+interface TreeQuickPickItem extends vscode.QuickPickItem {
+  target: AgentTreeTarget;
 }
 
 const pickerLabel = (text: string): string =>
@@ -687,6 +692,10 @@ export class MischiefView implements vscode.WebviewViewProvider {
       await this.showForkThread();
       return true;
     }
+    if (data.type === "navigateThreadTree") {
+      await this.showNavigateThreadTree();
+      return true;
+    }
     if (data.type === "renameThread" && typeof data.id === "string") {
       await this.renameThread(data.id);
       return true;
@@ -807,6 +816,71 @@ export class MischiefView implements vscode.WebviewViewProvider {
     );
     if (selected) {
       await this.threads.fork(context.threadId, selected.target);
+    }
+  }
+
+  private async showNavigateThreadTree(): Promise<void> {
+    const loading = vscode.window.createQuickPick();
+    loading.busy = true;
+    loading.placeholder = "Loading Thread tree…";
+    loading.title = "Navigate Thread Tree";
+    let cancelled = false;
+    const hidden = loading.onDidHide(() => {
+      cancelled = true;
+    });
+    loading.show();
+    let context;
+    try {
+      context = await this.threads.treeTargets();
+    } finally {
+      hidden.dispose();
+      loading.hide();
+      loading.dispose();
+    }
+    if (cancelled) {
+      return;
+    }
+    if (!context.targets.length) {
+      await vscode.window.showInformationMessage(
+        "No message entries are available in this Thread tree."
+      );
+      return;
+    }
+    const currentVisible = context.targets.some((target) => target.current);
+    let activeTarget: AgentTreeTarget | undefined;
+    if (!currentVisible) {
+      for (const target of context.targets) {
+        if (
+          target.activeBranch &&
+          (!activeTarget || target.depth >= activeTarget.depth)
+        ) {
+          activeTarget = target;
+        }
+      }
+    }
+    const selected = await vscode.window.showQuickPick<TreeQuickPickItem>(
+      context.targets.map((target) => {
+        const preview = pickerLabel(target.text);
+        let description: string | undefined;
+        if (target.current) {
+          description = "current leaf";
+        } else if (target.entryId === activeTarget?.entryId) {
+          description = "active branch";
+        }
+        return {
+          ...(description ? { description } : {}),
+          ...(preview === target.text ? {} : { detail: target.text }),
+          label: `${"\u00A0\u00A0".repeat(target.depth)}${target.role === "user" ? "You" : "Agent"}: ${preview}`,
+          target,
+        };
+      }),
+      {
+        placeHolder: "Select a message to make active",
+        title: "Navigate Thread Tree",
+      }
+    );
+    if (selected) {
+      await this.threads.navigateTree(context.threadId, selected.target);
     }
   }
 

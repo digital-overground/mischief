@@ -1405,6 +1405,33 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("appends a tree-navigation draft without losing typed text", async () => {
+    const unmount = await renderApp();
+    await act(() =>
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("selected", []) })
+      )
+    );
+    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+    if (!composer) {
+      throw new Error("Missing composer");
+    }
+    composer.value = "Unsent local draft";
+    postMessage.mockClear();
+
+    await act(() =>
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: threadState("selected", ["Try this again"]),
+        })
+      )
+    );
+
+    expect(composer.value).toBe("Unsent local draft\n\nTry this again");
+    expect(postMessage).toHaveBeenCalledWith({ type: "draftsConsumed" });
+    await unmount();
+  });
+
   test("autocompletes advertised slash commands and sends unknown slash text", async () => {
     const unmount = await renderApp();
     await act(() => {

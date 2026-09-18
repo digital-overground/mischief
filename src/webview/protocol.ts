@@ -63,7 +63,8 @@ export type WebviewToHostMessage =
         | "contextItems"
         | "newThread"
         | "threadHistory"
-        | "forkThread";
+        | "forkThread"
+        | "navigateThreadTree";
     }
   | {
       type:
