@@ -90,7 +90,7 @@ const selectOptions = (
         {entry.options.map((item) => optionNode(item, kind))}
       </optgroup>
     ) : (
-      optionNode(entry.options[0] as ThreadConfigChoice, kind)
+      optionNode(entry.options[0], kind)
     )
   );
 };

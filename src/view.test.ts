@@ -447,9 +447,9 @@ describe("view provider", () => {
       })
     );
 
-    await triggerButton?.({ item: picker.items[1] as { issue: unknown } });
+    await triggerButton?.({ item: picker.items[1] });
     vscode.openExternal.mockRejectedValueOnce(new Error("blocked"));
-    await triggerButton?.({ item: picker.items[0] as { issue: unknown } });
+    await triggerButton?.({ item: picker.items[0] });
 
     expect({
       errors: vscode.showErrorMessage.mock.calls,
@@ -466,7 +466,7 @@ describe("view provider", () => {
       sourceRequests: 0,
     });
 
-    picker.selectedItems = [picker.items[1] as { issue: unknown }];
+    picker.selectedItems = [picker.items[1]];
     accept?.();
     await vi.waitFor(() => expect(sourcePicker.show).toHaveBeenCalledOnce());
     sourcePicker.selectedItems = [
@@ -920,7 +920,7 @@ describe("view provider", () => {
             throw new Error("Issue picker is not open");
           }
         });
-        picker.selectedItems = [picker.items[0] as { issue: unknown }];
+        picker.selectedItems = [picker.items[0]];
         accept?.();
         if (step !== "branches") {
           await vi.waitFor(() => {
@@ -1253,7 +1253,7 @@ describe("view provider", () => {
       show: vi.fn<() => void>(),
       title: "",
     });
-    vscode.showQuickPick.mockReset().mockResolvedValue(null as never);
+    vscode.showQuickPick.mockReset().mockResolvedValue(null);
     const provider = new MischiefView(
       {} as never,
       {

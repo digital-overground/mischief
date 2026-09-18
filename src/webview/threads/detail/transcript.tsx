@@ -503,7 +503,7 @@ const TranscriptNodes = memo(
       if (item.kind === "thought") {
         const thoughts: RenderedTranscriptItem[] = [];
         while (items[index]?.kind === "thought") {
-          thoughts.push(items[index] as RenderedTranscriptItem);
+          thoughts.push(items[index]);
           index += 1;
         }
         nodes.push(
@@ -515,7 +515,7 @@ const TranscriptNodes = memo(
       if (group) {
         const operations: RenderedTranscriptItem[] = [];
         while (toolGroupKind(items[index]) === group) {
-          operations.push(items[index] as RenderedTranscriptItem);
+          operations.push(items[index]);
           index += 1;
         }
         nodes.push(
@@ -606,7 +606,12 @@ export const Transcript = ({
     content = <div className="empty">Send a prompt to start this Thread.</div>;
   }
   return (
-    <div id="transcript" onMouseUp={onTranscriptHighlight}>
+    <div
+      id="transcript"
+      onMouseUp={() => {
+        void onTranscriptHighlight();
+      }}
+    >
       {content}
     </div>
   );

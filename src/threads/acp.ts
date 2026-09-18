@@ -660,6 +660,13 @@ export const translateSessionUpdate = (
         type: "sessionInfo",
       };
     }
+    case "compaction_summary_chunk":
+    case "compaction_update":
+    case "current_mode_update":
+    case "plan_removed":
+    case "plan_update": {
+      return undefined;
+    }
     default: {
       return undefined;
     }
@@ -693,10 +700,10 @@ const standardTerminalAuthentication = (
   ) {
     return undefined;
   }
-  const launchArgs = args === undefined ? [] : (args as string[]);
+  const launchArgs = args === undefined ? [] : args;
   const env = {
     ...launch.env,
-    ...(rawEnv === undefined ? {} : (rawEnv as Record<string, string>)),
+    ...(rawEnv === undefined ? {} : rawEnv),
   };
   return {
     args: [...launch.args, ...launchArgs],

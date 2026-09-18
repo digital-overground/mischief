@@ -48,9 +48,7 @@ describe("Footer controls", () => {
     action.mockClear();
     postMessage.mockClear();
     document.body.innerHTML = '<div id="root"></div>';
-    root = createRoot(
-      document.querySelector<HTMLElement>("#root") as HTMLElement
-    );
+    root = createRoot(document.querySelector<HTMLElement>("#root")!);
   });
 
   afterEach(async () => {

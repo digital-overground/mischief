@@ -24,7 +24,7 @@ const composerContext = (
   cursor: number
 ): ComposerMatch | undefined => {
   const before = value.slice(0, cursor);
-  const match = before.match(/(?:^|\s)@(?<query>[^\s]*)$/u);
+  const match = /(?:^|\s)@(?<query>[^\s]*)$/u.exec(before);
   const query = match?.groups?.query;
   return query === undefined
     ? undefined
@@ -38,7 +38,7 @@ const slashCommand = (
   value: string,
   cursor: number
 ): ComposerMatch | undefined => {
-  const match = value.slice(0, cursor).match(/^\/(?<query>[^\s]*)$/u);
+  const match = /^\/(?<query>[^\s]*)$/u.exec(value.slice(0, cursor));
   return match?.groups?.query === undefined
     ? undefined
     : { query: match.groups.query.toLowerCase(), start: 0 };
