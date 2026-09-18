@@ -42,6 +42,7 @@ class FakeAgent {
   failCreate = false;
   createError?: Error;
   replayOnLoad = false;
+  failLoad = false;
   askPermission = false;
   askElicitation = false;
   richUpdates = false;
@@ -64,8 +65,10 @@ class FakeAgent {
     previewRole?: "user" | "assistant";
   }[] = [];
   historyCalls: string[] = [];
-  forkCalls: { sessionId: string; cwd: string; messageId: string }[] = [];
-  rollbackCalls: { sessionId: string; messageId: string }[] = [];
+  forkCalls: { sessionId: string; cwd: string; entryId: string }[] = [];
+  forkTargetCalls: string[] = [];
+  forkTargetEntries = [{ entryId: "pi-user-1", text: "Fork from here" }];
+  forkGate?: Deferred;
   update?: AgentHandlers["update"];
   private readonly permissionStartedDeferred = deferred();
   private readonly elicitationStartedDeferred = deferred();
@@ -125,15 +128,19 @@ class FakeAgent {
       dispose: () => {
         this.disposed = true;
       },
-      fork: (sessionId, cwd, messageId) => {
-        this.forkCalls.push({ cwd, messageId, sessionId });
-        return Promise.resolve({
+      fork: async (sessionId, cwd, entryId) => {
+        this.forkCalls.push({ cwd, entryId, sessionId });
+        await this.forkGate?.promise;
+        return {
           configOptions: [],
           operations: this.operations,
           sessionId: "forked-session",
-        });
+        };
       },
-      forkTargets: () => Promise.resolve([]),
+      forkTargets: (sessionId) => {
+        this.forkTargetCalls.push(sessionId);
+        return Promise.resolve(this.forkTargetEntries);
+      },
       history: (cwd) => {
         this.historyCalls.push(cwd);
         return Promise.resolve(this.historyEntries);
@@ -141,6 +148,9 @@ class FakeAgent {
       load: (sessionId, cwd) => {
         this.loadCalls += 1;
         this.loadRequests.push({ cwd, sessionId });
+        if (this.failLoad) {
+          throw new Error("Load failed");
+        }
         if (this.replayOnLoad) {
           handlers.update({
             kind: "user",
@@ -270,10 +280,6 @@ class FakeAgent {
         });
         handlers.update({ title: "Fix tests", type: "sessionInfo" });
         return { stopReason: "completed" };
-      },
-      rollback: (sessionId, messageId) => {
-        this.rollbackCalls.push({ messageId, sessionId });
-        return Promise.resolve();
       },
       setConfig: (sessionId, configId, value) => {
         this.configChange = { configId, sessionId, value };
@@ -607,116 +613,139 @@ describe("threads module", () => {
     expect(restored.snapshot().selected?.id).toBe(secondId);
   });
 
-  test("forks before a user message and restores it as an editable draft", async () => {
+  test("forks from a native target without changing the source Thread", async () => {
     const agent = new FakeAgent();
     const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
     await threads.prompt("Fork from here");
-    const message = threads
-      .snapshot()
-      .selected?.items.find((item) => item.kind === "user");
-    if (!message) {
-      throw new Error("Missing user message");
+    const source = threads.snapshot().selected;
+    if (!source?.id) {
+      throw new Error("Missing source Thread");
+    }
+    const context = await threads.forkTargets();
+    const [target] = context.targets;
+    if (!target) {
+      throw new Error("Missing fork target");
     }
 
-    await threads.fork(message.id);
+    await threads.fork(context.threadId, target);
 
+    expect(agent.forkTargetCalls).toStrictEqual(["session-1"]);
     expect(agent.forkCalls).toStrictEqual([
       {
         cwd: "/workspace",
-        messageId: message.id,
+        entryId: "pi-user-1",
         sessionId: "session-1",
       },
     ]);
     expect(threads.snapshot().selected).toMatchObject({
       drafts: ["Fork from here"],
-      id: expect.any(String),
+      id: expect.not.stringMatching(source.id),
       items: [],
       name: "Fix tests (fork)",
     });
+    expect(threads.snapshot().threads).toStrictEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: source.id, name: "Fix tests" }),
+      ])
+    );
   });
 
-  test("forks at an agent response without restoring a draft", async () => {
+  test("rejects unavailable and stale fork pickers", async () => {
+    const agent = new FakeAgent();
+    agent.operations.forkPicker = false;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("First Thread");
+
+    await expect(threads.forkTargets()).rejects.toThrow(
+      "does not support Fork Thread"
+    );
+
+    agent.operations.forkPicker = true;
+    agent.holdPrompts = true;
+    const running = threads.prompt("Still running");
+    await agent.firstPromptStarted;
+    await expect(threads.forkTargets()).rejects.toThrow(
+      "current turn to finish"
+    );
+    await threads.cancel();
+    await running;
+
+    await threads.newThread();
+    const context = await threads.forkTargets();
+    const [target] = context.targets;
+    if (!target) {
+      throw new Error("Missing fork target");
+    }
+    await threads.newThread();
+
+    await expect(threads.fork(context.threadId, target)).rejects.toThrow(
+      "selected Thread changed"
+    );
+    expect(agent.forkCalls).toStrictEqual([]);
+  });
+
+  test("blocks source prompts without stealing a newer selection during fork", async () => {
+    const agent = new FakeAgent();
+    agent.forkGate = deferred();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Source Thread");
+    const sourceId = threads.snapshot().selected?.id;
+    if (!sourceId) {
+      throw new Error("Missing source Thread");
+    }
+    await threads.newThread();
+    const otherId = threads.snapshot().selected?.id;
+    if (!otherId) {
+      throw new Error("Missing other Thread");
+    }
+    await threads.select(sourceId);
+    const context = await threads.forkTargets();
+    const [target] = context.targets;
+    if (!target) {
+      throw new Error("Missing fork target");
+    }
+
+    const forking = threads.fork(context.threadId, target);
+    expect(threads.snapshot().selected?.sessionOperation).toBeTruthy();
+    await expect(threads.prompt("Too soon")).rejects.toThrow(
+      "Thread operation to finish"
+    );
+    await threads.select(otherId);
+    agent.forkGate.resolve();
+    await forking;
+
+    expect(threads.snapshot().selected?.id).toBe(otherId);
+    expect(threads.snapshot().threads.map((thread) => thread.name)).toContain(
+      "Fix tests (fork)"
+    );
+  });
+
+  test("keeps a fork child registered when replay fails", async () => {
     const agent = new FakeAgent();
     const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
-    await threads.prompt("Fork after the response");
-    const message = threads
-      .snapshot()
-      .selected?.items.find((item) => item.kind === "assistant");
-    if (!message) {
-      throw new Error("Missing agent response");
+    await threads.prompt("Fork from here");
+    const context = await threads.forkTargets();
+    const [target] = context.targets;
+    if (!target) {
+      throw new Error("Missing fork target");
     }
+    agent.failLoad = true;
 
-    await threads.fork(message.id);
+    await threads.fork(context.threadId, target);
 
-    expect(agent.forkCalls).toStrictEqual([
-      {
-        cwd: "/workspace",
-        messageId: "pi-assistant-1",
-        sessionId: "session-1",
-      },
-    ]);
     expect(threads.snapshot().selected).toMatchObject({
-      drafts: [],
-      id: expect.any(String),
-      items: [],
-      name: "Fix tests (fork)",
+      error: "Load failed",
+      status: "error",
     });
-  });
-
-  test("rolls back before the selected user message and restores its draft", async () => {
-    const agent = new FakeAgent();
-    const threads = createThreads(agent.factory);
-    await threads.openWorkspace("/workspace");
-    await threads.prompt("Restore me");
-    await threads.prompt("Later message");
-    const message = threads
-      .snapshot()
-      .selected?.items.find(
-        (item) => item.kind === "user" && item.text === "Restore me"
-      );
-    if (!message) {
-      throw new Error("Missing user message");
-    }
-    agent.replayOnLoad = true;
-
-    await threads.rollback(message.id);
-
-    expect(agent.rollbackCalls).toStrictEqual([
-      { messageId: message.id, sessionId: "session-1" },
-    ]);
-    expect(threads.snapshot().selected).toMatchObject({
-      drafts: ["Restore me"],
-      items: [],
-    });
-  });
-
-  test("rolls back through the selected agent response without restoring a draft", async () => {
-    const agent = new FakeAgent();
-    const threads = createThreads(agent.factory);
-    await threads.openWorkspace("/workspace");
-    await threads.prompt("Keep this turn");
-    await threads.prompt("Remove this turn");
-    const message = threads
-      .snapshot()
-      .selected?.items.find((item) => item.kind === "assistant");
-    if (!message) {
-      throw new Error("Missing agent response");
-    }
-
-    await threads.rollback(message.id);
-
-    expect(agent.rollbackCalls).toStrictEqual([
-      { messageId: "pi-assistant-1", sessionId: "session-1" },
-    ]);
-    expect(threads.snapshot().selected).toMatchObject({
-      drafts: [],
-      items: [
-        { kind: "user", text: "Keep this turn" },
-        { kind: "assistant", text: "Done." },
-      ],
-    });
+    expect(threads.snapshot().threads).toStrictEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "Fix tests (fork)", status: "error" }),
+      ])
+    );
   });
 
   test("stopping a running Thread preserves output and restores queued prompts as drafts", async () => {
@@ -1103,24 +1132,6 @@ describe("threads module", () => {
         id: "assistant:pi-assistant-1",
         kind: "assistant",
         text: "Restored.",
-      },
-    ]);
-
-    await restored.rollback("user:pi-user-1");
-    expect(loadingAgent.rollbackCalls).toStrictEqual([
-      { messageId: "pi-user-1", sessionId: "session-1" },
-    ]);
-
-    const forkingAgent = new FakeAgent();
-    forkingAgent.replayOnLoad = true;
-    const forking = createThreads(forkingAgent.factory);
-    await forking.openWorkspace("/workspace");
-    await forking.fork("user:pi-user-1");
-    expect(forkingAgent.forkCalls).toStrictEqual([
-      {
-        cwd: "/workspace",
-        messageId: "pi-user-1",
-        sessionId: "session-1",
       },
     ]);
   });

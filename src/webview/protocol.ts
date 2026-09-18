@@ -58,7 +58,12 @@ export type HostToWebviewMessage =
 
 export type WebviewToHostMessage =
   | {
-      type: "ready" | "contextItems" | "newThread" | "threadHistory";
+      type:
+        | "ready"
+        | "contextItems"
+        | "newThread"
+        | "threadHistory"
+        | "forkThread";
     }
   | {
       type:
@@ -69,12 +74,7 @@ export type WebviewToHostMessage =
       path: string;
     }
   | {
-      type:
-        | "selectThread"
-        | "removeThread"
-        | "renameThread"
-        | "forkThread"
-        | "rollbackThread";
+      type: "selectThread" | "removeThread" | "renameThread";
       id: string;
     }
   | {

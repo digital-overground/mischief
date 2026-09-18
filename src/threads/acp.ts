@@ -1090,16 +1090,6 @@ class AcpConnection implements AgentConnection {
     });
   }
 
-  rollback(sessionId: string, messageId: string): Promise<void> {
-    return this.call(async () => {
-      await this.start();
-      await this.requireConnection().extMethod("_magpi-acp/session/rewind", {
-        clientMessageId: messageId,
-        sessionId,
-      });
-    });
-  }
-
   setConfig(
     sessionId: string,
     configId: string,

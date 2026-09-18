@@ -961,6 +961,178 @@ describe("view provider", () => {
     }
   );
 
+  test("selects a native fork target from a loading QuickPick", async () => {
+    const loading = {
+      busy: false,
+      dispose: vi.fn<() => void>(),
+      hide: vi.fn<() => void>(),
+      onDidHide: vi.fn<(_listener: () => void) => { dispose: () => void }>(
+        () => ({ dispose: vi.fn<() => void>() })
+      ),
+      placeholder: "",
+      show: vi.fn<() => void>(),
+      title: "",
+    };
+    vscode.createQuickPick.mockReset().mockReturnValue(loading);
+    vscode.showQuickPick
+      .mockReset()
+      .mockImplementation((items) => Promise.resolve((items as unknown[])[0]));
+    const fork = vi.fn<() => Promise<void>>(() => Promise.resolve());
+    const threads = {
+      fork,
+      forkTargets: () =>
+        Promise.resolve({
+          targets: [
+            { entryId: "pi-user-1", text: "First\n  prompt" },
+            { entryId: "pi-user-2", text: "Second prompt" },
+          ],
+          threadId: "source-thread",
+        }),
+      onChange: vi.fn<() => void>(),
+    };
+    const provider = new MischiefView(
+      {} as never,
+      threads as never,
+      { fsPath: process.cwd() } as never,
+      {} as never,
+      profileDatabase() as never
+    );
+
+    await (
+      provider as unknown as { showForkThread: () => Promise<void> }
+    ).showForkThread();
+
+    expect({
+      disposed: loading.dispose.mock.calls.length,
+      hidden: loading.hide.mock.calls.length,
+      picker: vscode.showQuickPick.mock.calls,
+      shown: loading.show.mock.calls.length,
+      state: {
+        busy: loading.busy,
+        placeholder: loading.placeholder,
+        title: loading.title,
+      },
+    }).toStrictEqual({
+      disposed: 1,
+      hidden: 1,
+      picker: [
+        [
+          [
+            {
+              detail: "First\n  prompt",
+              label: "First prompt",
+              target: { entryId: "pi-user-1", text: "First\n  prompt" },
+            },
+            {
+              label: "Second prompt",
+              target: { entryId: "pi-user-2", text: "Second prompt" },
+            },
+          ],
+          {
+            placeHolder: "Select a user message to edit in a new Thread",
+            title: "Fork Thread",
+          },
+        ],
+      ],
+      shown: 1,
+      state: {
+        busy: true,
+        placeholder: "Loading fork points…",
+        title: "Fork Thread",
+      },
+    });
+    expect(fork).toHaveBeenCalledExactlyOnceWith("source-thread", {
+      entryId: "pi-user-1",
+      text: "First\n  prompt",
+    });
+  });
+
+  test("does nothing when loading fork targets is cancelled", async () => {
+    let hide: (() => void) | undefined;
+    let resolveTargets:
+      | ((value: {
+          targets: { entryId: string; text: string }[];
+          threadId: string;
+        }) => void)
+      | undefined;
+    const loading = {
+      busy: false,
+      dispose: vi.fn<() => void>(),
+      hide: vi.fn<() => void>(),
+      onDidHide: (listener: () => void) => {
+        hide = listener;
+        return { dispose: vi.fn<() => void>() };
+      },
+      placeholder: "",
+      show: vi.fn<() => void>(),
+      title: "",
+    };
+    vscode.createQuickPick.mockReset().mockReturnValue(loading);
+    vscode.showQuickPick.mockReset();
+    const fork = vi.fn<() => Promise<void>>(() => Promise.resolve());
+    const provider = new MischiefView(
+      {} as never,
+      {
+        fork,
+        forkTargets: () =>
+          // oxlint-disable-next-line promise/avoid-new -- controls picker cancellation timing
+          new Promise((resolve) => {
+            resolveTargets = resolve;
+          }),
+        onChange: vi.fn<() => void>(),
+      } as never,
+      { fsPath: process.cwd() } as never,
+      {} as never,
+      profileDatabase() as never
+    );
+
+    const operation = (
+      provider as unknown as { showForkThread: () => Promise<void> }
+    ).showForkThread();
+    hide?.();
+    resolveTargets?.({
+      targets: [{ entryId: "pi-user-1", text: "First" }],
+      threadId: "source-thread",
+    });
+    await operation;
+
+    expect(vscode.showQuickPick).not.toHaveBeenCalled();
+    expect(fork).not.toHaveBeenCalled();
+  });
+
+  test("reports when a Thread has no fork points", async () => {
+    const loading = {
+      busy: false,
+      dispose: vi.fn<() => void>(),
+      hide: vi.fn<() => void>(),
+      onDidHide: () => ({ dispose: vi.fn<() => void>() }),
+      placeholder: "",
+      show: vi.fn<() => void>(),
+      title: "",
+    };
+    vscode.createQuickPick.mockReset().mockReturnValue(loading);
+    vscode.showInformationMessage.mockClear();
+    const provider = new MischiefView(
+      {} as never,
+      {
+        forkTargets: () =>
+          Promise.resolve({ targets: [], threadId: "source-thread" }),
+        onChange: vi.fn<() => void>(),
+      } as never,
+      { fsPath: process.cwd() } as never,
+      {} as never,
+      profileDatabase() as never
+    );
+
+    await (
+      provider as unknown as { showForkThread: () => Promise<void> }
+    ).showForkThread();
+
+    expect(vscode.showInformationMessage).toHaveBeenCalledExactlyOnceWith(
+      "No fork points are available in this Thread."
+    );
+  });
+
   test("creates and seeds a Thread after transcript setup completes", async () => {
     const newThread = vi.fn<() => Promise<void>>(() => Promise.resolve());
     const prompt = vi.fn<() => Promise<void>>(() => Promise.resolve());

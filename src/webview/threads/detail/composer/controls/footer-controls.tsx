@@ -1,7 +1,7 @@
+import { postMessage } from "../../../../bridge";
 import { SvgIcon } from "../../../../icon";
 import type { RenderedThreadDetail } from "../../../../protocol";
 import { ConfigControl } from "./config-control";
-import { HistoryControl } from "./history-control";
 import { UsageControl } from "./usage-control";
 
 export const FooterControls = ({
@@ -38,10 +38,19 @@ export const FooterControls = ({
       >
         <SvgIcon kind="chat" />
       </button>
-      <HistoryControl
-        selected={selected}
-        key={`history:${selected?.id ?? "none"}`}
-      />
+      {selected?.forkSupported ? (
+        <button
+          className="action"
+          id="footer-fork-thread"
+          title="Fork Thread"
+          aria-label="Fork Thread"
+          type="button"
+          disabled={selected.status !== "idle" || selected.sessionOperation}
+          onClick={() => postMessage({ type: "forkThread" })}
+        >
+          <SvgIcon kind="fork" />
+        </button>
+      ) : null}
       {selected?.usage && selected.usage.size > 0 ? (
         <UsageControl usage={selected.usage} key={selected.id} />
       ) : null}
@@ -58,7 +67,7 @@ export const FooterControls = ({
         id="send"
         title={sendLabel}
         aria-label={sendLabel}
-        disabled={!selected && !setup}
+        disabled={(!selected && !setup) || selected?.sessionOperation}
         onClick={onSend}
       >
         <SvgIcon className="send-icon" kind="send" />

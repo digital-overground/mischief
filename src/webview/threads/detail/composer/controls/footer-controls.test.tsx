@@ -77,113 +77,33 @@ describe("Footer controls", () => {
     ).toBeTruthy();
   });
 
-  test("opens user and agent messages in order at the pointer and closes with Escape", async () => {
-    await act(() =>
-      renderFooter({
-        items: [
-          { id: "user-1", kind: "user", text: "First request" },
-          { id: "assistant", kind: "assistant", text: "Response" },
-          { id: "user-2", kind: "user", text: "Most recent request" },
-        ],
-      })
-    );
-    const history = document.querySelector<HTMLButtonElement>("#history");
-    if (!history) {
-      throw new Error("Missing history button");
-    }
+  test("shows an id-free Fork Thread action only when supported", async () => {
+    await act(() => renderFooter());
+    expect(document.querySelector("#footer-fork-thread")).toBeNull();
 
-    await act(() =>
-      history.dispatchEvent(
-        new MouseEvent("click", { bubbles: true, clientX: 200 })
-      )
+    await act(() => renderFooter({ forkSupported: true }));
+    const fork = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Fork Thread"]'
     );
-
-    const list = document.querySelector<HTMLElement>("#history-list");
-    const entries = [
-      ...document.querySelectorAll<HTMLElement>(".history-entry"),
-    ];
-    expect({
-      actionText: list?.textContent?.includes("Fork") ?? true,
-      active: document.activeElement === list,
-      kinds: entries.map((entry) => entry.className),
-      left: list?.style.left,
-      messages: [...document.querySelectorAll(".history-message")].map(
-        (message) => message.textContent
-      ),
-      rowTabIndexes: entries.map((entry) => entry.tabIndex),
-      width: list?.style.width,
-    }).toStrictEqual({
-      actionText: false,
-      active: true,
-      kinds: [
-        "history-entry user",
-        "history-entry assistant",
-        "history-entry user",
-      ],
-      left: "200px",
-      messages: ["First request", "Response", "Most recent request"],
-      rowTabIndexes: [0, 0, 0],
-      width: "814px",
+    expect({ disabled: fork?.disabled, title: fork?.title }).toStrictEqual({
+      disabled: false,
+      title: "Fork Thread",
     });
 
-    const fork = entries[0]?.querySelector<HTMLButtonElement>(
-      'button[aria-label="Fork from this message"]'
-    );
     await act(() => fork?.click());
-    expect(postMessage).toHaveBeenCalledWith({
-      id: "user-1",
-      type: "forkThread",
-    });
-
-    await act(() =>
-      history.dispatchEvent(
-        new MouseEvent("click", { bubbles: true, clientX: 200 })
-      )
-    );
-    const rollback = document
-      .querySelectorAll<HTMLElement>(".history-entry")[1]
-      ?.querySelector<HTMLButtonElement>(
-        'button[aria-label="Rollback to this message"]'
-      );
-    await act(() => rollback?.click());
-    expect(postMessage).toHaveBeenCalledWith({
-      id: "assistant",
-      type: "rollbackThread",
-    });
-
-    await act(() =>
-      history.dispatchEvent(
-        new MouseEvent("click", { bubbles: true, clientX: 200 })
-      )
-    );
-    await act(() =>
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))
-    );
-    expect(document.querySelector("#history-list")).toBeNull();
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: "forkThread" });
   });
 
-  test("moves a minimum-width history list left near the right edge", async () => {
+  test("disables Fork Thread and Send during a Thread operation", async () => {
     await act(() =>
-      renderFooter({
-        items: [{ id: "user", kind: "user", text: "Request" }],
-      })
-    );
-    const history = document.querySelector<HTMLButtonElement>("#history");
-    if (!history) {
-      throw new Error("Missing history button");
-    }
-
-    await act(() =>
-      history.dispatchEvent(
-        new MouseEvent("click", { bubbles: true, clientX: 900 })
-      )
+      renderFooter({ forkSupported: true, sessionOperation: true })
     );
 
-    const list = document.querySelector<HTMLElement>("#history-list");
-    expect({ left: list?.style.left, width: list?.style.width }).toStrictEqual({
-      left: "514px",
-      width: "500px",
-    });
+    expect({
+      fork: document.querySelector<HTMLButtonElement>("#footer-fork-thread")
+        ?.disabled,
+      send: document.querySelector<HTMLButtonElement>("#send")?.disabled,
+    }).toStrictEqual({ fork: true, send: true });
   });
 
   test("preserves the Agent's model option order", async () => {

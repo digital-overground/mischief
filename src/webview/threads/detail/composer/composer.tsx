@@ -188,7 +188,11 @@ const ComposerView = ({
       return;
     }
     const text = box.current?.value ?? "";
-    if ((!text.trim() && !images.length) || !selected) {
+    if (
+      (!text.trim() && !images.length) ||
+      !selected ||
+      selected.sessionOperation
+    ) {
       return;
     }
     postMessage({ images, text, type: "prompt" });

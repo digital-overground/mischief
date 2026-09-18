@@ -19,6 +19,7 @@ import type {
   Workspace,
 } from "./projects/projects";
 import type {
+  AgentForkTarget,
   PromptImage,
   ThreadHistoryEntry,
   ThreadInteractionResponse,
@@ -103,6 +104,13 @@ interface SourceBranchQuickPickItem extends vscode.QuickPickItem {
 interface ThreadHistoryQuickPickItem extends vscode.QuickPickItem {
   entry: ThreadHistoryEntry;
 }
+
+interface ForkQuickPickItem extends vscode.QuickPickItem {
+  target: AgentForkTarget;
+}
+
+const pickerLabel = (text: string): string =>
+  text.replaceAll(/\s+/gu, " ").trim() || "Image prompt";
 
 const historyTime = (value: string, now = Date.now()): string => {
   const elapsed = Math.max(0, now - Date.parse(value));
@@ -675,19 +683,8 @@ export class MischiefView implements vscode.WebviewViewProvider {
       await this.threads.remove(data.id);
       return true;
     }
-    if (data.type === "forkThread" && typeof data.id === "string") {
-      await this.threads.fork(data.id);
-      return true;
-    }
-    if (data.type === "rollbackThread" && typeof data.id === "string") {
-      const confirmed = await vscode.window.showWarningMessage(
-        "Rollback this Thread? The Thread will return to the selected point and later messages will leave the active branch.",
-        { modal: true },
-        "Rollback"
-      );
-      if (confirmed === "Rollback") {
-        await this.threads.rollback(data.id);
-      }
+    if (data.type === "forkThread") {
+      await this.showForkThread();
       return true;
     }
     if (data.type === "renameThread" && typeof data.id === "string") {
@@ -764,6 +761,52 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
     if (data.type === "openDiff" && typeof data.path === "string") {
       await this.openDiff(data.path);
+    }
+  }
+
+  private async showForkThread(): Promise<void> {
+    const loading = vscode.window.createQuickPick();
+    loading.busy = true;
+    loading.placeholder = "Loading fork points…";
+    loading.title = "Fork Thread";
+    let cancelled = false;
+    const hidden = loading.onDidHide(() => {
+      cancelled = true;
+    });
+    loading.show();
+    let context;
+    try {
+      context = await this.threads.forkTargets();
+    } finally {
+      hidden.dispose();
+      loading.hide();
+      loading.dispose();
+    }
+    if (cancelled) {
+      return;
+    }
+    if (!context.targets.length) {
+      await vscode.window.showInformationMessage(
+        "No fork points are available in this Thread."
+      );
+      return;
+    }
+    const selected = await vscode.window.showQuickPick<ForkQuickPickItem>(
+      context.targets.map((target) => {
+        const label = pickerLabel(target.text);
+        return {
+          ...(label === target.text ? {} : { detail: target.text }),
+          label,
+          target,
+        };
+      }),
+      {
+        placeHolder: "Select a user message to edit in a new Thread",
+        title: "Fork Thread",
+      }
+    );
+    if (selected) {
+      await this.threads.fork(context.threadId, selected.target);
     }
   }
 

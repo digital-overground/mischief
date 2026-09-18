@@ -68,6 +68,11 @@ export interface AgentTreeNavigationResult {
   draft?: string;
 }
 
+export interface ThreadForkTargets {
+  threadId: string;
+  targets: AgentForkTarget[];
+}
+
 export interface AgentPromptResult {
   stopReason: "completed" | "cancelled";
 }
@@ -200,7 +205,6 @@ export interface AgentConnection {
     images: PromptImage[]
   ) => Promise<AgentPromptResult>;
   treeTargets: (sessionId: string) => Promise<AgentTreeTarget[]>;
-  rollback: (sessionId: string, messageId: string) => Promise<void>;
   setConfig: (
     sessionId: string,
     configId: string,
@@ -345,6 +349,8 @@ export interface ThreadDetail {
   authentication?: TerminalAuthentication;
   error?: string;
   drafts: string[];
+  forkSupported?: boolean;
+  sessionOperation?: boolean;
   steering: SteeringMessage[];
 }
 
@@ -390,6 +396,7 @@ interface Runtime {
   drafts: string[];
   pending: { id: string; text: string; images: PromptImage[] }[];
   retryImages?: PromptImage[];
+  sessionOperation?: "fork" | "navigateTree";
   setup?: Promise<string>;
   registration?: PromiseLike<void>;
   interaction?: ThreadInteraction;
@@ -407,9 +414,6 @@ const threadUsage = (
 
 const hasPromptContent = (text: string, images: PromptImage[]): boolean =>
   Boolean(text.trim() || images.length);
-
-const agentMessageId = (messageId: string): string =>
-  messageId.replace(/^(?:assistant|user):/u, "");
 
 const stopStreaming = (runtime: Runtime): void => {
   if (runtime.streamingTimer) {
@@ -731,6 +735,9 @@ export class Threads {
     this.viewedId = record.id;
     record.unread = false;
     const runtime = this.runtime(record);
+    if (runtime.sessionOperation) {
+      throw new Error("Wait for the Thread operation to finish before sending");
+    }
     if (registration) {
       runtime.registration = registration;
     }
@@ -949,82 +956,50 @@ export class Threads {
     this.emit();
   }
 
-  async fork(messageId: string): Promise<void> {
-    const record = this.selectedId
-      ? this.findRecord(this.selectedId)
-      : undefined;
-    const runtime = record ? this.runtimes.get(record.id) : undefined;
-    const message = runtime?.items.find(
-      (item) =>
-        item.id === messageId &&
-        (item.kind === "user" || item.kind === "assistant")
-    );
-    if (!record?.sessionId || !runtime || !message || !this.workspace) {
-      return;
-    }
-    if (runtime.status !== "idle") {
-      throw new Error("Wait for the current turn to finish before forking");
-    }
-
-    const setup = await runtime.connection.fork(
-      record.sessionId,
-      record.workspace,
-      agentMessageId(messageId)
-    );
-    const now = new Date().toISOString();
-    const fork: StoredThread = {
-      createdAt: now,
-      id: randomUUID(),
-      name: `${record.name} (fork)`,
-      sessionId: setup.sessionId,
-      status: "idle",
-      updatedAt: now,
-      workspace: record.workspace,
+  async forkTargets(): Promise<ThreadForkTargets> {
+    const { record, runtime } = this.requireForkContext(this.selectedId);
+    return {
+      targets: await runtime.connection.forkTargets(record.sessionId),
+      threadId: record.id,
     };
-    this.stored.unshift(fork);
-    this.selectedId = fork.id;
-    this.viewedId = fork.id;
-    await this.register(fork);
-    await this.load(fork);
-    const forkRuntime = this.runtimes.get(fork.id);
-    if (forkRuntime && message.kind === "user" && message.text) {
-      forkRuntime.drafts.push(message.text);
-    }
-    this.emit();
   }
 
-  async rollback(messageId: string): Promise<void> {
-    const record = this.selectedId
-      ? this.findRecord(this.selectedId)
-      : undefined;
-    const runtime = record ? this.runtimes.get(record.id) : undefined;
-    const message = runtime?.items.find(
-      (item) =>
-        item.id === messageId &&
-        (item.kind === "user" || item.kind === "assistant")
-    );
-    if (!record?.sessionId || !runtime || !message) {
-      return;
+  async fork(threadId: string, target: AgentForkTarget): Promise<void> {
+    const { record, runtime } = this.requireForkContext(threadId);
+    if (!target.entryId.trim()) {
+      throw new Error("Invalid fork target");
     }
-    if (runtime.status !== "idle") {
-      await Threads.cancelRuntime(record, runtime);
-    }
-    await runtime.connection.rollback(
-      record.sessionId,
-      agentMessageId(messageId)
-    );
-    const index = runtime.items.indexOf(message);
-    runtime.items = runtime.items.slice(
-      0,
-      message.kind === "assistant" ? index + 1 : index
-    );
-    if (message.kind === "user" && message.text) {
-      runtime.drafts.push(message.text);
-    }
-    record.error = undefined;
-    record.authentication = undefined;
-    await this.persist(record);
+    runtime.sessionOperation = "fork";
     this.emit();
+    try {
+      const setup = await runtime.connection.fork(
+        record.sessionId,
+        record.workspace,
+        target.entryId
+      );
+      const now = new Date().toISOString();
+      const fork: StoredThread = {
+        createdAt: now,
+        id: randomUUID(),
+        name: `${record.name} (fork)`,
+        sessionId: setup.sessionId,
+        status: "idle",
+        updatedAt: now,
+        workspace: record.workspace,
+      };
+      this.stored.unshift(fork);
+      await this.persist(fork);
+      if (this.selectedId === record.id) {
+        this.selectedId = fork.id;
+        this.viewedId = fork.id;
+        await this.selectThread(fork.workspace, fork.id);
+      }
+      await this.load(fork);
+      this.runtimes.get(fork.id)?.drafts.push(target.text);
+    } finally {
+      runtime.sessionOperation = undefined;
+      this.emit();
+    }
   }
 
   async closeWorkspace(): Promise<void> {
@@ -1153,7 +1128,9 @@ export class Threads {
       configOptions: runtime?.configOptions ?? [],
       ...(record.error ? { error: record.error } : {}),
       drafts: runtime?.drafts ?? [],
+      ...(runtime?.operations.forkPicker ? { forkSupported: true } : {}),
       id: record.id,
+      ...(runtime?.sessionOperation ? { sessionOperation: true } : {}),
       ...(runtime?.interaction ? { interaction: runtime.interaction } : {}),
       items,
       name: record.name,
@@ -1464,6 +1441,30 @@ export class Threads {
 
   private selectedRuntime(): Runtime | undefined {
     return this.selectedId ? this.runtimes.get(this.selectedId) : undefined;
+  }
+
+  private requireForkContext(threadId: string | undefined): {
+    record: StoredThread & { sessionId: string };
+    runtime: Runtime;
+  } {
+    if (!threadId || threadId !== this.selectedId) {
+      throw new Error("The selected Thread changed; reopen Fork Thread");
+    }
+    const record = this.findRecord(threadId);
+    const runtime = this.runtimes.get(threadId);
+    if (!record?.sessionId || !runtime || record.workspace !== this.workspace) {
+      throw new Error("Select a saved Thread before forking");
+    }
+    if (runtime.status !== "idle") {
+      throw new Error("Wait for the current turn to finish before forking");
+    }
+    if (!runtime.operations.forkPicker) {
+      throw new Error("This Agent does not support Fork Thread");
+    }
+    if (runtime.sessionOperation) {
+      throw new Error("Wait for the current Thread operation to finish");
+    }
+    return { record: record as StoredThread & { sessionId: string }, runtime };
   }
 
   private requireRecord(id: string): StoredThread {
