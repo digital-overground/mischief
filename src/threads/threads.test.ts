@@ -4,7 +4,9 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import { isDefined, isNonEmpty } from "../present";
 import { ProfileDatabase } from "../profile-database/profile-database";
+import { testValue } from "../test-value";
 import { Threads } from "./threads";
 import type {
   AgentConnection,
@@ -121,13 +123,14 @@ class FakeAgent {
   private connection(handlers: AgentHandlers): AgentConnection {
     this.update = handlers.update;
     return {
-      cancel: () => {
+      cancel: async () => {
+        await Promise.resolve();
         for (const resolve of this.promptResolvers.splice(0)) {
           resolve({ stopReason: "cancelled" });
         }
-        return Promise.resolve();
       },
-      create: () => {
+      create: async () => {
+        await Promise.resolve();
         this.createCalls += 1;
         if (this.createError) {
           throw this.createError;
@@ -135,11 +138,11 @@ class FakeAgent {
         if (this.failCreate) {
           throw new Error("Agent unavailable");
         }
-        return Promise.resolve({
+        return {
           configOptions: this.initialConfigOptions,
           operations: this.operations,
           sessionId: "session-1",
-        });
+        };
       },
       dispose: () => {
         this.disposed = true;
@@ -153,15 +156,18 @@ class FakeAgent {
           sessionId: "forked-session",
         };
       },
-      forkTargets: (sessionId) => {
+      forkTargets: async (sessionId) => {
+        await Promise.resolve();
         this.forkTargetCalls.push(sessionId);
-        return Promise.resolve(this.forkTargetEntries);
+        return this.forkTargetEntries;
       },
-      history: (cwd) => {
+      history: async (cwd) => {
+        await Promise.resolve();
         this.historyCalls.push(cwd);
-        return Promise.resolve(this.historyEntries);
+        return this.historyEntries;
       },
-      load: (sessionId, cwd) => {
+      load: async (sessionId, cwd) => {
+        await Promise.resolve();
         this.loadCalls += 1;
         this.loadRequests.push({ cwd, sessionId });
         if (this.failLoad) {
@@ -181,11 +187,11 @@ class FakeAgent {
             type: "message",
           });
         }
-        return Promise.resolve({
+        return {
           configOptions: [],
           operations: this.operations,
           sessionId,
-        });
+        };
       },
       navigateTree: async (sessionId, entryId) => {
         this.navigateTreeCalls.push({ entryId, sessionId });
@@ -212,7 +218,7 @@ class FakeAgent {
             this.promptResolvers.push(resolve);
           });
           this.markPromptStarted(this.promptCalls);
-          return result;
+          return await result;
         }
         if (this.richUpdates) {
           handlers.update({
@@ -304,13 +310,14 @@ class FakeAgent {
         handlers.update({ title: "Fix tests", type: "sessionInfo" });
         return { stopReason: "completed" };
       },
-      setConfig: (sessionId, configId, value) => {
+      setConfig: async (sessionId, configId, value) => {
+        await Promise.resolve();
         this.configChange = { configId, sessionId, value };
-        return Promise.resolve();
       },
-      treeTargets: (sessionId) => {
+      treeTargets: async (sessionId) => {
+        await Promise.resolve();
         this.treeTargetCalls.push(sessionId);
-        return Promise.resolve(this.treeTargetEntries);
+        return this.treeTargetEntries;
       },
     };
   }
@@ -333,7 +340,11 @@ describe("threads module", () => {
   });
 
   afterEach(async () => {
-    await Promise.all(instances.map((threads) => threads.dispose()));
+    await Promise.all(
+      instances.map(async (threads) => {
+        await threads.dispose();
+      })
+    );
     await database.dispose();
     await rm(profileDirectory, { force: true, recursive: true });
   });
@@ -389,8 +400,8 @@ describe("threads module", () => {
           [firstId, "first-session"],
           [secondId, "second-session"],
         ] as const
-      ).map(([id, sessionId]) =>
-        remoteDatabase.apply({
+      ).map(async ([id, sessionId]) => {
+        await remoteDatabase.apply({
           thread: {
             createdAt,
             id,
@@ -401,8 +412,8 @@ describe("threads module", () => {
             workspace: "/remote",
           },
           type: "putThread",
-        })
-      )
+        });
+      })
     );
     await remoteDatabase.apply({
       threadId: firstId,
@@ -410,7 +421,9 @@ describe("threads module", () => {
       workspace: "/remote",
     });
     await vi.waitFor(
-      () => expect(database.snapshot().threads).toHaveLength(2),
+      () => {
+        expect(database.snapshot().threads).toHaveLength(2);
+      },
       { timeout: 2000 }
     );
     const sourceAgent = new FakeAgent();
@@ -437,8 +450,8 @@ describe("threads module", () => {
   test("opening a Workspace clears stale live Thread statuses", async () => {
     const createdAt = "2026-09-11T12:00:00.000Z";
     await Promise.all(
-      (["running", "waiting"] as const).map((status, index) =>
-        database.apply({
+      (["running", "waiting"] as const).map(async (status, index) => {
+        await database.apply({
           thread: {
             createdAt,
             id: `10000000-0000-4000-8000-00000000000${index + 1}`,
@@ -448,8 +461,8 @@ describe("threads module", () => {
             workspace: "/workspace",
           },
           type: "putThread",
-        })
-      )
+        });
+      })
     );
     const threads = createThreads(new FakeAgent().factory);
 
@@ -611,7 +624,7 @@ describe("threads module", () => {
     expect(agent.createCalls).toBe(1);
     expect(threads.snapshot().selected).toMatchObject({
       configOptions: [{ currentValue: "high", id: "thinking" }],
-      id: expect.any(String),
+      id: testValue<unknown>(expect.any(String)),
       status: "idle",
     });
   });
@@ -645,12 +658,12 @@ describe("threads module", () => {
     await threads.openWorkspace("/workspace");
     await threads.prompt("Fork from here");
     const source = threads.snapshot().selected;
-    if (!source?.id) {
+    if (!isNonEmpty(source?.id)) {
       throw new Error("Missing source Thread");
     }
     const context = await threads.forkTargets();
     const [target] = context.targets;
-    if (!target) {
+    if (!isDefined(target)) {
       throw new Error("Missing fork target");
     }
 
@@ -666,7 +679,7 @@ describe("threads module", () => {
     ]);
     expect(threads.snapshot().selected).toMatchObject({
       drafts: ["Fork from here"],
-      id: expect.not.stringMatching(source.id),
+      id: testValue<unknown>(expect.not.stringMatching(source.id)),
       items: [],
       name: "Fix tests (fork)",
     });
@@ -701,7 +714,7 @@ describe("threads module", () => {
     await threads.newThread();
     const context = await threads.forkTargets();
     const [target] = context.targets;
-    if (!target) {
+    if (!isDefined(target)) {
       throw new Error("Missing fork target");
     }
     await threads.newThread();
@@ -719,18 +732,18 @@ describe("threads module", () => {
     await threads.openWorkspace("/workspace");
     await threads.prompt("Source Thread");
     const sourceId = threads.snapshot().selected?.id;
-    if (!sourceId) {
+    if (!isNonEmpty(sourceId)) {
       throw new Error("Missing source Thread");
     }
     await threads.newThread();
     const otherId = threads.snapshot().selected?.id;
-    if (!otherId) {
+    if (!isNonEmpty(otherId)) {
       throw new Error("Missing other Thread");
     }
     await threads.select(sourceId);
     const context = await threads.forkTargets();
     const [target] = context.targets;
-    if (!target) {
+    if (!isDefined(target)) {
       throw new Error("Missing fork target");
     }
 
@@ -756,7 +769,7 @@ describe("threads module", () => {
     await threads.prompt("Fork from here");
     const context = await threads.forkTargets();
     const [target] = context.targets;
-    if (!target) {
+    if (!isDefined(target)) {
       throw new Error("Missing fork target");
     }
     agent.failLoad = true;
@@ -780,12 +793,12 @@ describe("threads module", () => {
     await threads.openWorkspace("/workspace");
     await threads.prompt("Old branch");
     const [source] = threads.snapshot().threads;
-    if (!source) {
+    if (!isDefined(source)) {
       throw new Error("Missing source Thread");
     }
     const context = await threads.treeTargets();
     const [target] = context.targets;
-    if (!target) {
+    if (!isDefined(target)) {
       throw new Error("Missing tree target");
     }
     agent.replayOnLoad = true;
@@ -820,7 +833,7 @@ describe("threads module", () => {
     await threads.prompt("Old branch");
     const first = await threads.treeTargets();
     const [userTarget] = first.targets;
-    if (!userTarget) {
+    if (!isDefined(userTarget)) {
       throw new Error("Missing user tree target");
     }
     await threads.navigateTree(first.threadId, userTarget);
@@ -837,7 +850,7 @@ describe("threads module", () => {
     ];
     const second = await threads.treeTargets();
     const [assistantTarget] = second.targets;
-    if (!assistantTarget) {
+    if (!isDefined(assistantTarget)) {
       throw new Error("Missing assistant tree target");
     }
 
@@ -876,7 +889,7 @@ describe("threads module", () => {
     await threads.newThread();
     const context = await threads.treeTargets();
     const [target] = context.targets;
-    if (!target) {
+    if (!isDefined(target)) {
       throw new Error("Missing tree target");
     }
     await threads.newThread();
@@ -894,7 +907,7 @@ describe("threads module", () => {
     await threads.prompt("Old branch");
     const context = await threads.treeTargets();
     const [target] = context.targets;
-    if (!target) {
+    if (!isDefined(target)) {
       throw new Error("Missing tree target");
     }
     const oldItems = threads.snapshot().selected?.items;
@@ -918,7 +931,7 @@ describe("threads module", () => {
     await threads.prompt("Old branch");
     const context = await threads.treeTargets();
     const [target] = context.targets;
-    if (!target) {
+    if (!isDefined(target)) {
       throw new Error("Missing tree target");
     }
     agent.failLoad = true;
@@ -940,18 +953,18 @@ describe("threads module", () => {
     await threads.openWorkspace("/workspace");
     await threads.prompt("Source Thread");
     const sourceId = threads.snapshot().selected?.id;
-    if (!sourceId) {
+    if (!isNonEmpty(sourceId)) {
       throw new Error("Missing source Thread");
     }
     await threads.newThread();
     const otherId = threads.snapshot().selected?.id;
-    if (!otherId) {
+    if (!isNonEmpty(otherId)) {
       throw new Error("Missing other Thread");
     }
     await threads.select(sourceId);
     const context = await threads.treeTargets();
     const [target] = context.targets;
-    if (!target) {
+    if (!isDefined(target)) {
       throw new Error("Missing tree target");
     }
 
@@ -979,7 +992,9 @@ describe("threads module", () => {
     const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
     const changes: (ThreadsChange | undefined)[] = [];
-    threads.onChange((change) => changes.push(change));
+    threads.onChange((change) => {
+      changes.push(change);
+    });
 
     const first = threads.prompt("First");
     expect(threads.snapshot().selected).toMatchObject({
@@ -990,7 +1005,9 @@ describe("threads module", () => {
     expect(threads.snapshot().selected?.streaming).toBeTruthy();
     expect(changes).toContainEqual(
       expect.objectContaining({
-        item: expect.objectContaining({ kind: "assistant", text: "Partial" }),
+        item: testValue<unknown>(
+          expect.objectContaining({ kind: "assistant", text: "Partial" })
+        ),
         streaming: true,
         type: "transcript",
       })
@@ -1038,14 +1055,16 @@ describe("threads module", () => {
     await agent.secondPromptStarted;
 
     expect(threads.snapshot().selected).toMatchObject({
-      items: expect.arrayContaining([
-        expect.objectContaining({
-          cancelled: true,
-          kind: "user",
-          text: "First",
-        }),
-        expect.objectContaining({ kind: "user", text: "Send me now" }),
-      ]),
+      items: testValue<unknown>(
+        expect.arrayContaining([
+          expect.objectContaining({
+            cancelled: true,
+            kind: "user",
+            text: "First",
+          }),
+          expect.objectContaining({ kind: "user", text: "Send me now" }),
+        ])
+      ),
       steering: [],
     });
     agent.promptResolvers[0]?.({ stopReason: "completed" });

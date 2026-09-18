@@ -8,6 +8,7 @@ import {
 } from "react";
 import type { ClipboardEvent, KeyboardEvent } from "react";
 
+import { isDefined, isNonEmpty } from "../../../../present";
 import type { PromptImage, ThreadCommand } from "../../../../threads/threads";
 import { postMessage } from "../../../bridge";
 import type { RenderedThreadDetail } from "../../../protocol";
@@ -133,14 +134,16 @@ const ComposerView = ({
     if (activeThread.current === threadId) {
       return;
     }
-    if (activeThread.current) {
+    if (isNonEmpty(activeThread.current)) {
       draftsByThread.current.set(activeThread.current, {
         images,
         text: box.current?.value ?? "",
       });
     }
     activeThread.current = threadId;
-    const draft = threadId ? draftsByThread.current.get(threadId) : undefined;
+    const draft = isNonEmpty(threadId)
+      ? draftsByThread.current.get(threadId)
+      : undefined;
     if (box.current) {
       box.current.value = draft?.text ?? "";
     }
@@ -175,7 +178,7 @@ const ComposerView = ({
   }, [selected?.id, setup]);
 
   const newThread = (): void => {
-    if (!workspace) {
+    if (!isNonEmpty(workspace)) {
       return;
     }
     postMessage({ type: "newThread" });
@@ -191,12 +194,12 @@ const ComposerView = ({
     if (
       (!text.trim() && !images.length) ||
       !selected ||
-      selected.sessionOperation
+      selected.sessionOperation === true
     ) {
       return;
     }
     postMessage({ images, text, type: "prompt" });
-    if (selected.id) {
+    if (isNonEmpty(selected.id)) {
       draftsByThread.current.delete(selected.id);
     }
     if (box.current) {
@@ -257,7 +260,7 @@ const ComposerView = ({
         const match = suggestions[contextIndex];
         if (typeof match === "string") {
           selectContext(match);
-        } else if (match) {
+        } else if (isDefined(match)) {
           selectCommand(match);
         }
       }
@@ -272,7 +275,10 @@ const ComposerView = ({
   const readImage = (file: File): void => {
     const reader = new FileReader();
     reader.addEventListener("load", () => {
-      const result = String(reader.result);
+      if (typeof reader.result !== "string") {
+        return;
+      }
+      const { result } = reader;
       setImages((current) => [
         ...current,
         {
@@ -376,11 +382,11 @@ const ComposerView = ({
               className="icon"
               title="Remove pasted image"
               aria-label="Remove pasted image"
-              onClick={() =>
+              onClick={() => {
                 setImages((current) =>
                   current.filter((candidate) => candidate !== image)
-                )
-              }
+                );
+              }}
             >
               ×
             </button>
@@ -389,7 +395,13 @@ const ComposerView = ({
       </div>
       <FooterControls
         onNewThread={newThread}
-        onSend={() => (running ? postMessage({ type: "cancel" }) : send())}
+        onSend={() => {
+          if (running) {
+            postMessage({ type: "cancel" });
+          } else {
+            send();
+          }
+        }}
         selected={selected}
         setup={setup}
         workspace={workspace}

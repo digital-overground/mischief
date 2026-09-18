@@ -1,6 +1,7 @@
 import { memo, useMemo } from "react";
 import type { ReactNode } from "react";
 
+import { isDefined, isNonEmpty, isNonZero, isRecord } from "../../../present";
 import { postMessage } from "../../bridge";
 import { Icon } from "../../icon";
 import type {
@@ -9,6 +10,9 @@ import type {
   RenderedTranscriptItem,
 } from "../../protocol";
 
+const nonEmpty = (value: string | undefined, fallback: string): string =>
+  value !== undefined && value.length > 0 ? value : fallback;
+
 const MarkdownBody = ({
   className = "body markdown",
   item,
@@ -16,13 +20,13 @@ const MarkdownBody = ({
   className?: string;
   item: RenderedTranscriptItem;
 }): React.JSX.Element =>
-  item.html ? (
+  isNonEmpty(item.html) ? (
     <div
       className={className}
       dangerouslySetInnerHTML={{ __html: item.html }}
     />
   ) : (
-    <div className={className}>{item.text || ""}</div>
+    <div className={className}>{item.text ?? ""}</div>
   );
 
 const ImageGallery = ({
@@ -77,14 +81,14 @@ const ThinkingGroup = ({
 );
 
 const statusLabel = (status?: string): string =>
-  status ? ` · ${status.replaceAll("_", " ")}` : "";
+  isNonEmpty(status) ? ` · ${status.replaceAll("_", " ")}` : "";
 
 const ToolOperationStatus = ({
   status,
 }: {
   status?: string;
 }): React.JSX.Element | null => {
-  if (!status) {
+  if (!isNonEmpty(status)) {
     return null;
   }
   const text = status.replaceAll("_", " ");
@@ -110,23 +114,27 @@ const ToolBody = ({
   item: RenderedTranscriptItem;
 }): React.JSX.Element => (
   <div className="tool-body">
-    {item.input ? <LabelledPre label="Input" text={item.input} /> : null}
-    {item.output ? <LabelledPre label="Output" text={item.output} /> : null}
+    {isNonEmpty(item.input) ? (
+      <LabelledPre label="Input" text={item.input} />
+    ) : null}
+    {isNonEmpty(item.output) ? (
+      <LabelledPre label="Output" text={item.output} />
+    ) : null}
     {item.locations?.map((location) => (
       <button
         className="link"
         title="Open file"
         key={`${location.path}:${location.line ?? ""}`}
-        onClick={() =>
+        onClick={() => {
           postMessage({
-            ...(location.line ? { line: location.line } : {}),
+            ...(isNonZero(location.line) ? { line: location.line } : {}),
             path: location.path,
             type: "openLocation",
-          })
-        }
+          });
+        }}
       >
         {location.path}
-        {location.line ? `:${location.line}` : ""}
+        {isNonZero(location.line) ? `:${location.line}` : ""}
       </button>
     ))}
     {item.diffs?.map((diff) => (
@@ -134,7 +142,9 @@ const ToolBody = ({
         className="link"
         title="Open diff"
         key={diff.path}
-        onClick={() => postMessage({ path: diff.path, type: "openDiff" })}
+        onClick={() => {
+          postMessage({ path: diff.path, type: "openDiff" });
+        }}
       >
         Open diff · {diff.path}
       </button>
@@ -151,7 +161,7 @@ const GenericToolItem = ({
     <summary>
       <Icon className="entry-icon" kind="tool" title="Tool" />
       <span>
-        {item.title || "Tool call"}
+        {nonEmpty(item.title, "Tool call")}
         {statusLabel(item.status)}
       </span>
     </summary>
@@ -160,18 +170,16 @@ const GenericToolItem = ({
 );
 
 const jsonField = (input: string | undefined, field: string): unknown => {
-  if (!input) {
-    return;
+  if (!isNonEmpty(input)) {
+    return undefined;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(input);
   } catch {
-    return;
+    return undefined;
   }
-  return parsed && typeof parsed === "object"
-    ? (parsed as Record<string, unknown>)[field]
-    : undefined;
+  return isRecord(parsed) ? parsed[field] : undefined;
 };
 
 const jsonStringField = (
@@ -202,7 +210,7 @@ const AskUserItem = ({
 }): React.JSX.Element => {
   const question = askUserQuestion(item.input);
   const answerPrefix = "User answered: ";
-  if (!question || !item.output?.startsWith(answerPrefix)) {
+  if (!isNonEmpty(question) || item.output?.startsWith(answerPrefix) !== true) {
     return <GenericToolItem item={item} />;
   }
   const answer = item.output.slice(answerPrefix.length);
@@ -241,7 +249,7 @@ const toolGroups = {
 } as const;
 
 const genericToolOperation = (item: RenderedTranscriptItem) => {
-  const title = item.title || "Tool call";
+  const title = nonEmpty(item.title, "Tool call");
   const group: ToolGroupKind = webTools.has(title) ? "web" : "tools";
   if (title === "web_fetch") {
     const target = fetchUrl(item.input) ?? title;
@@ -275,6 +283,15 @@ const genericToolOperation = (item: RenderedTranscriptItem) => {
     targetTitle: title,
   };
 };
+
+interface ToolOperation {
+  group: ToolGroupKind;
+  icon: React.ComponentProps<typeof Icon>["kind"];
+  iconTitle: string;
+  label: string | undefined;
+  target: string | undefined;
+  targetTitle: string | undefined;
+}
 
 const fileOperations = {
   edit: { icon: "pencil", label: "Edit" },
@@ -322,17 +339,19 @@ const fileOperationKind = (
     return "read";
   }
   if (item.toolKind !== "edit") {
-    return;
+    return undefined;
   }
   return item.title?.toLowerCase() === "write" ? "write" : "edit";
 };
 
-const toolOperation = (item?: RenderedTranscriptItem) => {
+const toolOperation = (
+  item?: RenderedTranscriptItem
+): ToolOperation | undefined => {
   if (item?.kind !== "tool" || item.title === "ask_user") {
-    return;
+    return undefined;
   }
   if (item.toolKind === "execute") {
-    const command = item.title || "";
+    const command = item.title ?? "";
     const iconClass = commandOperationIcon(command);
     const operationIcon = toolOperationIcons[iconClass];
     return {
@@ -340,8 +359,8 @@ const toolOperation = (item?: RenderedTranscriptItem) => {
       icon: operationIcon.icon,
       iconTitle: operationIcon.title,
       label: undefined,
-      target: command || undefined,
-      targetTitle: command || undefined,
+      target: command.length > 0 ? command : undefined,
+      targetTitle: command.length > 0 ? command : undefined,
     };
   }
   const kind = fileOperationKind(item);
@@ -351,13 +370,15 @@ const toolOperation = (item?: RenderedTranscriptItem) => {
   const operation = fileOperations[kind];
   const location = item.locations?.[0];
   const path = location?.path ?? item.diffs?.[0]?.path;
-  const line = location?.line ? `:${location.line}` : "";
+  const line = isNonZero(location?.line) ? `:${location.line}` : "";
   return {
     group: "files" as const,
     ...operation,
     iconTitle: operation.label,
-    target: path ? `${path.split(/[\\/]/u).at(-1) || path}${line}` : undefined,
-    targetTitle: path ? `${path}${line}` : undefined,
+    target: isNonEmpty(path)
+      ? `${path.split(/[\\/]/u).at(-1) ?? path}${line}`
+      : undefined,
+    targetTitle: isNonEmpty(path) ? `${path}${line}` : undefined,
   };
 };
 
@@ -380,12 +401,12 @@ const ToolOperationItem = ({
           title={operation.iconTitle}
         />
         <span className="tool-operation-description">
-          {operation.label ? (
+          {isNonEmpty(operation.label) ? (
             <span className="tool-operation-label">{operation.label}</span>
           ) : null}
-          {operation.target ? (
+          {isNonEmpty(operation.target) ? (
             <>
-              {operation.label ? (
+              {isNonEmpty(operation.label) ? (
                 <span className="tool-operation-separator">{" · "}</span>
               ) : null}
               <span
@@ -457,7 +478,7 @@ const TranscriptEntry = ({
           <Icon className="entry-icon" kind="plan" title="Completed Plan" />
           Completed Plan
         </div>
-        <pre className="completed-plan-body">{item.text || ""}</pre>
+        <pre className="completed-plan-body">{item.text ?? ""}</pre>
       </section>
     );
   }
@@ -475,11 +496,15 @@ const TranscriptEntry = ({
   const content = (
     <div className="entry-content">
       <MarkdownBody item={item} />
-      {item.images?.length ? <ImageGallery images={item.images} /> : null}
-      {item.queued ? (
+      {isNonZero(item.images?.length) ? (
+        <ImageGallery images={item.images} />
+      ) : null}
+      {isNonZero(item.queued) ? (
         <div className="cancelled">Queued · position {item.queued}</div>
       ) : null}
-      {item.cancelled ? <div className="cancelled">Cancelled</div> : null}
+      {item.cancelled === true ? (
+        <div className="cancelled">Cancelled</div>
+      ) : null}
     </div>
   );
   return (
@@ -497,7 +522,7 @@ const TranscriptNodes = memo(
     const nodes: ReactNode[] = [];
     for (let index = 0; index < items.length;) {
       const item = items[index];
-      if (!item) {
+      if (!isDefined(item)) {
         break;
       }
       if (item.kind === "thought") {
@@ -552,9 +577,11 @@ export const Transcript = ({
   const onTranscriptHighlight = async (): Promise<void> => {
     const selection = window.getSelection();
     const text = selection?.toString();
-    if (selection && text) {
+    if (selection && isNonEmpty(text)) {
       await navigator.clipboard.writeText(text);
-      setTimeout(() => selection.removeAllRanges(), 0);
+      setTimeout(() => {
+        selection.removeAllRanges();
+      }, 0);
       onCopied();
     }
   };
@@ -581,9 +608,9 @@ export const Transcript = ({
             <input
               type="checkbox"
               checked={selectedSetupOptions.includes(option.id)}
-              onChange={(event) =>
-                onSetupOptionChange(option.id, event.currentTarget.checked)
-              }
+              onChange={(event) => {
+                onSetupOptionChange(option.id, event.currentTarget.checked);
+              }}
             />
             <span>
               <span className="settings-name">{option.label}</span>

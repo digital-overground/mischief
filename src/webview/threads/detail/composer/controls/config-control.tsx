@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { isNonEmpty } from "../../../../../present";
 import type {
   ThreadConfigChoice,
   ThreadConfigOption,
@@ -85,7 +86,7 @@ const selectOptions = (
     group.options.push(item);
   }
   return ordered.map((entry, index) =>
-    entry.label ? (
+    isNonEmpty(entry.label) ? (
       <optgroup label={entry.label} key={`${entry.label}:${index}`}>
         {entry.options.map((item) => optionNode(item, kind))}
       </optgroup>
@@ -102,17 +103,23 @@ export const ConfigControl = ({
 }): React.JSX.Element => {
   if (config.type === "boolean") {
     return (
-      <label title={config.description || config.name}>
+      <label
+        title={
+          config.description !== undefined && config.description.length > 0
+            ? config.description
+            : config.name
+        }
+      >
         <input
           type="checkbox"
           checked={config.currentValue}
-          onChange={(event) =>
+          onChange={(event) => {
             postMessage({
               id: config.id,
               type: "setConfig",
               value: event.currentTarget.checked,
-            })
-          }
+            });
+          }}
         />
         {config.name}
       </label>
@@ -126,16 +133,20 @@ export const ConfigControl = ({
     kind === "profile" && !values.includes(config.currentValue);
   const select = (
     <select
-      title={config.description || config.name}
+      title={
+        config.description !== undefined && config.description.length > 0
+          ? config.description
+          : config.name
+      }
       aria-label={config.name}
       defaultValue={customProfile ? "" : config.currentValue}
-      onChange={(event) =>
+      onChange={(event) => {
         postMessage({
           id: config.id,
           type: "setConfig",
           value: event.currentTarget.value,
-        })
-      }
+        });
+      }}
     >
       {customProfile ? (
         <option value="" disabled>
@@ -148,10 +159,13 @@ export const ConfigControl = ({
   if (!kind) {
     return select;
   }
-  const icon = { model: "bot", profile: "user", thinking: "brain" }[kind] as
-    | "bot"
-    | "user"
-    | "brain";
+  const icon = (
+    {
+      model: "bot",
+      profile: "user",
+      thinking: "brain",
+    } as const
+  )[kind];
   return (
     <div className="config-control">
       <Icon className="config-icon" kind={icon} title={config.name} />

@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, test, vi } from "vitest";
 
+import { testValue } from "./test-value";
 import {
   assignWorkspaceColors,
   ensureWorkspaceColors,
@@ -10,32 +11,40 @@ import {
   workspaceWindowColor,
 } from "./workspace-colors";
 
-const vscode = vi.hoisted(() => ({
-  extensions: [] as { extensionPath: string; packageJSON: unknown }[],
-  update:
-    vi.fn<(key: string, value: unknown, target: number) => Promise<void>>(),
-  workspaceValue: undefined as Record<string, unknown> | undefined,
-}));
+const vscode = vi.hoisted(
+  (): {
+    extensions: { extensionPath: string; packageJSON: unknown }[];
+    update: ReturnType<
+      typeof vi.fn<
+        (key: string, value: unknown, target: number) => Promise<void>
+      >
+    >;
+    workspaceValue: Record<string, unknown> | undefined;
+  } => ({
+    extensions: [],
+    update:
+      vi.fn<(key: string, value: unknown, target: number) => Promise<void>>(),
+    workspaceValue: undefined,
+  })
+);
 
-vi.mock(
-  import("vscode"),
-  () =>
-    ({
-      ConfigurationTarget: { Workspace: 2 },
-      Uri: { file: (fsPath: string) => ({ fsPath }) },
-      extensions: {
-        get all() {
-          return vscode.extensions;
-        },
+vi.mock(import("vscode"), () =>
+  testValue<never>({
+    ConfigurationTarget: { Workspace: 2 },
+    Uri: { file: (fsPath: string) => ({ fsPath }) },
+    extensions: {
+      get all() {
+        return vscode.extensions;
       },
-      workspace: {
-        getConfiguration: () => ({
-          get: () => "Test Theme",
-          inspect: () => ({ workspaceValue: vscode.workspaceValue }),
-          update: vscode.update,
-        }),
-      },
-    }) as never
+    },
+    workspace: {
+      getConfiguration: () => ({
+        get: () => "Test Theme",
+        inspect: () => ({ workspaceValue: vscode.workspaceValue }),
+        update: vscode.update,
+      }),
+    },
+  })
 );
 
 const colorLightness = (color: string): number => {
@@ -87,9 +96,9 @@ describe("workspace colors", () => {
         },
       ];
       vscode.workspaceValue = { "editorCursor.foreground": "#ff0000" };
-      vscode.update.mockImplementation((_key, value) => {
-        vscode.workspaceValue = value as Record<string, unknown>;
-        return Promise.resolve();
+      vscode.update.mockImplementation(async (_key, value) => {
+        await Promise.resolve();
+        vscode.workspaceValue = testValue<Record<string, unknown>>(value);
       });
 
       const applied = await ensureWorkspaceColors("/muted");
@@ -100,7 +109,7 @@ describe("workspace colors", () => {
         preserved: written?.["editorCursor.foreground"],
       }).toStrictEqual({
         applied: true,
-        color: expect.stringMatching(/^#[\da-f]{6}$/iu),
+        color: testValue<unknown>(expect.stringMatching(/^#[\da-f]{6}$/iu)),
         preserved: "#ff0000",
       });
 
@@ -167,15 +176,17 @@ describe("workspace colors", () => {
         '{ "editor.fontSize": 14 }'
       );
       const assigned = await assignWorkspaceColors(workspace);
-      const settings = JSON.parse(
-        await readFile(
-          path.join(workspace, ".vscode", "settings.json"),
-          "utf-8"
+      const settings = testValue<Record<string, unknown>>(
+        JSON.parse(
+          await readFile(
+            path.join(workspace, ".vscode", "settings.json"),
+            "utf-8"
+          )
         )
-      ) as Record<string, unknown>;
-      const assignedColors = settings[
-        "workbench.colorCustomizations"
-      ] as Record<string, unknown>;
+      );
+      const assignedColors = testValue<Record<string, unknown>>(
+        settings["workbench.colorCustomizations"]
+      );
       await expect(workspaceWindowColor(workspace)).resolves.toBe(
         assignedColors["titleBar.activeBackground"]
       );
@@ -185,7 +196,7 @@ describe("workspace colors", () => {
         preserved: settings["editor.fontSize"],
       }).toMatchObject({
         assigned: true,
-        color: expect.stringMatching(/^#[\da-f]{6}$/iu),
+        color: testValue<unknown>(expect.stringMatching(/^#[\da-f]{6}$/iu)),
         preserved: 14,
       });
     } finally {

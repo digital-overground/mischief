@@ -1,17 +1,17 @@
-// @vitest-environment jsdom
-
 import { act } from "react";
+// @vitest-environment jsdom
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import { testValue } from "../../../../../test-value";
 import type { RenderedThreadDetail } from "../../../../protocol";
 
 const action = vi.fn<() => void>();
 const postMessage = vi.fn<(message: unknown) => void>();
 vi.stubGlobal("acquireVsCodeApi", () => ({ postMessage }));
-(
-  globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+testValue<{ IS_REACT_ACT_ENVIRONMENT?: boolean }>(
+  globalThis
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { FooterControls } = await import("./footer-controls");
@@ -48,27 +48,43 @@ describe("Footer controls", () => {
     action.mockClear();
     postMessage.mockClear();
     document.body.innerHTML = '<div id="root"></div>';
-    root = createRoot(document.querySelector<HTMLElement>("#root")!);
+    const container = document.querySelector<HTMLElement>("#root");
+    if (!container) {
+      throw new Error("Missing test root");
+    }
+    root = createRoot(container);
   });
 
   afterEach(async () => {
-    await act(() => root.unmount());
+    await Promise.resolve();
+    act(() => {
+      root.unmount();
+    });
     document.body.innerHTML = "";
   });
 
   test("closes context usage when usage disappears", async () => {
-    await act(() => renderFooter({ usage: { size: 100, used: 50 } }));
+    await Promise.resolve();
+    act(() => {
+      renderFooter({ usage: { size: 100, used: 50 } });
+    });
     const usageButton = document.querySelector<HTMLButtonElement>("#usage");
     if (!usageButton) {
       throw new Error("Missing usage control");
     }
-    await act(() => usageButton.click());
+    act(() => {
+      usageButton.click();
+    });
     expect(
       document.querySelector<HTMLElement>("#usage-menu")?.hidden
     ).toBeFalsy();
 
-    await act(() => renderFooter());
-    await act(() => renderFooter({ usage: { size: 100, used: 60 } }));
+    act(() => {
+      renderFooter();
+    });
+    act(() => {
+      renderFooter({ usage: { size: 100, used: 60 } });
+    });
 
     expect(
       document.querySelector<HTMLElement>("#usage-menu")?.hidden
@@ -76,15 +92,18 @@ describe("Footer controls", () => {
   });
 
   test("shows id-free Thread operation actions only when supported", async () => {
-    await act(() => renderFooter());
+    await Promise.resolve();
+    act(() => {
+      renderFooter();
+    });
     expect({
       fork: document.querySelector("#footer-fork-thread"),
       tree: document.querySelector("#footer-navigate-tree"),
     }).toStrictEqual({ fork: null, tree: null });
 
-    await act(() =>
-      renderFooter({ forkSupported: true, treeNavigationSupported: true })
-    );
+    act(() => {
+      renderFooter({ forkSupported: true, treeNavigationSupported: true });
+    });
     const fork = document.querySelector<HTMLButtonElement>(
       'button[aria-label="Fork Thread"]'
     );
@@ -99,8 +118,8 @@ describe("Footer controls", () => {
       tree: { disabled: false, title: "Navigate Thread Tree" },
     });
 
-    await act(() => fork?.click());
-    await act(() => tree?.click());
+    act(() => fork?.click());
+    act(() => tree?.click());
     expect(postMessage.mock.calls).toStrictEqual([
       [{ type: "forkThread" }],
       [{ type: "navigateThreadTree" }],
@@ -108,13 +127,14 @@ describe("Footer controls", () => {
   });
 
   test("disables Thread operations and Send during a Thread operation", async () => {
-    await act(() =>
+    await Promise.resolve();
+    act(() => {
       renderFooter({
         forkSupported: true,
         sessionOperation: true,
         treeNavigationSupported: true,
-      })
-    );
+      });
+    });
 
     expect({
       fork: document.querySelector<HTMLButtonElement>("#footer-fork-thread")
@@ -124,13 +144,13 @@ describe("Footer controls", () => {
         ?.disabled,
     }).toStrictEqual({ fork: true, send: true, tree: true });
 
-    await act(() =>
+    act(() => {
       renderFooter({
         forkSupported: true,
         status: "running",
         treeNavigationSupported: true,
-      })
-    );
+      });
+    });
     expect({
       fork: document.querySelector<HTMLButtonElement>("#footer-fork-thread")
         ?.disabled,
@@ -140,7 +160,8 @@ describe("Footer controls", () => {
   });
 
   test("preserves the Agent's model option order", async () => {
-    await act(() =>
+    await Promise.resolve();
+    act(() => {
       renderFooter({
         configOptions: [
           {
@@ -159,8 +180,8 @@ describe("Footer controls", () => {
             type: "select",
           },
         ],
-      })
-    );
+      });
+    });
     const model = document.querySelector<HTMLSelectElement>(
       'select[aria-label="Model"]'
     );

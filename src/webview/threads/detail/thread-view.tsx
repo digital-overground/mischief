@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import { isNonEmpty } from "../../../present";
 import { postMessage } from "../../bridge";
 import { SvgIcon } from "../../icon";
 import type {
@@ -65,8 +66,12 @@ export const ThreadView = ({
       ? transcript.streaming
       : selected?.streaming;
   const plan =
-    transcriptItems.findLast((item) => item.kind === "plan" && item.text) ??
-    selected?.items.find((item) => item.kind === "plan" && item.text);
+    transcriptItems.findLast(
+      (item) => item.kind === "plan" && isNonEmpty(item.text)
+    ) ??
+    selected?.items.find(
+      (item) => item.kind === "plan" && isNonEmpty(item.text)
+    );
   const maximizeLabel = threadMaximized
     ? "Expand Navigator"
     : "Maximize Current Thread";
@@ -74,7 +79,7 @@ export const ThreadView = ({
     <section id="thread">
       <header id="thread-header">
         <span className="heading" id="thread-title">
-          {setup ? "Setup" : selected?.name || "Thread"}
+          {setup ? "Setup" : (selected?.name ?? "Thread")}
         </span>
         <button
           className="icon"
@@ -91,9 +96,9 @@ export const ThreadView = ({
           id="rename-thread"
           title="Rename Thread"
           aria-label="Rename Thread"
-          disabled={!selected?.id}
+          disabled={!isNonEmpty(selected?.id)}
           onClick={() => {
-            if (selected?.id) {
+            if (isNonEmpty(selected?.id)) {
               postMessage({ id: selected.id, type: "renameThread" });
             }
           }}
@@ -114,28 +119,34 @@ export const ThreadView = ({
         }}
       >
         <Transcript
-          onCopied={() => setCopyNotice((notice) => notice + 1)}
+          onCopied={() => {
+            setCopyNotice((notice) => notice + 1);
+          }}
           selected={selected}
-          onSetupOptionChange={(id, checked) =>
+          onSetupOptionChange={(id, checked) => {
             setSelectedSetupOptions((current) =>
               checked
                 ? [...new Set([...current, id])]
                 : current.filter((candidate) => candidate !== id)
-            )
-          }
+            );
+          }}
           selectedSetupOptions={selectedSetupOptions}
           setup={setup}
           streamedItems={transcriptItems}
           key={setup ? "setup" : (selected?.id ?? "none")}
         />
-        {selected?.status === "running" && !streaming ? <Processing /> : null}
-        <div id="notice">{selected?.error || ""}</div>
+        {selected?.status === "running" && streaming !== true ? (
+          <Processing />
+        ) : null}
+        <div id="notice">{selected?.error ?? ""}</div>
         <div id="actions">
           {selected?.status === "error" ? (
             <button
               className="action primary"
               title="Retry"
-              onClick={() => postMessage({ type: "retry" })}
+              onClick={() => {
+                postMessage({ type: "retry" });
+              }}
             >
               Retry
             </button>
@@ -144,7 +155,9 @@ export const ThreadView = ({
             <button
               className="action primary"
               title="Authenticate Agent"
-              onClick={() => postMessage({ type: "authenticate" })}
+              onClick={() => {
+                postMessage({ type: "authenticate" });
+              }}
             >
               {selected.authentication.label}
             </button>

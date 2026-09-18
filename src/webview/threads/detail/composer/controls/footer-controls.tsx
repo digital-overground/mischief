@@ -1,3 +1,4 @@
+import { isNonEmpty } from "../../../../../present";
 import { postMessage } from "../../../../bridge";
 import { SvgIcon } from "../../../../icon";
 import type { RenderedThreadDetail } from "../../../../protocol";
@@ -33,12 +34,12 @@ export const FooterControls = ({
         id="footer-new-thread"
         title="New Thread"
         aria-label="New Thread"
-        disabled={!workspace}
+        disabled={!isNonEmpty(workspace)}
         onClick={onNewThread}
       >
         <SvgIcon kind="chat" />
       </button>
-      {selected?.forkSupported ? (
+      {selected?.forkSupported === true ? (
         <button
           className="action"
           id="footer-fork-thread"
@@ -46,12 +47,14 @@ export const FooterControls = ({
           aria-label="Fork Thread"
           type="button"
           disabled={selected.status !== "idle" || selected.sessionOperation}
-          onClick={() => postMessage({ type: "forkThread" })}
+          onClick={() => {
+            postMessage({ type: "forkThread" });
+          }}
         >
           <SvgIcon kind="fork" />
         </button>
       ) : null}
-      {selected?.treeNavigationSupported ? (
+      {selected?.treeNavigationSupported === true ? (
         <button
           className="action"
           id="footer-navigate-tree"
@@ -59,7 +62,9 @@ export const FooterControls = ({
           aria-label="Navigate Thread Tree"
           type="button"
           disabled={selected.status !== "idle" || selected.sessionOperation}
-          onClick={() => postMessage({ type: "navigateThreadTree" })}
+          onClick={() => {
+            postMessage({ type: "navigateThreadTree" });
+          }}
         >
           <SvgIcon kind="gitBranch" />
         </button>

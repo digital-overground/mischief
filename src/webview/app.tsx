@@ -64,7 +64,9 @@ export const App = (): React.JSX.Element => {
     };
     window.addEventListener("message", receive);
     postMessage({ type: "ready" });
-    return () => window.removeEventListener("message", receive);
+    return () => {
+      window.removeEventListener("message", receive);
+    };
   }, []);
 
   useEffect(() => {
@@ -99,7 +101,9 @@ export const App = (): React.JSX.Element => {
           expandAllRequest={expandAllRequest}
           projects={snapshot.projects}
           threads={snapshot.threads}
-          onExpand={() => setThreadMaximized(false)}
+          onExpand={() => {
+            setThreadMaximized(false);
+          }}
         />
         <ThreadView
           contextItems={contextItems}

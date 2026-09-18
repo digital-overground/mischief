@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { isDefined, isNonEmpty, isNonZero } from "../present";
 import type {
   DatabaseThread,
   ProfileDatabase,
@@ -429,6 +430,11 @@ const stopStreaming = (runtime: Runtime): void => {
   runtime.streaming = false;
 };
 
+const hasSessionId = (
+  record: StoredThread | undefined
+): record is StoredThread & { sessionId: string } =>
+  isNonEmpty(record?.sessionId);
+
 // These helpers are assigned after the class declaration.
 // oxlint-disable prefer-const
 let errorMessage: (error: unknown) => string;
@@ -455,7 +461,9 @@ export class Threads {
   ) {
     this.createConnection = createConnection;
     this.database = database;
-    this.stored = database.snapshot().threads.map(Threads.copyRecord);
+    this.stored = database
+      .snapshot()
+      .threads.map((record) => Threads.copyRecord(record));
     this.stopDatabaseListener = database.onChange(() => {
       const current = this.workspace;
       this.stored = [
@@ -463,7 +471,7 @@ export class Threads {
         ...database
           .snapshot()
           .threads.filter((record) => record.workspace !== current)
-          .map(Threads.copyRecord),
+          .map((record) => Threads.copyRecord(record)),
       ];
       this.queueSelectionSync();
       this.emit();
@@ -473,7 +481,9 @@ export class Threads {
   async openWorkspace(workspace: string): Promise<ThreadsSnapshot> {
     this.workspace = workspace;
     this.viewedId = undefined;
-    this.stored = this.database.snapshot().threads.map(Threads.copyRecord);
+    this.stored = this.database
+      .snapshot()
+      .threads.map((record) => Threads.copyRecord(record));
     const records = this.records();
     const stopped = records.filter(
       (record) => record.status === "running" || record.status === "waiting"
@@ -481,7 +491,11 @@ export class Threads {
     for (const record of stopped) {
       record.status = "idle";
     }
-    await Promise.all(stopped.map((record) => this.persist(record)));
+    await Promise.all(
+      stopped.map(async (record) => {
+        await this.persist(record);
+      })
+    );
     const selected = this.database
       .snapshot()
       .selections.find(
@@ -490,8 +504,8 @@ export class Threads {
     this.selectedId = records.some((record) => record.id === selected)
       ? selected
       : records[0]?.id;
-    this.draft = !this.selectedId;
-    if (this.selectedId) {
+    this.draft = !isNonEmpty(this.selectedId);
+    if (isNonEmpty(this.selectedId)) {
       await this.load(this.requireRecord(this.selectedId));
     }
     this.emit();
@@ -500,24 +514,36 @@ export class Threads {
 
   onChange(listener: (change?: ThreadsChange) => void): () => void {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   async history(): Promise<ThreadHistoryEntry[]> {
     const { workspace } = this;
-    if (!workspace) {
+    if (!isNonEmpty(workspace)) {
       return [];
     }
     const connection = this.createConnection({
-      elicitation: () => Promise.resolve({ action: "cancel" }),
-      error: () => null,
-      permission: () => Promise.resolve({ cancelled: true }),
-      update: () => null,
+      elicitation: async () => {
+        await Promise.resolve();
+        return { action: "cancel" };
+      },
+      error: () => {
+        // History does not retain live connection errors.
+      },
+      permission: async () => {
+        await Promise.resolve();
+        return { cancelled: true };
+      },
+      update: () => {
+        // History does not consume live session updates.
+      },
     });
     try {
       const registered = new Set(
         this.stored.flatMap((record) =>
-          record.sessionId ? [record.sessionId] : []
+          isNonEmpty(record.sessionId) ? [record.sessionId] : []
         )
       );
       const history = await connection.history(workspace);
@@ -526,18 +552,23 @@ export class Threads {
           (entry) => entry.cwd === workspace && !registered.has(entry.sessionId)
         )
         .map((entry) => ({
-          ...(entry.preview && entry.previewRole
+          ...(isNonEmpty(entry.preview) && entry.previewRole
             ? { preview: entry.preview, previewRole: entry.previewRole }
             : {}),
           sessionId: entry.sessionId,
-          title: entry.title?.trim() || "Untitled Thread",
-          ...(entry.updatedAt ? { updatedAt: entry.updatedAt } : {}),
+          title:
+            entry.title !== undefined && entry.title.trim().length > 0
+              ? entry.title.trim()
+              : "Untitled Thread",
+          ...(isNonEmpty(entry.updatedAt)
+            ? { updatedAt: entry.updatedAt }
+            : {}),
         }))
         .toSorted((left, right) => {
-          if (!left.updatedAt) {
-            return right.updatedAt ? 1 : 0;
+          if (!isNonEmpty(left.updatedAt)) {
+            return isNonEmpty(right.updatedAt) ? 1 : 0;
           }
-          return right.updatedAt
+          return isNonEmpty(right.updatedAt)
             ? right.updatedAt.localeCompare(left.updatedAt)
             : -1;
         });
@@ -548,7 +579,7 @@ export class Threads {
 
   async reopen(entry: ThreadHistoryEntry): Promise<void> {
     const { workspace } = this;
-    if (!workspace) {
+    if (!isNonEmpty(workspace)) {
       return;
     }
     const existing = this.stored.find(
@@ -578,7 +609,7 @@ export class Threads {
   }
 
   async newThread(): Promise<void> {
-    if (!this.workspace) {
+    if (!isNonEmpty(this.workspace)) {
       return;
     }
     const now = new Date().toISOString();
@@ -639,9 +670,9 @@ export class Threads {
       const [next] = this.records();
       this.selectedId = next?.id;
       this.viewedId = next?.id;
-      this.draft = !next;
+      this.draft = !isDefined(next);
       await this.selectThread(record.workspace, next?.id);
-      if (next) {
+      if (isDefined(next)) {
         await this.load(next);
       }
     }
@@ -664,10 +695,10 @@ export class Threads {
   }
 
   clearPlan(): void {
-    const runtime = this.selectedId
+    const runtime = isNonEmpty(this.selectedId)
       ? this.runtimes.get(this.selectedId)
       : undefined;
-    if (!runtime?.items.some((item) => item.kind === "plan")) {
+    if (runtime?.items.some((item) => item.kind === "plan") !== true) {
       return;
     }
     runtime.items = runtime.items.filter((item) => item.kind !== "plan");
@@ -697,12 +728,12 @@ export class Threads {
   }
 
   async sendSteering(id: string): Promise<void> {
-    const record = this.selectedId
+    const record = isNonEmpty(this.selectedId)
       ? this.findRecord(this.selectedId)
       : undefined;
     const runtime = record ? this.runtimes.get(record.id) : undefined;
     const index = runtime?.pending.findIndex((item) => item.id === id) ?? -1;
-    if (!record?.sessionId || !runtime || index < 1) {
+    if (!isNonEmpty(record?.sessionId) || !runtime || index < 1) {
       return;
     }
     const [message] = runtime.pending.splice(index, 1);
@@ -713,12 +744,12 @@ export class Threads {
 
   async prompt(text: string, images: PromptImage[] = []): Promise<void> {
     const message = text;
-    if (!hasPromptContent(message, images) || !this.workspace) {
+    if (!hasPromptContent(message, images) || !isNonEmpty(this.workspace)) {
       return;
     }
 
     let registration: PromiseLike<void> | undefined;
-    let record = this.selectedId
+    let record = isNonEmpty(this.selectedId)
       ? this.requireRecord(this.selectedId)
       : undefined;
     if (!record) {
@@ -782,10 +813,10 @@ export class Threads {
     try {
       await runtime.registration;
       runtime.registration = undefined;
-      if (!record.sessionId) {
+      if (!isNonEmpty(record.sessionId)) {
         await this.createSession(record, runtime);
       }
-      if (!record.sessionId) {
+      if (!isNonEmpty(record.sessionId)) {
         throw new Error(record.error ?? "Agent unavailable");
       }
       const result = await runtime.connection.prompt(
@@ -829,7 +860,7 @@ export class Threads {
     await this.persist(record);
     this.emit();
     const [next] = runtime.pending;
-    const nextItem = next
+    const nextItem = isDefined(next)
       ? runtime.items.find((candidate) => candidate.id === next.id)
       : undefined;
     if (runtime.status === "running" && nextItem) {
@@ -838,7 +869,7 @@ export class Threads {
   }
 
   async retry(): Promise<void> {
-    const record = this.selectedId
+    const record = isNonEmpty(this.selectedId)
       ? this.findRecord(this.selectedId)
       : undefined;
     if (!record) {
@@ -847,13 +878,13 @@ export class Threads {
     if (record.retryText !== undefined) {
       const runtime = this.runtimes.get(record.id);
       runtime?.connection.dispose();
-      if (!record.sessionId && runtime) {
+      if (!isNonEmpty(record.sessionId) && runtime) {
         runtime.items = [];
       }
       await this.prompt(record.retryText, runtime?.retryImages);
       return;
     }
-    if (!record.sessionId) {
+    if (!isNonEmpty(record.sessionId)) {
       await this.createSession(record, this.runtime(record));
       return;
     }
@@ -866,11 +897,11 @@ export class Threads {
   }
 
   async setConfig(configId: string, value: string | boolean): Promise<void> {
-    const record = this.selectedId
+    const record = isNonEmpty(this.selectedId)
       ? this.findRecord(this.selectedId)
       : undefined;
     const runtime = record ? this.runtimes.get(record.id) : undefined;
-    if (!record?.sessionId || !runtime) {
+    if (!isNonEmpty(record?.sessionId) || !runtime) {
       return;
     }
     const option = runtime.configOptions.find(
@@ -950,7 +981,7 @@ export class Threads {
   }
 
   async cancel(): Promise<void> {
-    const record = this.selectedId
+    const record = isNonEmpty(this.selectedId)
       ? this.findRecord(this.selectedId)
       : undefined;
     const runtime = record ? this.runtimes.get(record.id) : undefined;
@@ -1045,7 +1076,7 @@ export class Threads {
       record.error = undefined;
       record.authentication = undefined;
       await this.reload(record, runtime);
-      if (target.role === "user" && result.draft) {
+      if (target.role === "user" && isNonEmpty(result.draft)) {
         runtime.drafts.push(result.draft);
       }
     } finally {
@@ -1055,7 +1086,7 @@ export class Threads {
   }
 
   async closeWorkspace(): Promise<void> {
-    if (!this.workspace) {
+    if (!isNonEmpty(this.workspace)) {
       return;
     }
     const records = this.records();
@@ -1079,14 +1110,14 @@ export class Threads {
   }
 
   markViewed(): void {
-    const record = this.selectedId
+    const record = isNonEmpty(this.selectedId)
       ? this.findRecord(this.selectedId)
       : undefined;
     if (!record) {
       return;
     }
     this.viewedId = record.id;
-    if (!record.unread) {
+    if (record.unread !== true) {
       return;
     }
     record.unread = false;
@@ -1099,10 +1130,10 @@ export class Threads {
   }
 
   consumeDrafts(): void {
-    const runtime = this.selectedId
+    const runtime = isNonEmpty(this.selectedId)
       ? this.runtimes.get(this.selectedId)
       : undefined;
-    if (!runtime?.drafts.length) {
+    if (!isNonZero(runtime?.drafts.length)) {
       return;
     }
     runtime.drafts = [];
@@ -1132,7 +1163,7 @@ export class Threads {
       });
     const selected = this.selectedDetail();
     return {
-      ...(this.workspace ? { workspace: this.workspace } : {}),
+      ...(isNonEmpty(this.workspace) ? { workspace: this.workspace } : {}),
       ...(selected ? { selected } : {}),
       threads,
     };
@@ -1140,10 +1171,10 @@ export class Threads {
 
   // oxlint-disable-next-line complexity -- snapshot assembles optional Thread state
   private selectedDetail(): ThreadDetail | undefined {
-    if (!this.workspace) {
+    if (!isNonEmpty(this.workspace)) {
       return undefined;
     }
-    const record = this.selectedId
+    const record = isNonEmpty(this.selectedId)
       ? this.findRecord(this.selectedId)
       : undefined;
     if (this.draft || !record) {
@@ -1162,7 +1193,7 @@ export class Threads {
     const runtime = this.runtimes.get(record.id);
     const items =
       runtime?.items ??
-      (record.retryText
+      (isNonEmpty(record.retryText)
         ? [
             {
               id: `retry:${record.id}`,
@@ -1178,10 +1209,12 @@ export class Threads {
       ...threadUsage(record, runtime),
       commands: runtime?.commands ?? [],
       configOptions: runtime?.configOptions ?? [],
-      ...(record.error ? { error: record.error } : {}),
+      ...(isNonEmpty(record.error) ? { error: record.error } : {}),
       drafts: runtime?.drafts ?? [],
-      ...(runtime?.operations.forkPicker ? { forkSupported: true } : {}),
-      ...(runtime?.operations.treePicker
+      ...(runtime?.operations.forkPicker === true
+        ? { forkSupported: true }
+        : {}),
+      ...(runtime?.operations.treePicker === true
         ? { treeNavigationSupported: true }
         : {}),
       id: record.id,
@@ -1234,13 +1267,14 @@ export class Threads {
     runtime.drafts.push(...queued.map((prompt) => prompt.text));
     const queuedIds = new Set(queued.map((prompt) => prompt.id));
     runtime.items = runtime.items.filter((item) => !queuedIds.has(item.id));
-    runtime.pending = active ? [active] : [];
-    const activeItem =
-      active && runtime.items.find((item) => item.id === active.id);
-    if (activeItem) {
+    runtime.pending = isDefined(active) ? [active] : [];
+    const activeItem = isDefined(active)
+      ? runtime.items.find((item) => item.id === active.id)
+      : undefined;
+    if (isDefined(activeItem)) {
       activeItem.cancelled = true;
     }
-    if (record.sessionId) {
+    if (isNonEmpty(record.sessionId)) {
       await runtime.connection.cancel(record.sessionId);
     }
     runtime.status = "idle";
@@ -1277,14 +1311,14 @@ export class Threads {
   }
 
   private async load(record: StoredThread): Promise<void> {
-    if (!record.sessionId || this.runtimes.has(record.id)) {
+    if (!isNonEmpty(record.sessionId) || this.runtimes.has(record.id)) {
       return;
     }
     await this.reload(record, this.runtime(record));
   }
 
   private async reload(record: StoredThread, runtime: Runtime): Promise<void> {
-    if (!record.sessionId) {
+    if (!isNonEmpty(record.sessionId)) {
       return;
     }
     try {
@@ -1317,7 +1351,8 @@ export class Threads {
       commands: [],
       configOptions: [],
       connection: this.createConnection({
-        elicitation: (request) => this.handleElicitation(record, request),
+        elicitation: async (request) =>
+          await this.handleElicitation(record, request),
         error: (error) => {
           record.error = errorMessage(error);
           record.authentication = error.authentication;
@@ -1329,8 +1364,11 @@ export class Threads {
           void this.persist(record);
           this.emit();
         },
-        permission: (request) => this.handlePermission(record, request),
-        update: (update) => this.handleUpdate(record, update),
+        permission: async (request) =>
+          await this.handlePermission(record, request),
+        update: (update) => {
+          this.handleUpdate(record, update);
+        },
       }),
       drafts: [],
       items: [],
@@ -1343,13 +1381,13 @@ export class Threads {
     return runtime;
   }
 
-  private handlePermission(
+  private async handlePermission(
     record: StoredThread,
     request: AgentPermissionRequest
   ): Promise<AgentPermissionResponse> {
     const runtime = this.runtimes.get(record.id);
     if (!runtime) {
-      return Promise.resolve({ cancelled: true });
+      return { cancelled: true };
     }
     stopStreaming(runtime);
     runtime.status = "waiting";
@@ -1362,23 +1400,23 @@ export class Threads {
     void this.persist(record);
     this.emit();
     // oxlint-disable-next-line promise/avoid-new
-    return new Promise((resolve) => {
+    return await new Promise((resolve) => {
       runtime.resolvePermission = resolve;
     });
   }
 
-  private handleElicitation(
+  private async handleElicitation(
     record: StoredThread,
     request: AgentElicitationRequest
   ): Promise<AgentElicitationResponse> {
     const runtime = this.runtimes.get(record.id);
     if (!runtime) {
-      return Promise.resolve({ action: "cancel" });
+      return { action: "cancel" };
     }
     stopStreaming(runtime);
     runtime.status = "waiting";
     runtime.interaction = {
-      ...(request.context ? { context: request.context } : {}),
+      ...(isNonEmpty(request.context) ? { context: request.context } : {}),
       fields: request.fields,
       id: randomUUID(),
       kind: "elicitation",
@@ -1387,7 +1425,7 @@ export class Threads {
     void this.persist(record);
     this.emit();
     // oxlint-disable-next-line promise/avoid-new
-    return new Promise((resolve) => {
+    return await new Promise((resolve) => {
       runtime.resolveElicitation = resolve;
     });
   }
@@ -1421,8 +1459,8 @@ export class Threads {
       const title = update.title?.trim();
       let changed = false;
       if (
-        !record.manualName &&
-        title &&
+        record.manualName !== true &&
+        isNonEmpty(title) &&
         title.length <= 200 &&
         !/[\r\n]/u.test(title)
       ) {
@@ -1430,7 +1468,7 @@ export class Threads {
         changed = true;
       }
       if (
-        update.updatedAt &&
+        isNonEmpty(update.updatedAt) &&
         update.updatedAt.length <= 100 &&
         Number.isFinite(Date.parse(update.updatedAt))
       ) {
@@ -1458,7 +1496,7 @@ export class Threads {
     const operation = (async () => {
       await previous;
       const { workspace } = this;
-      if (!workspace) {
+      if (!isNonEmpty(workspace)) {
         return;
       }
       const selected = this.database
@@ -1466,7 +1504,7 @@ export class Threads {
         .selections.find(
           (selection) => selection.workspace === workspace
         )?.threadId;
-      if (!selected || selected === this.selectedId) {
+      if (!isNonEmpty(selected) || selected === this.selectedId) {
         return;
       }
       const record = this.findRecord(selected);
@@ -1501,7 +1539,9 @@ export class Threads {
   }
 
   private selectedRuntime(): Runtime | undefined {
-    return this.selectedId ? this.runtimes.get(this.selectedId) : undefined;
+    return isNonEmpty(this.selectedId)
+      ? this.runtimes.get(this.selectedId)
+      : undefined;
   }
 
   private requireSessionOperationContext(
@@ -1513,12 +1553,16 @@ export class Threads {
   } {
     const title = operation === "fork" ? "Fork Thread" : "Navigate Thread Tree";
     const verb = operation === "fork" ? "forking" : "navigating";
-    if (!threadId || threadId !== this.selectedId) {
+    if (!isNonEmpty(threadId) || threadId !== this.selectedId) {
       throw new Error(`The selected Thread changed; reopen ${title}`);
     }
     const record = this.findRecord(threadId);
     const runtime = this.runtimes.get(threadId);
-    if (!record?.sessionId || !runtime || record.workspace !== this.workspace) {
+    if (
+      !hasSessionId(record) ||
+      !runtime ||
+      record.workspace !== this.workspace
+    ) {
       throw new Error(`Select a saved Thread before ${verb}`);
     }
     if (runtime.status !== "idle") {
@@ -1534,7 +1578,7 @@ export class Threads {
     if (runtime.sessionOperation) {
       throw new Error("Wait for the current Thread operation to finish");
     }
-    return { record: record as StoredThread & { sessionId: string }, runtime };
+    return { record, runtime };
   }
 
   private requireRecord(id: string): StoredThread {
@@ -1563,7 +1607,7 @@ export class Threads {
     };
   }
 
-  private apply(change: ProfileDatabaseChange): Promise<void> {
+  private async apply(change: ProfileDatabaseChange): Promise<void> {
     const previous = this.persistence;
     const operation = (async () => {
       await previous;
@@ -1576,15 +1620,15 @@ export class Threads {
         // Keep later independent writes available after one failed write.
       }
     })();
-    return operation;
+    await operation;
   }
 
-  private persist(record: StoredThread): Promise<void> {
+  private async persist(record: StoredThread): Promise<void> {
     if (!this.stored.includes(record)) {
-      return Promise.resolve();
+      return;
     }
     record.status = this.runtimes.get(record.id)?.status ?? record.status;
-    return this.apply({
+    await this.apply({
       thread: Threads.copyRecord(record),
       type: "putThread",
     });
@@ -1595,9 +1639,12 @@ export class Threads {
     await this.selectThread(record.workspace, record.id);
   }
 
-  private selectThread(workspace: string, threadId?: string): Promise<void> {
-    return this.apply({
-      ...(threadId ? { threadId } : {}),
+  private async selectThread(
+    workspace: string,
+    threadId?: string
+  ): Promise<void> {
+    await this.apply({
+      ...(isNonEmpty(threadId) ? { threadId } : {}),
       type: "selectThread",
       workspace,
     });
