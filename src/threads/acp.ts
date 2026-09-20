@@ -884,6 +884,7 @@ export const decodeTreeTargets = (value: unknown): AgentTreeTarget[] => {
   const targets: AgentTreeTarget[] = [];
   const visit = (node: NativeTreeNode, depth: number): void => {
     const { children, entry } = node;
+    const childDepth = depth + (children.length > 1 ? 1 : 0);
     const message = isRecord(entry.message) ? entry.message : undefined;
     const { role } = message ?? {};
     if (
@@ -892,7 +893,14 @@ export const decodeTreeTargets = (value: unknown): AgentTreeTarget[] => {
       (role !== "user" && role !== "assistant")
     ) {
       for (const child of children) {
-        visit(child, depth);
+        visit(child, childDepth);
+      }
+      return;
+    }
+    const text = messageText(message);
+    if (role === "assistant" && !isNonEmpty(text)) {
+      for (const child of children) {
+        visit(child, childDepth);
       }
       return;
     }
@@ -902,12 +910,10 @@ export const decodeTreeTargets = (value: unknown): AgentTreeTarget[] => {
       depth,
       entryId: entry.id,
       role,
-      text:
-        messageText(message) ??
-        (role === "user" ? "Image prompt" : "Assistant message"),
+      text: text ?? "Image prompt",
     });
     for (const child of children) {
-      visit(child, depth + 1);
+      visit(child, childDepth);
     }
   };
   for (const root of roots) {

@@ -106,7 +106,7 @@ describe("ACP adapter", () => {
       {
         activeBranch: true,
         current: true,
-        depth: 1,
+        depth: 0,
         entryId: "assistant-1",
         role: "assistant",
         text: "Done",
@@ -122,7 +122,78 @@ describe("ACP adapter", () => {
     ]);
   });
 
-  test("uses role-specific fallback text and rejects malformed trees", () => {
+  test("does not indent a linear conversation as nested branches", () => {
+    expect(
+      decodeTreeTargets({
+        leafId: "assistant-2",
+        tree: [
+          {
+            children: [
+              {
+                children: [
+                  {
+                    children: [],
+                    entry: {
+                      id: "assistant-2",
+                      message: { content: "Second", role: "assistant" },
+                      type: "message",
+                    },
+                  },
+                ],
+                entry: {
+                  id: "assistant-1",
+                  message: { content: "First", role: "assistant" },
+                  type: "message",
+                },
+              },
+            ],
+            entry: {
+              id: "user-1",
+              message: { content: "Start", role: "user" },
+              type: "message",
+            },
+          },
+        ],
+      }).map(({ depth }) => depth)
+    ).toStrictEqual([0, 0, 0]);
+  });
+
+  test("indents alternatives at branch points", () => {
+    expect(
+      decodeTreeTargets({
+        leafId: "assistant-1",
+        tree: [
+          {
+            children: [
+              {
+                children: [],
+                entry: {
+                  id: "assistant-1",
+                  message: { content: "First", role: "assistant" },
+                  type: "message",
+                },
+              },
+              {
+                children: [],
+                entry: {
+                  id: "assistant-2",
+                  message: { content: "Alternate", role: "assistant" },
+                  type: "message",
+                },
+              },
+            ],
+            entry: {
+              id: "user-1",
+              message: { content: "Start", role: "user" },
+              type: "message",
+            },
+          },
+        ],
+      }).map(({ depth }) => depth)
+    ).toStrictEqual([0, 1, 1]);
+  });
+
+  test("keeps image prompts and excludes assistant tool-only entries", () => {
     expect(
       decodeTreeTargets({
         leafId: "user-1",
@@ -142,16 +213,16 @@ describe("ACP adapter", () => {
             children: [],
             entry: {
               id: "assistant-1",
-              message: { content: [], role: "assistant" },
+              message: {
+                content: [{ name: "read", type: "toolCall" }],
+                role: "assistant",
+              },
               type: "message",
             },
           },
         ],
       })
-    ).toMatchObject([
-      { current: true, text: "Image prompt" },
-      { text: "Assistant message" },
-    ]);
+    ).toMatchObject([{ current: true, text: "Image prompt" }]);
     expect(() =>
       decodeTreeTargets({ leafId: null, tree: [{ children: [] }] })
     ).toThrow("Invalid MagPi tree response");

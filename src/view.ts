@@ -799,14 +799,10 @@ export class MischiefView implements vscode.WebviewViewProvider {
       return;
     }
     const selected = await vscode.window.showQuickPick<ForkQuickPickItem>(
-      context.targets.map((target) => {
-        const label = pickerLabel(target.text);
-        return {
-          ...(label === target.text ? {} : { detail: target.text }),
-          label,
-          target,
-        };
-      }),
+      context.targets.toReversed().map((target) => ({
+        label: pickerLabel(target.text),
+        target,
+      })),
       {
         placeHolder: "Select a user message to edit in a new Thread",
         title: "Fork Thread",
@@ -857,7 +853,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
       }
     }
     const selected = await vscode.window.showQuickPick<TreeQuickPickItem>(
-      context.targets.map((target) => {
+      context.targets.toReversed().map((target) => {
         const preview = pickerLabel(target.text);
         let description: string | undefined;
         if (target.current) {
@@ -867,7 +863,6 @@ export class MischiefView implements vscode.WebviewViewProvider {
         }
         return {
           ...(isNonEmpty(description) ? { description } : {}),
-          ...(preview === target.text ? {} : { detail: target.text }),
           label: `${"\u00A0\u00A0".repeat(target.depth)}${target.role === "user" ? "You" : "Agent"}: ${preview}`,
           target,
         };

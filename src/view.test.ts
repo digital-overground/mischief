@@ -1096,13 +1096,12 @@ describe("view provider", () => {
         [
           [
             {
-              detail: "First\n  prompt",
-              label: "First prompt",
-              target: { entryId: "pi-user-1", text: "First\n  prompt" },
-            },
-            {
               label: "Second prompt",
               target: { entryId: "pi-user-2", text: "Second prompt" },
+            },
+            {
+              label: "First prompt",
+              target: { entryId: "pi-user-1", text: "First\n  prompt" },
             },
           ],
           {
@@ -1119,8 +1118,8 @@ describe("view provider", () => {
       },
     });
     expect(fork).toHaveBeenCalledExactlyOnceWith("source-thread", {
-      entryId: "pi-user-1",
-      text: "First\n  prompt",
+      entryId: "pi-user-2",
+      text: "Second prompt",
     });
   });
 
@@ -1296,18 +1295,17 @@ describe("view provider", () => {
         [
           [
             {
-              label: "You: First prompt",
-              target: targets[0],
+              label: "  You: Alternate",
+              target: targets[2],
             },
             {
               description: "current leaf",
-              detail: "First\nanswer",
               label: "  Agent: First answer",
               target: targets[1],
             },
             {
-              label: "  You: Alternate",
-              target: targets[2],
+              label: "You: First prompt",
+              target: targets[0],
             },
           ],
           {
@@ -1386,7 +1384,7 @@ describe("view provider", () => {
       testValue<{ description?: string }[]>(pickerCall[0]).map(
         (item) => item.description ?? null
       )
-    ).toStrictEqual([null, "active branch"]);
+    ).toStrictEqual(["active branch", null]);
   });
 
   test("does nothing when loading Thread tree targets is cancelled", async () => {
