@@ -1253,7 +1253,7 @@ describe("view provider", () => {
       {
         activeBranch: false,
         current: false,
-        depth: 1,
+        depth: 2,
         entryId: "pi-user-2",
         role: "user",
         text: "Alternate",
@@ -1266,7 +1266,11 @@ describe("view provider", () => {
         onChange: vi.fn<() => void>(),
         treeTargets: async () => {
           await Promise.resolve();
-          return { targets, threadId: "source-thread" };
+          return {
+            branchSummarySupported: true,
+            targets,
+            threadId: "source-thread",
+          };
         },
       }),
       testValue<never>({ fsPath: process.cwd() }),
@@ -1295,12 +1299,12 @@ describe("view provider", () => {
         [
           [
             {
-              label: "  You: Alternate",
+              label: "-- You: Alternate",
               target: targets[2],
             },
             {
               description: "current leaf",
-              label: "  Agent: First answer",
+              label: "- Agent: First answer",
               target: targets[1],
             },
             {
@@ -1323,8 +1327,171 @@ describe("view provider", () => {
     });
     expect(navigateTree).toHaveBeenCalledExactlyOnceWith(
       "source-thread",
-      targets[1]
+      targets[1],
+      { summarize: false }
     );
+  });
+
+  test.each([
+    {
+      choice: 0,
+      expected: { summarize: false },
+      name: "without a summary",
+    },
+    {
+      choice: 1,
+      expected: { summarize: true },
+      name: "with Pi's default summary",
+    },
+    {
+      choice: 2,
+      customInstructions: "Focus on unresolved errors",
+      expected: {
+        customInstructions: "Focus on unresolved errors",
+        summarize: true,
+      },
+      name: "with custom summary focus",
+    },
+  ])("navigates $name", async ({ choice, customInstructions, expected }) => {
+    const loading = {
+      busy: false,
+      dispose: vi.fn<() => void>(),
+      hide: vi.fn<() => void>(),
+      onDidHide: () => ({ dispose: vi.fn<() => void>() }),
+      placeholder: "",
+      show: vi.fn<() => void>(),
+      title: "",
+    };
+    vscode.createQuickPick.mockReset().mockReturnValue(loading);
+    let picker = 0;
+    vscode.showQuickPick.mockReset().mockImplementation(async (items) => {
+      await Promise.resolve();
+      picker += 1;
+      return testValue<unknown[]>(items)[picker === 1 ? 0 : choice];
+    });
+    vscode.showInputBox.mockReset().mockResolvedValue(customInstructions);
+    const navigateTree = vi.fn<() => Promise<void>>(async () => {
+      await Promise.resolve();
+    });
+    const target = {
+      activeBranch: false,
+      current: false,
+      depth: 1,
+      entryId: "pi-user-2",
+      role: "user",
+      text: "Alternate",
+    } as const;
+    const provider = new MischiefView(
+      testValue<never>({}),
+      testValue<never>({
+        navigateTree,
+        onChange: vi.fn<() => void>(),
+        treeTargets: async () => {
+          await Promise.resolve();
+          return {
+            branchSummarySupported: true,
+            targets: [target],
+            threadId: "source-thread",
+          };
+        },
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase())
+    );
+    const render = vi.fn<() => Promise<boolean>>(async () => {
+      await Promise.resolve();
+      return true;
+    });
+    testValue<{ render: typeof render }>(provider).render = render;
+
+    await testValue<{ showNavigateThreadTree: () => Promise<void> }>(
+      testValue<unknown>(provider)
+    ).showNavigateThreadTree();
+
+    expect(vscode.showQuickPick.mock.calls[1]).toStrictEqual([
+      [
+        { label: "No summary", summarize: false },
+        { label: "Pi's default branch summary", summarize: true },
+        {
+          custom: true,
+          label: "Pi's branch summary with custom focus…",
+          summarize: true,
+        },
+      ],
+      {
+        placeHolder: "Choose how to handle the abandoned branch",
+        title: "Branch Summary",
+      },
+    ]);
+    expect(navigateTree).toHaveBeenCalledExactlyOnceWith(
+      "source-thread",
+      target,
+      expected
+    );
+    expect(vscode.showInputBox).toHaveBeenCalledTimes(choice === 2 ? 1 : 0);
+    expect(render).toHaveBeenCalledOnce();
+  });
+
+  test.each([
+    { custom: false, name: "branch-summary choice" },
+    { custom: true, name: "custom-focus input" },
+  ])("cancelling the $name does not navigate", async ({ custom }) => {
+    vscode.createQuickPick.mockReset().mockReturnValue({
+      busy: false,
+      dispose: vi.fn<() => void>(),
+      hide: vi.fn<() => void>(),
+      onDidHide: () => ({ dispose: vi.fn<() => void>() }),
+      placeholder: "",
+      show: vi.fn<() => void>(),
+      title: "",
+    });
+    let picker = 0;
+    vscode.showQuickPick.mockReset().mockImplementation(async (items) => {
+      await Promise.resolve();
+      picker += 1;
+      if (picker === 1) {
+        return testValue<unknown[]>(items)[0];
+      }
+      return custom ? testValue<unknown[]>(items)[2] : undefined;
+    });
+    vscode.showInputBox.mockReset();
+    const navigateTree = vi.fn<() => Promise<void>>(async () => {
+      await Promise.resolve();
+    });
+    const provider = new MischiefView(
+      testValue<never>({}),
+      testValue<never>({
+        navigateTree,
+        onChange: vi.fn<() => void>(),
+        treeTargets: async () => {
+          await Promise.resolve();
+          return {
+            branchSummarySupported: true,
+            targets: [
+              {
+                activeBranch: false,
+                current: false,
+                depth: 0,
+                entryId: "pi-user-2",
+                role: "user",
+                text: "Alternate",
+              },
+            ],
+            threadId: "source-thread",
+          };
+        },
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase())
+    );
+
+    await testValue<{ showNavigateThreadTree: () => Promise<void> }>(
+      testValue<unknown>(provider)
+    ).showNavigateThreadTree();
+
+    expect(navigateTree).not.toHaveBeenCalled();
   });
 
   test("marks the deepest visible target for a filtered active leaf", async () => {
@@ -1777,7 +1944,7 @@ describe("view provider", () => {
       /\.entry\.ask-user-result \{[^}]*--entry-accent: var\(--hl-warning\);[\s\S]*\.ask-user-title \{[^}]*color: var\(--entry-accent\);[\s\S]*\.ask-user-question \{[^}]*color: var\(--entry-accent\);[\s\S]*\.ask-user-answer \{[^}]*color: var\(--vscode-foreground\);/u
     );
     expect(style).toMatch(
-      /\.thinking-content,\s*\.tool-group-content,\s*\.ask-user-content \{[^}]*margin: 8px 0 0 6px;[^}]*border-left: 1px solid[^}]*padding-left: 15px;/u
+      /\.thinking-content,\s*\.tool-group-content,\s*\.branch-summary-content,\s*\.ask-user-content \{[^}]*margin: 8px 0 0 6px;[^}]*border-left: 1px solid[^}]*padding-left: 15px;/u
     );
   });
 
@@ -1843,6 +2010,19 @@ describe("view provider", () => {
       streaming: true,
       threadId: "thread-1",
       type: "transcript",
+    });
+
+    postMessage.mockClear();
+    emit?.({
+      operation: "branchSummary",
+      threadId: "thread-1",
+      type: "sessionOperation",
+    });
+
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({
+      operation: "branchSummary",
+      threadId: "thread-1",
+      type: "sessionOperation",
     });
   });
 

@@ -5,7 +5,7 @@ import type { AgentToolUpdate, AgentUpdate, TranscriptItem } from "./threads";
 
 const appendMessage = (
   items: TranscriptItem[],
-  kind: "user" | "assistant" | "thought",
+  kind: "user" | "assistant" | "thought" | "system" | "branchSummary",
   text?: string,
   images?: TranscriptItem["images"],
   messageId?: string

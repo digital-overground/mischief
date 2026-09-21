@@ -3,6 +3,7 @@ import type {
   PromptImage,
   ThreadDetail,
   ThreadInteractionResponse,
+  ThreadSessionOperation,
   ThreadsSnapshot,
   TranscriptItem,
 } from "../threads/threads";
@@ -51,6 +52,11 @@ export type HostToWebviewMessage =
       threadId: string;
       item: RenderedTranscriptItem;
       streaming: boolean;
+    }
+  | {
+      type: "sessionOperation";
+      threadId: string;
+      operation: ThreadSessionOperation;
     }
   | { type: "contextItems"; items: string[] }
   | { type: "setAllExpanded"; expanded: boolean }

@@ -45,6 +45,24 @@ export const App = (): React.JSX.Element => {
       } else if (event.data.type === "state") {
         setSnapshot(event.data);
         setTranscript({ items: [], streaming: false });
+      } else if (event.data.type === "sessionOperation") {
+        const { data: update } = event;
+        setSnapshot((current) => {
+          const { selected } = current.threads;
+          if (selected?.id !== update.threadId) {
+            return current;
+          }
+          return {
+            ...current,
+            threads: {
+              ...current.threads,
+              selected: {
+                ...selected,
+                sessionOperation: update.operation,
+              },
+            },
+          };
+        });
       } else if (event.data.type === "transcript") {
         const update = event.data;
         setTranscript((current) => {

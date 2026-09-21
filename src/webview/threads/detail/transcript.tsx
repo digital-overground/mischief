@@ -80,6 +80,22 @@ const ThinkingGroup = ({
   </section>
 );
 
+const BranchSummary = ({
+  item,
+}: {
+  item: RenderedTranscriptItem;
+}): React.JSX.Element => (
+  <details className="entry branch-summary">
+    <summary className="branch-summary-heading">
+      <Icon className="entry-icon" kind="gitBranch" title="Branch summary" />
+      Branch summary
+    </summary>
+    <div className="branch-summary-content">
+      <MarkdownBody item={item} />
+    </div>
+  </details>
+);
+
 const statusLabel = (status?: string): string =>
   isNonEmpty(status) ? ` · ${status.replaceAll("_", " ")}` : "";
 
@@ -471,6 +487,9 @@ const TranscriptEntry = ({
 }: {
   item: RenderedTranscriptItem;
 }): React.JSX.Element => {
+  if (item.kind === "branchSummary") {
+    return <BranchSummary item={item} />;
+  }
   if (item.kind === "completedPlan") {
     return (
       <section className="entry completed-plan">

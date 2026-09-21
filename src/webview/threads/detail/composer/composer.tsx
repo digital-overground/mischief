@@ -194,7 +194,7 @@ const ComposerView = ({
     if (
       (!text.trim() && !images.length) ||
       !selected ||
-      selected.sessionOperation === true
+      selected.sessionOperation !== undefined
     ) {
       return;
     }

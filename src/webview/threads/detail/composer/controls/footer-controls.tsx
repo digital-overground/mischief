@@ -46,7 +46,10 @@ export const FooterControls = ({
           title="Fork Thread"
           aria-label="Fork Thread"
           type="button"
-          disabled={selected.status !== "idle" || selected.sessionOperation}
+          disabled={
+            selected.status !== "idle" ||
+            selected.sessionOperation !== undefined
+          }
           onClick={() => {
             postMessage({ type: "forkThread" });
           }}
@@ -61,7 +64,10 @@ export const FooterControls = ({
           title="Navigate Thread Tree"
           aria-label="Navigate Thread Tree"
           type="button"
-          disabled={selected.status !== "idle" || selected.sessionOperation}
+          disabled={
+            selected.status !== "idle" ||
+            selected.sessionOperation !== undefined
+          }
           onClick={() => {
             postMessage({ type: "navigateThreadTree" });
           }}
@@ -85,7 +91,9 @@ export const FooterControls = ({
         id="send"
         title={sendLabel}
         aria-label={sendLabel}
-        disabled={(!selected && !setup) || selected?.sessionOperation}
+        disabled={
+          (!selected && !setup) || selected?.sessionOperation !== undefined
+        }
         onClick={onSend}
       >
         <SvgIcon className="send-icon" kind="send" />

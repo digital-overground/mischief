@@ -37,6 +37,7 @@ import type {
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentToolUpdate,
+  AgentTreeNavigationOptions,
   AgentTreeNavigationResult,
   AgentTreeTarget,
   AgentSessionOperations,
@@ -57,6 +58,7 @@ export interface AgentLaunch {
 const MAX_CONTEXT_BYTES = 1_000_000;
 const MAX_CONTEXT_FILES = 20;
 
+export const BRANCH_SUMMARY_CAPABILITY = "magpi-acp/branch-summary";
 export const FORK_PICKER_CAPABILITY = "magpi-acp/fork-picker";
 export const TREE_PICKER_CAPABILITY = "magpi-acp/tree-picker";
 export const FORK_MESSAGES_METHOD = "_magpi-acp/session/fork-messages";
@@ -581,7 +583,8 @@ const allPlanEntriesCompleted = (entries: { status: string }[]): boolean =>
 
 // oxlint-disable-next-line complexity -- ACP session updates are a protocol union
 export const translateSessionUpdate = (
-  update: SessionUpdate
+  update: SessionUpdate,
+  meta?: Record<string, unknown> | null
 ): AgentUpdate | undefined => {
   switch (update.sessionUpdate) {
     case "user_message_chunk":
@@ -590,9 +593,15 @@ export const translateSessionUpdate = (
       if (update.content.type !== "text" && update.content.type !== "image") {
         return undefined;
       }
-      let kind: "user" | "assistant" | "thought" = "thought";
+      let kind: "user" | "assistant" | "thought" | "system" | "branchSummary" =
+        "thought";
       if (update.sessionUpdate === "user_message_chunk") {
         kind = "user";
+      } else if (
+        update.sessionUpdate === "agent_message_chunk" &&
+        meta?.[BRANCH_SUMMARY_CAPABILITY] === true
+      ) {
+        kind = "branchSummary";
       } else if (update.sessionUpdate === "agent_message_chunk") {
         kind = "assistant";
       }
@@ -796,6 +805,7 @@ export const sessionOperations = (
       ? agentCapabilities._meta
       : undefined;
   return {
+    branchSummary: meta?.[BRANCH_SUMMARY_CAPABILITY] === true,
     forkPicker: meta?.[FORK_PICKER_CAPABILITY] === true,
     treePicker: meta?.[TREE_PICKER_CAPABILITY] === true,
   };
@@ -948,6 +958,7 @@ class AcpConnection implements AgentConnection {
   private starting?: Promise<void>;
   private disposed = false;
   private operations: AgentSessionOperations = {
+    branchSummary: false,
     forkPicker: false,
     treePicker: false,
   };
@@ -1058,13 +1069,17 @@ class AcpConnection implements AgentConnection {
     });
   }
 
-  async navigateTree(sessionId: string, entryId: string) {
+  async navigateTree(
+    sessionId: string,
+    entryId: string,
+    options: AgentTreeNavigationOptions
+  ) {
     return await this.call(async () => {
       await this.start();
       const response = await this.requireConnection().request<
         unknown,
-        { entryId: string; sessionId: string }
-      >(NAVIGATE_TREE_METHOD, { entryId, sessionId });
+        AgentTreeNavigationOptions & { entryId: string; sessionId: string }
+      >(NAVIGATE_TREE_METHOD, { ...options, entryId, sessionId });
       return decodeTreeNavigationResult(response);
     });
   }
@@ -1225,9 +1240,9 @@ class AcpConnection implements AgentConnection {
         );
         return permissionResponse(response);
       },
-      sessionUpdate: async ({ update }) => {
+      sessionUpdate: async ({ update, _meta }) => {
         await Promise.resolve();
-        const translated = translateSessionUpdate(update);
+        const translated = translateSessionUpdate(update, _meta);
         if (translated) {
           this.handlers.update(translated);
         }

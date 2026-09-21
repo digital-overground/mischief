@@ -13,6 +13,7 @@ import type {
   AgentConnectionFactory,
   AgentHandlers,
   AgentPromptResult,
+  AgentTreeNavigationOptions,
   AgentTreeTarget,
   PromptImage,
   ThreadConfigOption,
@@ -41,10 +42,15 @@ class FakeAgent {
   loadCalls = 0;
   loadRequests: { sessionId: string; cwd: string }[] = [];
   initialConfigOptions: ThreadConfigOption[] = [];
-  operations = { forkPicker: true, treePicker: true };
+  operations = {
+    branchSummary: true,
+    forkPicker: true,
+    treePicker: true,
+  };
   failCreate = false;
   createError?: Error;
   replayOnLoad = false;
+  replayBranchSummary = false;
   failLoad = false;
   askPermission = false;
   askElicitation = false;
@@ -83,7 +89,11 @@ class FakeAgent {
       text: "Try this again",
     },
   ];
-  navigateTreeCalls: { sessionId: string; entryId: string }[] = [];
+  navigateTreeCalls: {
+    sessionId: string;
+    entryId: string;
+    options: AgentTreeNavigationOptions;
+  }[] = [];
   navigationResult: { draft?: string } = { draft: "Try this again" };
   navigationError?: Error;
   navigationGate?: Deferred;
@@ -186,6 +196,13 @@ class FakeAgent {
             text: "Restored.",
             type: "message",
           });
+          if (this.replayBranchSummary) {
+            handlers.update({
+              kind: "branchSummary",
+              text: "Preserve the adapter decision.",
+              type: "message",
+            });
+          }
         }
         return {
           configOptions: [],
@@ -193,8 +210,8 @@ class FakeAgent {
           sessionId,
         };
       },
-      navigateTree: async (sessionId, entryId) => {
-        this.navigateTreeCalls.push({ entryId, sessionId });
+      navigateTree: async (sessionId, entryId, options) => {
+        this.navigateTreeCalls.push({ entryId, options, sessionId });
         if (this.navigationError) {
           throw this.navigationError;
         }
@@ -802,17 +819,35 @@ describe("threads module", () => {
       throw new Error("Missing tree target");
     }
     agent.replayOnLoad = true;
+    agent.replayBranchSummary = true;
+    const changes: (ThreadsChange | undefined)[] = [];
+    threads.onChange((change) => {
+      changes.push(change);
+    });
 
-    await threads.navigateTree(context.threadId, target);
+    await threads.navigateTree(context.threadId, target, {
+      customInstructions: "Focus on unresolved errors",
+      summarize: true,
+    });
 
     expect(agent.treeTargetCalls).toStrictEqual(["session-1"]);
     expect(agent.navigateTreeCalls).toStrictEqual([
-      { entryId: "pi-user-1", sessionId: "session-1" },
+      {
+        entryId: "pi-user-1",
+        options: {
+          customInstructions: "Focus on unresolved errors",
+          summarize: true,
+        },
+        sessionId: "session-1",
+      },
     ]);
     expect(agent.loadRequests).toContainEqual({
       cwd: "/workspace",
       sessionId: "session-1",
     });
+    expect(
+      changes.filter((change) => change?.type === "transcript")
+    ).toStrictEqual([]);
     expect(threads.snapshot()).toMatchObject({
       selected: {
         drafts: ["Try this again"],
@@ -820,6 +855,10 @@ describe("threads module", () => {
         items: [
           { kind: "user", text: "Restore me" },
           { kind: "assistant", text: "Restored." },
+          {
+            kind: "branchSummary",
+            text: "Preserve the adapter decision.",
+          },
         ],
       },
       threads: [{ createdAt: source.createdAt, id: source.id }],
@@ -858,11 +897,31 @@ describe("threads module", () => {
 
     expect(agent.navigateTreeCalls.at(-1)).toStrictEqual({
       entryId: "pi-assistant-1",
+      options: { summarize: false },
       sessionId: "session-1",
     });
     expect(threads.snapshot().selected?.drafts).toStrictEqual([
       "Try this again",
     ]);
+  });
+
+  test("rejects branch summaries when the Agent does not advertise support", async () => {
+    const agent = new FakeAgent();
+    agent.operations.branchSummary = false;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Old branch");
+    const context = await threads.treeTargets();
+    const [target] = context.targets;
+    if (!isDefined(target)) {
+      throw new Error("Missing tree target");
+    }
+
+    expect(context.branchSummarySupported).toBeFalsy();
+    await expect(
+      threads.navigateTree(context.threadId, target, { summarize: true })
+    ).rejects.toThrow("does not support branch summaries");
+    expect(agent.navigateTreeCalls).toStrictEqual([]);
   });
 
   test("rejects unavailable, running, and stale tree navigation", async () => {
@@ -914,9 +973,16 @@ describe("threads module", () => {
     agent.navigationError = new Error("Navigation failed");
 
     await expect(
-      threads.navigateTree(context.threadId, target)
+      threads.navigateTree(context.threadId, target, { summarize: true })
     ).rejects.toThrow("Navigation failed");
 
+    expect(agent.navigateTreeCalls).toStrictEqual([
+      {
+        entryId: "pi-user-1",
+        options: { summarize: true },
+        sessionId: "session-1",
+      },
+    ]);
     expect(threads.snapshot().selected).toMatchObject({
       items: oldItems,
       status: "idle",
@@ -962,14 +1028,25 @@ describe("threads module", () => {
       throw new Error("Missing other Thread");
     }
     await threads.select(sourceId);
+    const changes: (ThreadsChange | undefined)[] = [];
+    threads.onChange((change) => {
+      changes.push(change);
+    });
     const context = await threads.treeTargets();
     const [target] = context.targets;
     if (!isDefined(target)) {
       throw new Error("Missing tree target");
     }
 
-    const navigating = threads.navigateTree(context.threadId, target);
-    expect(threads.snapshot().selected?.sessionOperation).toBeTruthy();
+    const navigating = threads.navigateTree(context.threadId, target, {
+      summarize: true,
+    });
+    expect(threads.snapshot().selected?.sessionOperation).toBe("branchSummary");
+    expect(changes.at(-1)).toStrictEqual({
+      operation: "branchSummary",
+      threadId: sourceId,
+      type: "sessionOperation",
+    });
     await expect(threads.prompt("Too soon")).rejects.toThrow(
       "Thread operation to finish"
     );

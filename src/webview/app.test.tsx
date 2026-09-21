@@ -1714,6 +1714,11 @@ describe("React webview", () => {
           id: "thread-1",
           items: [
             {
+              id: "summary-1",
+              kind: "branchSummary",
+              text: "Preserve the adapter decision.",
+            },
+            {
               id: "plan-1",
               kind: "plan",
               planEntries: [
@@ -1738,8 +1743,28 @@ describe("React webview", () => {
     act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
     });
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent<HostToWebviewMessage>("message", {
+          data: {
+            operation: "branchSummary",
+            threadId: "thread-1",
+            type: "sessionOperation",
+          },
+        })
+      );
+    });
 
     expect({
+      branchBody: document.querySelector(".branch-summary-content")
+        ?.textContent,
+      branchHeading: document.querySelector(".branch-summary-heading")
+        ?.textContent,
+      branchIcon: document
+        .querySelector(".branch-summary-heading [role='img']")
+        ?.getAttribute("aria-label"),
+      branchOpen:
+        document.querySelector<HTMLDetailsElement>(".branch-summary")?.open,
       completedIcon: document.querySelector<HTMLElement>(
         ".plan-task.completed .plan-task-icon"
       )?.title,
@@ -1747,19 +1772,30 @@ describe("React webview", () => {
         "--mischief-mono-font"
       ),
       plan: document.querySelector("#plan-body")?.textContent,
-      processing: document.querySelector(
+      planProcessing: document.querySelector(
         '.plan-task-indicator[aria-label="In progress"]'
       ),
       steering: document
         .querySelector("#steering")
         ?.textContent?.includes("Keep the controls small"),
+      summaryOverlay: document.querySelector(".thread-operation-overlay")
+        ?.textContent,
+      threadContentInert: document
+        .querySelector("#thread-content")
+        ?.hasAttribute("inert"),
       title: document.querySelector("#thread-title")?.textContent,
     }).toStrictEqual({
+      branchBody: "Preserve the adapter decision.",
+      branchHeading: "Branch summary",
+      branchIcon: "Branch summary",
+      branchOpen: false,
       completedIcon: "Completed",
       font: "Test Mono",
       plan: "Inspect the viewRefactor the viewTest the view",
-      processing: testValue<unknown>(expect.any(HTMLElement)),
+      planProcessing: testValue<unknown>(expect.any(HTMLElement)),
       steering: true,
+      summaryOverlay: "Generating branch summary…",
+      threadContentInert: true,
       title: "React refactor",
     });
 

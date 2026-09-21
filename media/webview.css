@@ -150,12 +150,45 @@ main > section {
   flex: 0 1 auto;
 }
 #thread {
+  position: relative;
   min-width: 0;
   min-height: 72px;
   flex: 1 0 72px;
   overflow: hidden;
   border-bottom: 0;
   overflow-wrap: anywhere;
+}
+#thread-content {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.thread-operation-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: var(--vscode-textLink-foreground);
+  background: color-mix(
+    in srgb,
+    var(--vscode-editor-background, var(--vscode-sideBar-background)) 88%,
+    transparent
+  );
+  font-family: var(--mischief-ui-font);
+  font-weight: 600;
+}
+.thread-operation-spinner {
+  font-family: var(--mischief-mono-font);
+  font-size: 18px;
+}
+.thread-operation-spinner::before {
+  content: "⠋";
+  animation: thread-status-frame 600ms step-end infinite;
 }
 header {
   min-height: 26px;
@@ -688,6 +721,9 @@ article.entry {
 .entry.system {
   --entry-accent: var(--vscode-descriptionForeground);
 }
+.entry.branch-summary {
+  --entry-accent: var(--hl-accent-alt);
+}
 .entry-icon {
   flex: none;
   display: inline-flex;
@@ -739,11 +775,13 @@ pre {
   line-height: 1.35;
 }
 .thinking-group,
-.tool-group {
+.tool-group,
+.branch-summary {
   display: block;
 }
 .thinking-heading,
-.tool-group-heading {
+.tool-group-heading,
+.branch-summary-heading {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -751,8 +789,16 @@ pre {
   font-family: var(--mischief-ui-font);
   font-weight: 500;
 }
+.branch-summary-heading::before {
+  width: 10px;
+  content: "▸";
+}
+.branch-summary[open] > .branch-summary-heading::before {
+  content: "▾";
+}
 .thinking-content,
 .tool-group-content,
+.branch-summary-content,
 .ask-user-content {
   margin: 8px 0 0 6px;
   border-left: 1px solid
@@ -1217,7 +1263,8 @@ fieldset.interaction-field {
 }
 @media (prefers-reduced-motion: reduce) {
   .plan-task-indicator::before,
-  .tool-operation-status:is(.pending, .in_progress)::before {
+  .tool-operation-status:is(.pending, .in_progress)::before,
+  .thread-operation-spinner::before {
     animation: none;
   }
   .plan-task-indicator::before {

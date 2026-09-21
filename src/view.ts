@@ -21,6 +21,7 @@ import type {
 } from "./projects/projects";
 import type {
   AgentForkTarget,
+  AgentTreeNavigationOptions,
   AgentTreeTarget,
   PromptImage,
   ThreadHistoryEntry,
@@ -115,6 +116,11 @@ interface TreeQuickPickItem extends vscode.QuickPickItem {
   target: AgentTreeTarget;
 }
 
+interface BranchSummaryQuickPickItem extends vscode.QuickPickItem {
+  custom?: true;
+  summarize: boolean;
+}
+
 const pickerLabel = (text: string): string =>
   text.replaceAll(/\s+/gu, " ").trim() || "Image prompt";
 
@@ -197,6 +203,8 @@ export class MischiefView implements vscode.WebviewViewProvider {
     threads.onChange((change) => {
       if (change?.type === "transcript") {
         this.renderTranscript(change);
+      } else if (change?.type === "sessionOperation") {
+        this.renderSessionOperation(change);
       } else {
         this.render();
       }
@@ -863,7 +871,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
         }
         return {
           ...(isNonEmpty(description) ? { description } : {}),
-          label: `${"\u00A0\u00A0".repeat(target.depth)}${target.role === "user" ? "You" : "Agent"}: ${preview}`,
+          label: `${target.depth ? `${"-".repeat(target.depth)} ` : ""}${target.role === "user" ? "You" : "Agent"}: ${preview}`,
           target,
         };
       }),
@@ -872,9 +880,47 @@ export class MischiefView implements vscode.WebviewViewProvider {
         title: "Navigate Thread Tree",
       }
     );
-    if (selected) {
-      await this.threads.navigateTree(context.threadId, selected.target);
+    if (!selected) {
+      return;
     }
+    let options: AgentTreeNavigationOptions = { summarize: false };
+    if (context.branchSummarySupported && !selected.target.current) {
+      const summary =
+        await vscode.window.showQuickPick<BranchSummaryQuickPickItem>(
+          [
+            { label: "No summary", summarize: false },
+            { label: "Pi's default branch summary", summarize: true },
+            {
+              custom: true,
+              label: "Pi's branch summary with custom focus…",
+              summarize: true,
+            },
+          ],
+          {
+            placeHolder: "Choose how to handle the abandoned branch",
+            title: "Branch Summary",
+          }
+        );
+      if (!summary) {
+        return;
+      }
+      options = { summarize: summary.summarize };
+      if (summary.custom) {
+        const customInstructions = await vscode.window.showInputBox({
+          placeHolder: "Focus on decisions, errors, or another topic",
+          prompt: "Enter custom instructions for Pi's branch summary",
+          title: "Branch Summary Focus",
+          validateInput: (value) =>
+            value.trim() ? undefined : "Enter summary instructions",
+        });
+        if (customInstructions === undefined) {
+          return;
+        }
+        options.customInstructions = customInstructions;
+      }
+    }
+    await this.threads.navigateTree(context.threadId, selected.target, options);
+    await this.render();
   }
 
   private async showThreadHistory(): Promise<void> {
@@ -1136,7 +1182,19 @@ export class MischiefView implements vscode.WebviewViewProvider {
     } satisfies HostToWebviewMessage);
   }
 
-  private renderTranscript(change: ThreadsChange): void {
+  private renderSessionOperation(
+    change: Extract<ThreadsChange, { type: "sessionOperation" }>
+  ): void {
+    if (!this.view) {
+      return;
+    }
+    const postMessage = this.view.webview.postMessage.bind(this.view.webview);
+    void postMessage(change satisfies HostToWebviewMessage);
+  }
+
+  private renderTranscript(
+    change: Extract<ThreadsChange, { type: "transcript" }>
+  ): void {
     if (!this.view) {
       return;
     }
@@ -1147,9 +1205,9 @@ export class MischiefView implements vscode.WebviewViewProvider {
     } satisfies HostToWebviewMessage);
   }
 
-  private render(): void {
+  private render(): PromiseLike<boolean> | undefined {
     if (!this.view) {
-      return;
+      return undefined;
     }
     const font = vscode.workspace
       .getConfiguration("mischief")
@@ -1175,7 +1233,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
       };
     }
     const postMessage = this.view.webview.postMessage.bind(this.view.webview);
-    void postMessage({
+    return postMessage({
       font:
         font !== undefined && font.length > 0 ? font : DEFAULT_MONO_FONT_FAMILY,
       projects: this.projectsSnapshot,

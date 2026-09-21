@@ -75,106 +75,122 @@ export const ThreadView = ({
   const maximizeLabel = threadMaximized
     ? "Expand Navigator"
     : "Maximize Current Thread";
+  const processingLabel =
+    selected?.sessionOperation === "branchSummary"
+      ? "Generating branch summary…"
+      : undefined;
+  const processing = selected?.status === "running" && streaming !== true;
+  const blocked = selected?.sessionOperation !== undefined;
   return (
-    <section id="thread">
-      <header id="thread-header">
-        <span className="heading" id="thread-title">
-          {setup ? "Setup" : (selected?.name ?? "Thread")}
-        </span>
-        <button
-          className="icon"
-          id="maximize-thread"
-          title={maximizeLabel}
-          aria-label={maximizeLabel}
-          aria-pressed={threadMaximized}
-          onClick={onToggleMaximized}
-        >
-          <SvgIcon kind={threadMaximized ? "minimize" : "maximize"} />
-        </button>
-        <button
-          className="icon"
-          id="rename-thread"
-          title="Rename Thread"
-          aria-label="Rename Thread"
-          disabled={!isNonEmpty(selected?.id)}
-          onClick={() => {
-            if (isNonEmpty(selected?.id)) {
-              postMessage({ id: selected.id, type: "renameThread" });
-            }
+    <section id="thread" aria-busy={blocked}>
+      <div id="thread-content" inert={blocked}>
+        <header id="thread-header">
+          <span className="heading" id="thread-title">
+            {setup ? "Setup" : (selected?.name ?? "Thread")}
+          </span>
+          <button
+            className="icon"
+            id="maximize-thread"
+            title={maximizeLabel}
+            aria-label={maximizeLabel}
+            aria-pressed={threadMaximized}
+            onClick={onToggleMaximized}
+          >
+            <SvgIcon kind={threadMaximized ? "minimize" : "maximize"} />
+          </button>
+          <button
+            className="icon"
+            id="rename-thread"
+            title="Rename Thread"
+            aria-label="Rename Thread"
+            disabled={!isNonEmpty(selected?.id)}
+            onClick={() => {
+              if (isNonEmpty(selected?.id)) {
+                postMessage({ id: selected.id, type: "renameThread" });
+              }
+            }}
+          >
+            <SvgIcon className="thread-action-icon" kind="pencil" />
+          </button>
+        </header>
+        <div
+          id="chat"
+          ref={chat}
+          onScroll={(event) => {
+            const container = event.currentTarget;
+            shouldStick.current =
+              container.scrollHeight -
+                container.scrollTop -
+                container.clientHeight <
+              48;
           }}
         >
-          <SvgIcon className="thread-action-icon" kind="pencil" />
-        </button>
-      </header>
-      <div
-        id="chat"
-        ref={chat}
-        onScroll={(event) => {
-          const container = event.currentTarget;
-          shouldStick.current =
-            container.scrollHeight -
-              container.scrollTop -
-              container.clientHeight <
-            48;
-        }}
-      >
-        <Transcript
-          onCopied={() => {
-            setCopyNotice((notice) => notice + 1);
-          }}
-          selected={selected}
-          onSetupOptionChange={(id, checked) => {
-            setSelectedSetupOptions((current) =>
-              checked
-                ? [...new Set([...current, id])]
-                : current.filter((candidate) => candidate !== id)
-            );
-          }}
-          selectedSetupOptions={selectedSetupOptions}
-          setup={setup}
-          streamedItems={transcriptItems}
-          key={setup ? "setup" : (selected?.id ?? "none")}
-        />
-        {selected?.status === "running" && streaming !== true ? (
-          <Processing />
-        ) : null}
-        <div id="notice">{selected?.error ?? ""}</div>
-        <div id="actions">
-          {selected?.status === "error" ? (
-            <button
-              className="action primary"
-              title="Retry"
-              onClick={() => {
-                postMessage({ type: "retry" });
-              }}
-            >
-              Retry
-            </button>
-          ) : null}
-          {selected?.authentication ? (
-            <button
-              className="action primary"
-              title="Authenticate Agent"
-              onClick={() => {
-                postMessage({ type: "authenticate" });
-              }}
-            >
-              {selected.authentication.label}
-            </button>
-          ) : null}
+          <Transcript
+            onCopied={() => {
+              setCopyNotice((notice) => notice + 1);
+            }}
+            selected={selected}
+            onSetupOptionChange={(id, checked) => {
+              setSelectedSetupOptions((current) =>
+                checked
+                  ? [...new Set([...current, id])]
+                  : current.filter((candidate) => candidate !== id)
+              );
+            }}
+            selectedSetupOptions={selectedSetupOptions}
+            setup={setup}
+            streamedItems={transcriptItems}
+            key={setup ? "setup" : (selected?.id ?? "none")}
+          />
+          {processing ? <Processing /> : null}
+          <div id="notice">{selected?.error ?? ""}</div>
+          <div id="actions">
+            {selected?.status === "error" ? (
+              <button
+                className="action primary"
+                title="Retry"
+                onClick={() => {
+                  postMessage({ type: "retry" });
+                }}
+              >
+                Retry
+              </button>
+            ) : null}
+            {selected?.authentication ? (
+              <button
+                className="action primary"
+                title="Authenticate Agent"
+                onClick={() => {
+                  postMessage({ type: "authenticate" });
+                }}
+              >
+                {selected.authentication.label}
+              </button>
+            ) : null}
+          </div>
+          <Interaction interaction={selected?.interaction} />
         </div>
-        <Interaction interaction={selected?.interaction} />
+        <SteeringControl messages={selected?.steering ?? []} />
+        <PlanControl plan={plan} key={plan?.id ?? "no-plan"} />
+        <Composer
+          contextItems={contextItems}
+          copyNotice={copyNotice}
+          selected={selected}
+          setup={Boolean(setup)}
+          setupSelected={selectedSetupOptions}
+          workspace={snapshot.workspace}
+        />
       </div>
-      <SteeringControl messages={selected?.steering ?? []} />
-      <PlanControl plan={plan} key={plan?.id ?? "no-plan"} />
-      <Composer
-        contextItems={contextItems}
-        copyNotice={copyNotice}
-        selected={selected}
-        setup={Boolean(setup)}
-        setupSelected={selectedSetupOptions}
-        workspace={snapshot.workspace}
-      />
+      {isNonEmpty(processingLabel) ? (
+        <div
+          aria-live="polite"
+          className="thread-operation-overlay"
+          role="status"
+        >
+          <span className="thread-operation-spinner" aria-hidden="true" />
+          <span>{processingLabel}</span>
+        </div>
+      ) : null}
     </section>
   );
 };

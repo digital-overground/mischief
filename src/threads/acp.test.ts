@@ -21,12 +21,18 @@ describe("ACP adapter", () => {
     expect(
       sessionOperations({
         _meta: {
+          "magpi-acp/branch-summary": true,
           "magpi-acp/fork-picker": true,
           "magpi-acp/tree-picker": "true",
         },
       })
-    ).toStrictEqual({ forkPicker: true, treePicker: false });
+    ).toStrictEqual({
+      branchSummary: true,
+      forkPicker: true,
+      treePicker: false,
+    });
     expect(sessionOperations({ _meta: null })).toStrictEqual({
+      branchSummary: false,
       forkPicker: false,
       treePicker: false,
     });
@@ -412,6 +418,25 @@ describe("ACP adapter", () => {
     ).toStrictEqual({
       kind: "user",
       text: "@src/projects.ts testing",
+      type: "message",
+    });
+  });
+
+  test("translates MagPi branch summaries into system transcript entries", () => {
+    expect(
+      translateSessionUpdate(
+        {
+          content: {
+            text: "Preserve the adapter decision.",
+            type: "text",
+          },
+          sessionUpdate: "agent_message_chunk",
+        },
+        { "magpi-acp/branch-summary": true }
+      )
+    ).toStrictEqual({
+      kind: "branchSummary",
+      text: "Preserve the adapter decision.",
       type: "message",
     });
   });

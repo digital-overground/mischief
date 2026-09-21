@@ -131,7 +131,7 @@ describe("Footer controls", () => {
     act(() => {
       renderFooter({
         forkSupported: true,
-        sessionOperation: true,
+        sessionOperation: "navigateTree",
         treeNavigationSupported: true,
       });
     });

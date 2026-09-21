@@ -41,6 +41,7 @@ export type ThreadConfigOption =
     };
 
 export interface AgentSessionOperations {
+  branchSummary: boolean;
   forkPicker: boolean;
   treePicker: boolean;
 }
@@ -65,6 +66,11 @@ export interface AgentTreeTarget {
   current: boolean;
 }
 
+export interface AgentTreeNavigationOptions {
+  summarize: boolean;
+  customInstructions?: string;
+}
+
 export interface AgentTreeNavigationResult {
   draft?: string;
 }
@@ -75,6 +81,7 @@ export interface ThreadForkTargets {
 }
 
 export interface ThreadTreeTargets {
+  branchSummarySupported: boolean;
   threadId: string;
   targets: AgentTreeTarget[];
 }
@@ -157,7 +164,7 @@ export interface ThreadCommand {
 export type AgentUpdate =
   | {
       type: "message";
-      kind: "user" | "assistant" | "thought";
+      kind: "user" | "assistant" | "thought" | "system" | "branchSummary";
       text?: string;
       images?: PromptImage[];
       messageId?: string;
@@ -203,7 +210,8 @@ export interface AgentConnection {
   load: (sessionId: string, cwd: string) => Promise<AgentSession>;
   navigateTree: (
     sessionId: string,
-    entryId: string
+    entryId: string,
+    options: AgentTreeNavigationOptions
   ) => Promise<AgentTreeNavigationResult>;
   prompt: (
     sessionId: string,
@@ -247,6 +255,7 @@ export interface PlanEntry {
 }
 
 export type ThreadStatus = "idle" | "running" | "waiting" | "error";
+export type ThreadSessionOperation = "fork" | "navigateTree" | "branchSummary";
 export type ThreadIndicator =
   | "active"
   | "waiting"
@@ -263,7 +272,8 @@ export interface TranscriptItem {
     | "tool"
     | "plan"
     | "completedPlan"
-    | "system";
+    | "system"
+    | "branchSummary";
   text?: string;
   allCompleted?: boolean;
   planEntries?: PlanEntry[];
@@ -357,7 +367,7 @@ export interface ThreadDetail {
   drafts: string[];
   forkSupported?: boolean;
   treeNavigationSupported?: boolean;
-  sessionOperation?: boolean;
+  sessionOperation?: ThreadSessionOperation;
   steering: SteeringMessage[];
 }
 
@@ -367,12 +377,18 @@ export interface ThreadsSnapshot {
   selected?: ThreadDetail;
 }
 
-export interface ThreadsChange {
-  type: "transcript";
-  threadId: string;
-  item: TranscriptItem;
-  streaming: boolean;
-}
+export type ThreadsChange =
+  | {
+      type: "transcript";
+      threadId: string;
+      item: TranscriptItem;
+      streaming: boolean;
+    }
+  | {
+      type: "sessionOperation";
+      threadId: string;
+      operation: ThreadSessionOperation;
+    };
 
 interface StoredThread {
   id: string;
@@ -403,7 +419,7 @@ interface Runtime {
   drafts: string[];
   pending: { id: string; text: string; images: PromptImage[] }[];
   retryImages?: PromptImage[];
-  sessionOperation?: "fork" | "navigateTree";
+  sessionOperation?: ThreadSessionOperation;
   setup?: Promise<string>;
   registration?: PromiseLike<void>;
   interaction?: ThreadInteraction;
@@ -1051,12 +1067,17 @@ export class Threads {
       "navigateTree"
     );
     return {
+      branchSummarySupported: runtime.operations.branchSummary,
       targets: await runtime.connection.treeTargets(record.sessionId),
       threadId: record.id,
     };
   }
 
-  async navigateTree(threadId: string, target: AgentTreeTarget): Promise<void> {
+  async navigateTree(
+    threadId: string,
+    target: AgentTreeTarget,
+    options?: AgentTreeNavigationOptions
+  ): Promise<void> {
     const { record, runtime } = this.requireSessionOperationContext(
       threadId,
       "navigateTree"
@@ -1064,12 +1085,23 @@ export class Threads {
     if (!target.entryId.trim()) {
       throw new Error("Invalid tree target");
     }
-    runtime.sessionOperation = "navigateTree";
-    this.emit();
+    const navigationOptions = options ?? { summarize: false };
+    if (navigationOptions.summarize && !runtime.operations.branchSummary) {
+      throw new Error("Agent does not support branch summaries");
+    }
+    runtime.sessionOperation = navigationOptions.summarize
+      ? "branchSummary"
+      : "navigateTree";
+    this.emit({
+      operation: runtime.sessionOperation,
+      threadId,
+      type: "sessionOperation",
+    });
     try {
       const result = await runtime.connection.navigateTree(
         record.sessionId,
-        target.entryId
+        target.entryId,
+        navigationOptions
       );
       runtime.items = [];
       record.updatedAt = new Date().toISOString();
@@ -1218,7 +1250,9 @@ export class Threads {
         ? { treeNavigationSupported: true }
         : {}),
       id: record.id,
-      ...(runtime?.sessionOperation ? { sessionOperation: true } : {}),
+      ...(runtime?.sessionOperation
+        ? { sessionOperation: runtime.sessionOperation }
+        : {}),
       ...(runtime?.interaction ? { interaction: runtime.interaction } : {}),
       items,
       name: record.name,
@@ -1372,7 +1406,11 @@ export class Threads {
       }),
       drafts: [],
       items: [],
-      operations: { forkPicker: false, treePicker: false },
+      operations: {
+        branchSummary: false,
+        forkPicker: false,
+        treePicker: false,
+      },
       pending: [],
       status: record.status,
       streaming: false,
@@ -1478,6 +1516,12 @@ export class Threads {
       if (changed) {
         void this.persist(record);
       }
+    }
+    if (
+      runtime.sessionOperation === "navigateTree" ||
+      runtime.sessionOperation === "branchSummary"
+    ) {
+      return;
     }
     this.emit(
       item && !archivedPlan
