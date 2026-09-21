@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { isNonEmpty } from "../present";
+import { isNonEmpty, isRecord } from "../present";
 
 const MAX_PATH_LENGTH = 32_768;
 const MAX_RECORD_BYTES = 8 * 1024 * 1024;
@@ -113,9 +113,6 @@ const EMPTY_SNAPSHOT: ProfileDatabaseSnapshot = Object.freeze({
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const isAbsolutePath = (value: unknown): value is string =>
   typeof value === "string" &&

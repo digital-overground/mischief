@@ -1,6 +1,6 @@
 # Profile-wide file database
 
-**Status:** Proposed
+**Status:** Implemented
 
 ## Goal
 

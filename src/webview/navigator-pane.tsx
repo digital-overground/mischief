@@ -25,29 +25,6 @@ const IconButton = ({
   </button>
 );
 
-const visibleColor = (color: string): string => {
-  let opaque = color;
-  if (color.length === 5) {
-    opaque = color.slice(0, -1);
-  } else if (color.length === 9) {
-    opaque = color.slice(0, -2);
-  }
-  const channels = opaque
-    .match(/[\da-f]{2}/giu)
-    ?.map((channel) => Number.parseInt(channel, 16));
-  const brightest = Math.max(...(channels ?? []));
-  if (!channels || channels.length !== 3 || brightest >= 160) {
-    return opaque;
-  }
-  if (brightest === 0) {
-    return "#a0a0a0";
-  }
-  return `#${channels
-    .map((channel) => Math.round((channel * 160) / brightest))
-    .map((channel) => channel.toString(16).padStart(2, "0"))
-    .join("")}`;
-};
-
 export const indicatorLabel = (kind: ThreadIndicator): string => {
   if (kind === "active") {
     return "Agent active";
@@ -137,10 +114,7 @@ const WorkspaceNode = ({
             <span
               aria-hidden="true"
               className="workspace-color"
-              style={{
-                backgroundColor: workspace.color,
-                boxShadow: `0 0 0 1px ${visibleColor(workspace.color)}`,
-              }}
+              style={{ backgroundColor: workspace.color }}
             />
           ) : null}
           <span className="workspace-label">

@@ -389,12 +389,10 @@ describe("threads module", () => {
 
     expect(threads.snapshot().threads).toStrictEqual([
       {
-        createdAt,
         id: "10000000-0000-4000-8000-000000000001",
         indicator: "waiting",
         name: "Waiting",
         needsAttention: true,
-        status: "waiting",
         updatedAt: createdAt,
         workspace: "/workspace",
       },
@@ -553,7 +551,7 @@ describe("threads module", () => {
     await prompting;
 
     expect(threads.snapshot()).toMatchObject({
-      threads: [{ status: "idle", workspace: "/workspace" }],
+      threads: [{ indicator: "idle", workspace: "/workspace" }],
     });
   });
 
@@ -799,7 +797,10 @@ describe("threads module", () => {
     });
     expect(threads.snapshot().threads).toStrictEqual(
       expect.arrayContaining([
-        expect.objectContaining({ name: "Fix tests (fork)", status: "error" }),
+        expect.objectContaining({
+          indicator: "error",
+          name: "Fix tests (fork)",
+        }),
       ])
     );
   });
@@ -861,7 +862,7 @@ describe("threads module", () => {
           },
         ],
       },
-      threads: [{ createdAt: source.createdAt, id: source.id }],
+      threads: [{ id: source.id }],
     });
   });
 
@@ -1306,7 +1307,6 @@ describe("threads module", () => {
         {
           indicator: "waiting",
           needsAttention: true,
-          status: "waiting",
         },
       ],
     });
@@ -1323,7 +1323,7 @@ describe("threads module", () => {
     expect(database.snapshot().threads[0]?.status).toBe("idle");
     expect(threads.snapshot()).toMatchObject({
       selected: { status: "idle" },
-      threads: [{ indicator: "idle", needsAttention: false, status: "idle" }],
+      threads: [{ indicator: "idle", needsAttention: false }],
     });
   });
 
@@ -1467,7 +1467,7 @@ describe("threads module", () => {
 
     expect(threads.snapshot()).toMatchObject({
       selected: { error: "Agent unavailable", status: "error" },
-      threads: [{ status: "error" }],
+      threads: [{ indicator: "error" }],
     });
 
     const recovered = createThreads(new FakeAgent().factory);
@@ -1499,7 +1499,7 @@ describe("threads module", () => {
         name: "Fix tests",
         status: "idle",
       },
-      threads: [{ name: "Fix tests", status: "idle" }],
+      threads: [{ name: "Fix tests" }],
       workspace: "/workspace",
     });
   });

@@ -12,7 +12,6 @@ import { isDefined, isNonEmpty } from "../../../../present";
 import type { PromptImage, ThreadCommand } from "../../../../threads/threads";
 import { postMessage } from "../../../bridge";
 import type { RenderedThreadDetail } from "../../../protocol";
-import { Toast } from "../../../toast";
 import { FooterControls } from "./controls/footer-controls";
 
 interface ComposerMatch {
@@ -310,7 +309,9 @@ const ComposerView = ({
   return (
     <footer>
       {copyNotice ? (
-        <Toast key={copyNotice} message="copied to clipboard" />
+        <div className="toast" role="status" key={copyNotice}>
+          copied to clipboard
+        </div>
       ) : null}
       <textarea
         id="composer"

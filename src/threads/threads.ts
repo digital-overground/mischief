@@ -13,7 +13,6 @@ const STREAMING_IDLE_MS = 300;
 export interface ThreadConfigChoice {
   value: string;
   name: string;
-  description?: string;
 }
 
 export interface ThreadConfigGroup {
@@ -26,7 +25,6 @@ export type ThreadConfigOption =
       id: string;
       name: string;
       description?: string;
-      category?: string;
       type: "select";
       currentValue: string;
       options: (ThreadConfigChoice | ThreadConfigGroup)[];
@@ -35,7 +33,6 @@ export type ThreadConfigOption =
       id: string;
       name: string;
       description?: string;
-      category?: string;
       type: "boolean";
       currentValue: boolean;
     };
@@ -293,10 +290,8 @@ export interface ThreadSummary {
   id: string;
   workspace: string;
   name: string;
-  status: ThreadStatus;
   indicator: ThreadIndicator;
   needsAttention: boolean;
-  createdAt: string;
   updatedAt: string;
 }
 
@@ -451,11 +446,17 @@ const hasSessionId = (
 ): record is StoredThread & { sessionId: string } =>
   isNonEmpty(record?.sessionId);
 
-// These helpers are assigned after the class declaration.
-// oxlint-disable prefer-const
-let errorMessage: (error: unknown) => string;
-let updateQueue: (runtime: Runtime) => void;
-// oxlint-enable prefer-const
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+const updateQueue = (runtime: Runtime): void => {
+  for (const [index, pending] of runtime.pending.entries()) {
+    const item = runtime.items.find((candidate) => candidate.id === pending.id);
+    if (item) {
+      item.queued = index || undefined;
+    }
+  }
+};
 
 export class Threads {
   private readonly createConnection: AgentConnectionFactory;
@@ -1183,12 +1184,10 @@ export class Threads {
         const status = this.runtimes.get(record.id)?.status ?? record.status;
         const indicator = indicatorFor(status, Boolean(record.unread));
         return {
-          createdAt: record.createdAt,
           id: record.id,
           indicator,
           name: record.name,
           needsAttention: indicatorNeedsAttention(indicator),
-          status,
           updatedAt: record.updatedAt,
           workspace: record.workspace,
         };
@@ -1700,16 +1699,3 @@ export class Threads {
     }
   }
 }
-
-updateQueue = (runtime: Runtime): void => {
-  for (const [index, pending] of runtime.pending.entries()) {
-    const item = runtime.items.find((candidate) => candidate.id === pending.id);
-    if (!item) {
-      continue;
-    }
-    item.queued = index || undefined;
-  }
-};
-
-errorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);

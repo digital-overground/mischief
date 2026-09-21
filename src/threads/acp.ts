@@ -156,14 +156,7 @@ const stringify = (value: unknown): string => {
 const configChoice = (option: {
   value: string;
   name: string;
-  description?: string | null;
-}): ThreadConfigChoice => ({
-  ...(option.description !== undefined && option.description !== null
-    ? { description: option.description }
-    : {}),
-  name: option.name,
-  value: option.value,
-});
+}): ThreadConfigChoice => ({ name: option.name, value: option.value });
 
 const configOptions = (
   options: SessionConfigOption[] | null | undefined
@@ -172,9 +165,6 @@ const configOptions = (
     const common = {
       ...(option.description !== undefined && option.description !== null
         ? { description: option.description }
-        : {}),
-      ...(option.category !== undefined && option.category !== null
-        ? { category: option.category }
         : {}),
       id: option.id,
       name: option.name,

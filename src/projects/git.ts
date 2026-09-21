@@ -29,9 +29,7 @@ export interface GitSourceBranch {
 }
 
 const run = async (cwd: string, ...args: string[]): Promise<string> => {
-  const { stdout } = await exec("git", ["-C", cwd, ...args], {
-    encoding: "utf-8",
-  });
+  const { stdout } = await exec("git", ["-C", cwd, ...args]);
   return stdout.trim();
 };
 

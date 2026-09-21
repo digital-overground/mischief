@@ -22,7 +22,7 @@ export const listOpenGitHubIssues = async (
         "--json",
         "number,title,url",
       ],
-      { cwd: projectRoot, encoding: "utf-8" }
+      { cwd: projectRoot }
     ));
   } catch (error) {
     const failure = isRecord(error) ? error : {};

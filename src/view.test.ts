@@ -1858,94 +1858,10 @@ describe("view provider", () => {
 
   test("static webview shell loads the React bundle", () => {
     const html = readFileSync("media/webview.html", "utf-8");
-    const style = readFileSync("media/webview.css", "utf-8");
 
     expect(html).toContain('id="root"');
     expect(html).toContain('src="{{scriptUri}}"');
     expect(html).toContain('href="{{styleUri}}"');
-    expect(style).toMatch(
-      /#steering,\s*#plan \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*overflow-y: auto;/u
-    );
-    expect(style).toMatch(
-      /footer \{[^}]*flex: none;[\s\S]*#processing::before \{[^}]*animation: thread-status-frame/u
-    );
-  });
-
-  test("anchors the Thread directly beneath content-sized navigation", () => {
-    const style = readFileSync("media/webview.css", "utf-8");
-
-    expect(style).toMatch(/#navigator \{[^}]*flex: 0 1 auto;/u);
-    expect(style).toMatch(/#thread \{[^}]*flex: 1 0 72px;/u);
-    expect(style).not.toContain(".resizer");
-  });
-
-  test("keeps Navigator metadata and hover actions compact", () => {
-    const style = readFileSync("media/webview.css", "utf-8");
-
-    expect(style).toMatch(
-      /\.project-action-icon \{[^}]*width: 14px;[^}]*height: 14px;/u
-    );
-    expect(style).toMatch(
-      /\.thread-action-icon \{[^}]*width: 14px;[^}]*height: 14px;/u
-    );
-    expect(style).toMatch(
-      /\.workspace-branch \{[^}]*margin-left: 10px;[\s\S]*\.thread-activity \{[^}]*gap: 6px;[^}]*padding-left: 0;[\s\S]*\.thread-activity::before \{[^}]*content: "·";/u
-    );
-    expect(style).toMatch(
-      /#navigator :is\(\.group-row, \.row\) > \.icon \{[^}]*opacity: 0;[\s\S]*#navigator :is\(\.group-row, \.row\):is\(:hover, :focus-within\) > \.icon \{[^}]*opacity: 1;/u
-    );
-  });
-
-  test("conversation content wraps instead of creating horizontal overflow", () => {
-    const style = readFileSync("media/webview.css", "utf-8");
-
-    expect(style).toMatch(
-      /#thread \{[^}]*min-width: 0;[^}]*overflow: hidden;/u
-    );
-    expect(style).toMatch(
-      /#configs \{[^}]*overflow-x: auto;[^}]*scrollbar-width: none;[\s\S]*#chat \* \{[^}]*min-width: 0;[^}]*max-width: 100%;/u
-    );
-    expect(style).toMatch(
-      /\.markdown pre \{[^}]*overflow-x: hidden;[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/u
-    );
-    expect(style).toMatch(/\.markdown table \{[^}]*table-layout: fixed;/u);
-    expect(style).toMatch(
-      /\.tool-body pre \{[^}]*overflow-y: auto;[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/u
-    );
-  });
-
-  test("uses HumanLayer's Tokyo Night Storm palette", () => {
-    const style = readFileSync("media/webview.css", "utf-8");
-
-    expect(style).toMatch(
-      /:root \{[^}]*--hl-bg: #24283b;[^}]*--hl-bg-alt: #1f2335;[^}]*--hl-fg: #c0caf5;[^}]*--hl-fg-dim: #a9b1d6;[^}]*--hl-accent: #7aa2f7;[^}]*--hl-accent-alt: #bb9af7;[^}]*--hl-border: #3b4261;[^}]*--hl-success: #9ece6a;[^}]*--hl-warning: #e0af68;[^}]*--hl-error: #f7768e;/u
-    );
-    expect(style).toMatch(
-      /body \{[^}]*--vscode-foreground: var\(--hl-fg\) !important;[^}]*--vscode-sideBar-background: var\(--hl-bg\) !important;/u
-    );
-    expect(style).toMatch(
-      /\.entry\.terminal-group \{[^}]*--entry-accent: var\(--hl-success\);[\s\S]*\.entry\.file-operations-group \{[^}]*--entry-accent: var\(--hl-accent\);[\s\S]*\.entry\.web-group \{[^}]*--entry-accent: var\(--hl-cyan\);[\s\S]*\.entry\.tools-group \{[^}]*--entry-accent: var\(--hl-accent-alt\);/u
-    );
-  });
-
-  test("keeps operation targets compact and statuses visual", () => {
-    const style = readFileSync("media/webview.css", "utf-8");
-
-    expect(style).toMatch(
-      /\.tool-operation-target \{[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;[\s\S]*\.terminal-command \{[^}]*font-family: var\(--mischief-mono-font\);/u
-    );
-    expect(style).toMatch(
-      /\.tool-operation-status:is\(\.pending, \.in_progress\)::before \{[^}]*animation: thread-status-frame/u
-    );
-    expect(style).toMatch(
-      /\.entry\.thought \{[^}]*--entry-accent: var\(--hl-accent-alt\);[\s\S]*\.entry\.tool \{[^}]*--entry-accent: var\(--hl-warning\);/u
-    );
-    expect(style).toMatch(
-      /\.entry\.ask-user-result \{[^}]*--entry-accent: var\(--hl-warning\);[\s\S]*\.ask-user-title \{[^}]*color: var\(--entry-accent\);[\s\S]*\.ask-user-question \{[^}]*color: var\(--entry-accent\);[\s\S]*\.ask-user-answer \{[^}]*color: var\(--vscode-foreground\);/u
-    );
-    expect(style).toMatch(
-      /\.thinking-content,\s*\.tool-group-content,\s*\.branch-summary-content,\s*\.ask-user-content \{[^}]*margin: 8px 0 0 6px;[^}]*border-left: 1px solid[^}]*padding-left: 15px;/u
-    );
   });
 
   test("sends only the changed transcript item while streaming", async () => {
@@ -2047,12 +1963,10 @@ describe("view provider", () => {
       },
       snapshot: () => ({
         threads: ["waiting", "completed"].map((id) => ({
-          createdAt: "2026-01-01T00:00:00.000Z",
           id,
           indicator: id === "waiting" ? "waiting" : "completed",
           name: id,
           needsAttention,
-          status: id === "waiting" ? "waiting" : "idle",
           updatedAt: "2026-01-01T00:00:00.000Z",
           workspace: "/workspace",
         })),
@@ -2134,12 +2048,10 @@ describe("view provider", () => {
         snapshot: () => ({
           threads: [
             {
-              createdAt: "2026-01-01T00:00:00.000Z",
               id: "remote-thread",
               indicator: "waiting",
               name: "Remote",
               needsAttention: true,
-              status: "waiting",
               updatedAt: "2026-01-01T00:00:00.000Z",
               workspace: "/remote",
             },

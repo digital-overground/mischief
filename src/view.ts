@@ -141,6 +141,30 @@ const historyTime = (value: string, now = Date.now()): string => {
   return days <= 5 ? `${days}d` : new Date(value).toLocaleDateString();
 };
 
+const loadWithQuickPick = async <Value>(
+  title: string,
+  placeholder: string,
+  load: () => Promise<Value>
+): Promise<Value | undefined> => {
+  const picker = vscode.window.createQuickPick();
+  picker.busy = true;
+  picker.placeholder = placeholder;
+  picker.title = title;
+  let cancelled = false;
+  const hidden = picker.onDidHide(() => {
+    cancelled = true;
+  });
+  picker.show();
+  try {
+    const value = await load();
+    return cancelled ? undefined : value;
+  } finally {
+    hidden.dispose();
+    picker.hide();
+    picker.dispose();
+  }
+};
+
 const interactionResponse = (
   value: unknown
 ): ThreadInteractionResponse | undefined => {
@@ -780,24 +804,12 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   private async showForkThread(): Promise<void> {
-    const loading = vscode.window.createQuickPick();
-    loading.busy = true;
-    loading.placeholder = "Loading fork points…";
-    loading.title = "Fork Thread";
-    let cancelled = false;
-    const hidden = loading.onDidHide(() => {
-      cancelled = true;
-    });
-    loading.show();
-    let context;
-    try {
-      context = await this.threads.forkTargets();
-    } finally {
-      hidden.dispose();
-      loading.hide();
-      loading.dispose();
-    }
-    if (cancelled) {
+    const context = await loadWithQuickPick(
+      "Fork Thread",
+      "Loading fork points…",
+      async () => await this.threads.forkTargets()
+    );
+    if (!context) {
       return;
     }
     if (!context.targets.length) {
@@ -822,24 +834,12 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   private async showNavigateThreadTree(): Promise<void> {
-    const loading = vscode.window.createQuickPick();
-    loading.busy = true;
-    loading.placeholder = "Loading Thread tree…";
-    loading.title = "Navigate Thread Tree";
-    let cancelled = false;
-    const hidden = loading.onDidHide(() => {
-      cancelled = true;
-    });
-    loading.show();
-    let context;
-    try {
-      context = await this.threads.treeTargets();
-    } finally {
-      hidden.dispose();
-      loading.hide();
-      loading.dispose();
-    }
-    if (cancelled) {
+    const context = await loadWithQuickPick(
+      "Navigate Thread Tree",
+      "Loading Thread tree…",
+      async () => await this.threads.treeTargets()
+    );
+    if (!context) {
       return;
     }
     if (!context.targets.length) {
@@ -924,20 +924,12 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   private async showThreadHistory(): Promise<void> {
-    const loading = vscode.window.createQuickPick();
-    loading.busy = true;
-    loading.placeholder = "Loading previous Threads…";
-    loading.title = "Thread History";
-    let cancelled = false;
-    const hidden = loading.onDidHide(() => {
-      cancelled = true;
-    });
-    loading.show();
-    const entries = await this.threads.history();
-    hidden.dispose();
-    loading.hide();
-    loading.dispose();
-    if (cancelled) {
+    const entries = await loadWithQuickPick(
+      "Thread History",
+      "Loading previous Threads…",
+      async () => await this.threads.history()
+    );
+    if (!entries) {
       return;
     }
     if (!entries.length) {
