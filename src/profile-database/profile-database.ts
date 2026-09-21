@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { isNonEmpty } from "../present";
+
 const MAX_PATH_LENGTH = 32_768;
 const MAX_RECORD_BYTES = 8 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 1_000_000;
@@ -191,7 +193,9 @@ const isDatabaseThread = (value: unknown): value is DatabaseThread =>
 
 const copyWorkspace = (workspace: DatabaseWorkspace): DatabaseWorkspace => ({
   path: workspace.path,
-  ...(workspace.projectRoot ? { projectRoot: workspace.projectRoot } : {}),
+  ...(isNonEmpty(workspace.projectRoot)
+    ? { projectRoot: workspace.projectRoot }
+    : {}),
   status: workspace.status,
 });
 
@@ -223,7 +227,7 @@ const copyThread = (thread: DatabaseThread): DatabaseThread => ({
 });
 
 const copySelection = (selection: DatabaseSelection): DatabaseSelection => ({
-  ...(selection.threadId ? { threadId: selection.threadId } : {}),
+  ...(isNonEmpty(selection.threadId) ? { threadId: selection.threadId } : {}),
   workspace: selection.workspace,
 });
 
@@ -250,7 +254,9 @@ const parseWorkspaceRecord = (source: string): WorkspaceRecord | undefined => {
   }
   return {
     path: value.path,
-    ...(value.projectRoot ? { projectRoot: value.projectRoot } : {}),
+    ...(isNonEmpty(value.projectRoot)
+      ? { projectRoot: value.projectRoot }
+      : {}),
     status: value.status,
     version: 1,
     writtenAt: Number(value.writtenAt),
@@ -281,7 +287,11 @@ const parsePreviousThread = (value: unknown): DatabaseThread | undefined => {
   }
   const candidate = {
     ...value,
-    status: value.error ? "error" : "idle",
+    status: isNonEmpty(
+      typeof value.error === "string" ? value.error : undefined
+    )
+      ? "error"
+      : "idle",
   };
   return isDatabaseThread(candidate) ? copyThread(candidate) : undefined;
 };
@@ -413,7 +423,7 @@ export class ProfileDatabase {
     const selectionsDirectory = path.join(databaseDirectory, "selections");
     await Promise.all(
       [workspacesDirectory, threadsDirectory, selectionsDirectory].map(
-        (directory) => mkdir(directory, { recursive: true })
+        async (directory) => await mkdir(directory, { recursive: true })
       )
     );
     const database = new ProfileDatabase(
@@ -451,7 +461,7 @@ export class ProfileDatabase {
       }
       await this.putWorkspace({
         path: change.workspace.path,
-        ...(change.workspace.projectRoot
+        ...(isNonEmpty(change.workspace.projectRoot)
           ? { projectRoot: change.workspace.projectRoot }
           : {}),
         status: "active",
@@ -510,13 +520,13 @@ export class ProfileDatabase {
     if (change.threadId !== undefined && !UUID_PATTERN.test(change.threadId)) {
       throw new TypeError("Selected Thread ID is invalid");
     }
-    if (!change.threadId) {
+    if (!isNonEmpty(change.threadId)) {
       this.requireThreadOwner(change.workspace);
     }
-    const thread = change.threadId
+    const thread = isNonEmpty(change.threadId)
       ? this.threadRecords.get(change.threadId)
       : undefined;
-    if (change.threadId && thread?.workspace !== change.workspace) {
+    if (isNonEmpty(change.threadId) && thread?.workspace !== change.workspace) {
       throw new Error("Selected Thread does not belong to the Workspace");
     }
     await this.putSelection(change);
@@ -534,7 +544,11 @@ export class ProfileDatabase {
           .map((thread) => [thread.id, thread])
       ).values(),
     ].filter((thread) => !this.threadRecords.has(thread.id));
-    await Promise.all(threads.map((thread) => this.putThread(thread)));
+    await Promise.all(
+      threads.map(async (thread) => {
+        await this.putThread(thread);
+      })
+    );
 
     if (!isRecord(value.selected)) {
       return;
@@ -549,7 +563,9 @@ export class ProfileDatabase {
           : []
     );
     await Promise.all(
-      selections.map((selection) => this.putSelection(selection))
+      selections.map(async (selection) => {
+        await this.putSelection(selection);
+      })
     );
   }
 
@@ -559,7 +575,7 @@ export class ProfileDatabase {
       this.pollTimer = undefined;
     }
     this.listeners.clear();
-    if (this.currentWorkspace) {
+    if (isNonEmpty(this.currentWorkspace)) {
       try {
         await this.apply({
           path: this.currentWorkspace,
@@ -648,10 +664,10 @@ export class ProfileDatabase {
       const filename = path.join(directory, entry.name);
       // oxlint-disable-next-line no-await-in-loop -- see polling ceiling above
       const record = parse(await readBounded(filename));
-      if (record) {
-        records.push(record);
-      } else {
+      if (record === undefined) {
         this.log(`Ignoring invalid ${name} record: ${filename}`);
+      } else {
+        records.push(record);
       }
     }
     return records;

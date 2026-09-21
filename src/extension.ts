@@ -4,6 +4,7 @@ import path from "node:path";
 
 import * as vscode from "vscode";
 
+import { isNonEmpty } from "./present";
 import { ProfileDatabase } from "./profile-database/profile-database";
 import { locateWorkspace, Projects } from "./projects/projects";
 import {
@@ -36,7 +37,7 @@ const agentLaunch = (context: vscode.ExtensionContext): AgentLaunch => {
     .getConfiguration("mischief")
     .get<string>("magpiAcpPath")
     ?.trim();
-  if (configured) {
+  if (isNonEmpty(configured)) {
     return configured.endsWith(".js")
       ? { args: [configured], command: "node", env }
       : { args: [], command: configured, env };
@@ -135,13 +136,13 @@ const softwareSetup = (
       }
       if (installingAddons) {
         installingAddons = false;
-        return;
+        return prompt();
       }
 
       await storage.update(ADDONS_OFFERED_KEY, true);
       const command = addOnInstallCommand(selected);
-      if (!command) {
-        return;
+      if (!isNonEmpty(command)) {
+        return prompt();
       }
       installingAddons = true;
       const terminal = vscode.window.createTerminal("Mischief Setup");
@@ -158,8 +159,12 @@ export const activate = async (
 ): Promise<void> => {
   const output = vscode.window.createOutputChannel("Mischief");
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  const workspace = folder ? await locateWorkspace(folder) : undefined;
-  const log = (message: string): void => output.appendLine(message);
+  const workspace = isNonEmpty(folder)
+    ? await locateWorkspace(folder)
+    : undefined;
+  const log = (message: string): void => {
+    output.appendLine(message);
+  };
   database = await ProfileDatabase.open({
     currentWorkspace: workspace?.path,
     instanceId: randomUUID(),
@@ -194,22 +199,24 @@ export const activate = async (
   registerMischiefView(context, view);
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("mischief.addWorkspace", () =>
-      view.addWorkspace()
-    ),
-    vscode.commands.registerCommand("mischief.refresh", () => view.refresh()),
-    vscode.commands.registerCommand("mischief.expandAll", () =>
-      view.setAllExpanded(true)
-    ),
-    vscode.commands.registerCommand("mischief.collapseAll", () =>
-      view.setAllExpanded(false)
-    ),
-    vscode.commands.registerCommand("mischief.newThread", () =>
-      view.newThread()
-    ),
-    vscode.commands.registerCommand("mischief.settings", () =>
-      view.showSettings()
-    ),
+    vscode.commands.registerCommand("mischief.addWorkspace", async () => {
+      await view.addWorkspace();
+    }),
+    vscode.commands.registerCommand("mischief.refresh", async () => {
+      await view.refresh();
+    }),
+    vscode.commands.registerCommand("mischief.expandAll", () => {
+      view.setAllExpanded(true);
+    }),
+    vscode.commands.registerCommand("mischief.collapseAll", () => {
+      view.setAllExpanded(false);
+    }),
+    vscode.commands.registerCommand("mischief.newThread", async () => {
+      await view.newThread();
+    }),
+    vscode.commands.registerCommand("mischief.settings", () => {
+      view.showSettings();
+    }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration("mischief.fontFamily")) {
         view.configurationChanged();

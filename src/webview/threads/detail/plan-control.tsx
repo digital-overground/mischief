@@ -1,3 +1,4 @@
+import { isNonZero } from "../../../present";
 import { postMessage } from "../../bridge";
 import { Icon } from "../../icon";
 import type { RenderedTranscriptItem } from "../../protocol";
@@ -17,9 +18,15 @@ export const PlanControl = ({
           <Icon
             className="plan-icon"
             kind="plan"
-            title={plan.title || "Plan"}
+            title={
+              plan.title !== undefined && plan.title.length > 0
+                ? plan.title
+                : "Plan"
+            }
           />
-          {plan.title || "Plan"}
+          {plan.title !== undefined && plan.title.length > 0
+            ? plan.title
+            : "Plan"}
         </span>
         <button
           className="icon"
@@ -34,7 +41,7 @@ export const PlanControl = ({
           Clear
         </button>
       </summary>
-      {plan.planEntries?.length ? (
+      {isNonZero(plan.planEntries?.length) ? (
         <ol id="plan-body">
           {plan.planEntries.map((entry, index) => (
             <li className={`plan-task ${entry.status}`} key={index}>

@@ -11,7 +11,6 @@ type IconKind =
   | "maximize"
   | "minimize"
   | "fork"
-  | "rollback"
   | "circleCheck"
   | "eye"
   | "externalLink"
@@ -213,12 +212,6 @@ const paths: Record<IconKind, React.ReactNode> = {
       <circle cx="12" cy="12" r="10" />
       <path d="M9.1 9a3 3 0 1 1 5.8 1c0 2-3 3-3 3" />
       <path d="M12 17h.01" />
-    </>
-  ),
-  rollback: (
-    <>
-      <path d="m9 14-5-5 5-5" />
-      <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
     </>
   ),
   save: (
