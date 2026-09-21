@@ -6,14 +6,16 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
-  ClientSideConnection,
+  client,
   CreateElicitationRequest as CreateElicitationRequestGuard,
   ElicitationPropertySchema as ElicitationPropertySchemaGuard,
+  methods,
   MultiSelectItems,
   ndJsonStream,
 } from "@agentclientprotocol/sdk";
 import type {
-  Client,
+  ClientConnection,
+  ClientContext,
   ContentBlock,
   CreateElicitationRequest,
   CreateElicitationResponse,
@@ -952,8 +954,7 @@ export const decodeTreeNavigationResult = (
 
 class AcpConnection implements AgentConnection {
   private child?: ChildProcessWithoutNullStreams;
-  // oxlint-disable-next-line typescript/no-deprecated -- migration intentionally retains the ACP v1 compatibility wrapper
-  private connection?: ClientSideConnection;
+  private connection?: ClientConnection;
   private cwd?: string;
   private starting?: Promise<void>;
   private disposed = false;
@@ -980,10 +981,13 @@ class AcpConnection implements AgentConnection {
     this.cwd = cwd;
     return await this.call(async () => {
       await this.start();
-      const session = await this.requireConnection().newSession({
-        cwd,
-        mcpServers: [],
-      });
+      const session = await this.requireAgent().request(
+        methods.agent.session.new,
+        {
+          cwd,
+          mcpServers: [],
+        }
+      );
       return {
         configOptions: configOptions(session.configOptions),
         operations: this.operations,
@@ -995,12 +999,15 @@ class AcpConnection implements AgentConnection {
   async fork(sessionId: string, cwd: string, entryId: string) {
     return await this.call(async () => {
       await this.start();
-      const session = await this.requireConnection().unstable_forkSession({
-        _meta: { [FORK_ENTRY_ID_META]: entryId },
-        cwd,
-        mcpServers: [],
-        sessionId,
-      });
+      const session = await this.requireAgent().request(
+        methods.agent.session.fork,
+        {
+          _meta: { [FORK_ENTRY_ID_META]: entryId },
+          cwd,
+          mcpServers: [],
+          sessionId,
+        }
+      );
       return {
         configOptions: configOptions(session.configOptions),
         operations: this.operations,
@@ -1012,7 +1019,7 @@ class AcpConnection implements AgentConnection {
   async forkTargets(sessionId: string) {
     return await this.call(async () => {
       await this.start();
-      const response = await this.requireConnection().request<
+      const response = await this.requireAgent().request<
         unknown,
         { sessionId: string }
       >(FORK_MESSAGES_METHOD, { sessionId });
@@ -1028,10 +1035,13 @@ class AcpConnection implements AgentConnection {
       do {
         // Pagination is cursor-dependent and must remain sequential.
         // oxlint-disable-next-line no-await-in-loop
-        const page = await this.requireConnection().listSessions({
-          cwd,
-          ...(isNonEmpty(cursor) ? { cursor } : {}),
-        });
+        const page = await this.requireAgent().request(
+          methods.agent.session.list,
+          {
+            cwd,
+            ...(isNonEmpty(cursor) ? { cursor } : {}),
+          }
+        );
         sessions.push(
           ...page.sessions
             .filter((session) => session.cwd === cwd)
@@ -1056,11 +1066,14 @@ class AcpConnection implements AgentConnection {
     this.cwd = cwd;
     return await this.call(async () => {
       await this.start();
-      const session = await this.requireConnection().loadSession({
-        cwd,
-        mcpServers: [],
-        sessionId,
-      });
+      const session = await this.requireAgent().request(
+        methods.agent.session.load,
+        {
+          cwd,
+          mcpServers: [],
+          sessionId,
+        }
+      );
       return {
         configOptions: configOptions(session.configOptions),
         operations: this.operations,
@@ -1076,7 +1089,7 @@ class AcpConnection implements AgentConnection {
   ) {
     return await this.call(async () => {
       await this.start();
-      const response = await this.requireConnection().request<
+      const response = await this.requireAgent().request<
         unknown,
         AgentTreeNavigationOptions & { entryId: string; sessionId: string }
       >(NAVIGATE_TREE_METHOD, { ...options, entryId, sessionId });
@@ -1087,7 +1100,7 @@ class AcpConnection implements AgentConnection {
   async treeTargets(sessionId: string) {
     return await this.call(async () => {
       await this.start();
-      const response = await this.requireConnection().request<
+      const response = await this.requireAgent().request<
         unknown,
         { sessionId: string }
       >(TREE_METHOD, { sessionId });
@@ -1098,10 +1111,13 @@ class AcpConnection implements AgentConnection {
   async prompt(sessionId: string, text: string, images: PromptImage[]) {
     return await this.call(async () => {
       await this.start();
-      const response = await this.requireConnection().prompt({
-        prompt: await promptContent(this.cwd, text, images),
-        sessionId,
-      });
+      const response = await this.requireAgent().request(
+        methods.agent.session.prompt,
+        {
+          prompt: await promptContent(this.cwd, text, images),
+          sessionId,
+        }
+      );
       return {
         stopReason:
           response.stopReason === "cancelled" ? "cancelled" : "completed",
@@ -1112,7 +1128,9 @@ class AcpConnection implements AgentConnection {
   async cancel(sessionId: string): Promise<void> {
     await this.call(async () => {
       await this.start();
-      await this.requireConnection().cancel({ sessionId });
+      await this.requireAgent().notify(methods.agent.session.cancel, {
+        sessionId,
+      });
     });
   }
 
@@ -1123,7 +1141,8 @@ class AcpConnection implements AgentConnection {
   ): Promise<void> {
     await this.call(async () => {
       await this.start();
-      await this.requireConnection().setSessionConfigOption(
+      await this.requireAgent().request(
+        methods.agent.session.setConfigOption,
         typeof value === "boolean"
           ? { configId, sessionId, type: "boolean", value }
           : { configId, sessionId, value }
@@ -1133,6 +1152,7 @@ class AcpConnection implements AgentConnection {
 
   dispose(): void {
     this.disposed = true;
+    this.connection?.close();
     this.connection = undefined;
     this.starting = undefined;
     if (this.child && !this.child.killed) {
@@ -1220,42 +1240,40 @@ class AcpConnection implements AgentConnection {
         });
       },
     });
-    const client: Client = {
-      createElicitation: async (request) => {
-        if (!CreateElicitationRequestGuard.isForm(request)) {
+    const app = client({ name: "mischief" })
+      .onRequest(methods.client.elicitation.create, async ({ params }) => {
+        if (!CreateElicitationRequestGuard.isForm(params)) {
           return { action: "decline" };
         }
         let translated: AgentElicitationRequest;
         try {
-          translated = elicitationRequest(request);
+          translated = elicitationRequest(params);
         } catch {
           return { action: "decline" };
         }
         const response = await this.handlers.elicitation(translated);
-        return elicitationResponse(request, response);
-      },
-      requestPermission: async (request) => {
-        const response = await this.handlers.permission(
-          permissionRequest(request)
-        );
-        return permissionResponse(response);
-      },
-      sessionUpdate: async ({ update, _meta }) => {
+        return elicitationResponse(params, response);
+      })
+      .onRequest(
+        methods.client.session.requestPermission,
+        async ({ params }) => {
+          const response = await this.handlers.permission(
+            permissionRequest(params)
+          );
+          return permissionResponse(response);
+        }
+      )
+      .onNotification(methods.client.session.update, async ({ params }) => {
         await Promise.resolve();
-        const translated = translateSessionUpdate(update, _meta);
+        const translated = translateSessionUpdate(params.update, params._meta);
         if (translated) {
           this.handlers.update(translated);
         }
-      },
-    };
-    // oxlint-disable-next-line typescript/no-deprecated -- migration intentionally retains the ACP v1 compatibility wrapper
-    const connection = new ClientSideConnection(
-      () => client,
-      ndJsonStream(output, input)
-    );
+      });
+    const connection = app.connect(ndJsonStream(output, input));
     this.connection = connection;
 
-    const initialized = connection.initialize({
+    const initialized = connection.agent.request(methods.agent.initialize, {
       clientCapabilities: {
         _meta: { "terminal-auth": true },
         auth: { terminal: true },
@@ -1273,12 +1291,11 @@ class AcpConnection implements AgentConnection {
     this.operations = sessionOperations(response.agentCapabilities);
   }
 
-  // oxlint-disable-next-line typescript/no-deprecated -- migration intentionally retains the ACP v1 compatibility wrapper
-  private requireConnection(): ClientSideConnection {
+  private requireAgent(): ClientContext {
     if (!this.connection) {
       throw new Error("MagPi ACP is not connected");
     }
-    return this.connection;
+    return this.connection.agent;
   }
 }
 
