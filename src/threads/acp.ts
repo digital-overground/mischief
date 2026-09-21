@@ -5,7 +5,13 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { ClientSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
+import {
+  ClientSideConnection,
+  CreateElicitationRequest as CreateElicitationRequestGuard,
+  ElicitationPropertySchema as ElicitationPropertySchemaGuard,
+  MultiSelectItems,
+  ndJsonStream,
+} from "@agentclientprotocol/sdk";
 import type {
   Client,
   ContentBlock,
@@ -19,16 +25,22 @@ import type {
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
 
+import { isNonEmpty, isRecord } from "../present";
 import type {
   AgentConnection,
   AgentConnectionFactory,
   AgentError,
   AgentElicitationRequest,
   AgentElicitationResponse,
+  AgentForkTarget,
   AgentHandlers,
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentToolUpdate,
+  AgentTreeNavigationOptions,
+  AgentTreeNavigationResult,
+  AgentTreeTarget,
+  AgentSessionOperations,
   AgentUpdate,
   ElicitationField,
   PromptImage,
@@ -46,13 +58,21 @@ export interface AgentLaunch {
 const MAX_CONTEXT_BYTES = 1_000_000;
 const MAX_CONTEXT_FILES = 20;
 
+export const BRANCH_SUMMARY_CAPABILITY = "magpi-acp/branch-summary";
+export const FORK_PICKER_CAPABILITY = "magpi-acp/fork-picker";
+export const TREE_PICKER_CAPABILITY = "magpi-acp/tree-picker";
+export const FORK_MESSAGES_METHOD = "_magpi-acp/session/fork-messages";
+export const TREE_METHOD = "_magpi-acp/session/tree";
+export const NAVIGATE_TREE_METHOD = "_magpi-acp/session/navigate-tree";
+export const FORK_ENTRY_ID_META = "magpi-acp/fork-entry-id";
+
 const referencedPaths = (text: string): string[] => [
   ...new Set(
     [...text.matchAll(/(?:^|\s)@(?<path>[^\s]+)/gu)]
       .map((match) => match.groups?.path)
       .filter(
         (candidate): candidate is string =>
-          Boolean(candidate) && !candidate?.endsWith("/")
+          isNonEmpty(candidate) && !candidate.endsWith("/")
       )
   ),
 ];
@@ -67,7 +87,7 @@ export const promptContent = async (
     ...images.map((image) => ({ ...image, type: "image" as const })),
   ];
   const references = referencedPaths(text);
-  if (!cwd || !references.length) {
+  if (!isNonEmpty(cwd) || !references.length) {
     return blocks;
   }
   if (references.length > MAX_CONTEXT_FILES) {
@@ -81,7 +101,7 @@ export const promptContent = async (
       try {
         file = await realpath(path.resolve(root, reference));
       } catch {
-        return;
+        return null;
       }
       const relative = path.relative(root, file);
       if (
@@ -89,16 +109,16 @@ export const promptContent = async (
         relative.startsWith(`..${path.sep}`) ||
         path.isAbsolute(relative)
       ) {
-        return;
+        return null;
       }
       const details = await stat(file);
-      return details.isFile() ? { file, size: details.size } : undefined;
+      return details.isFile() ? { file, size: details.size } : null;
     })
   );
   const files = [
     ...new Map(
       resolved
-        .filter((item): item is { file: string; size: number } => Boolean(item))
+        .filter((item): item is { file: string; size: number } => item !== null)
         .map((item) => [item.file, item])
     ).values(),
   ];
@@ -197,21 +217,49 @@ const elicitationOptionDescription = (
   meta: Record<string, unknown> | null | undefined
 ): string | undefined => {
   const magPiAcp = meta?.magPiAcp;
-  if (!magPiAcp || typeof magPiAcp !== "object") {
-    return;
+  if (!isRecord(magPiAcp)) {
+    return undefined;
   }
-  const { description } = magPiAcp as Record<string, unknown>;
+  const { description } = magPiAcp;
   return typeof description === "string" ? description : undefined;
+};
+
+const optionDescription = (option: {
+  description?: string | null;
+  _meta?: Record<string, unknown> | null;
+}): string | undefined =>
+  option.description ?? elicitationOptionDescription(option._meta);
+
+type SupportedElicitationPropertySchema =
+  | Extract<ElicitationPropertySchema, { type: "string" }>
+  | Extract<ElicitationPropertySchema, { type: "number" }>
+  | Extract<ElicitationPropertySchema, { type: "integer" }>
+  | Extract<ElicitationPropertySchema, { type: "boolean" }>
+  | Extract<ElicitationPropertySchema, { type: "array" }>;
+
+const supportedElicitationSchema = (
+  schema: ElicitationPropertySchema
+): SupportedElicitationPropertySchema => {
+  if (
+    ElicitationPropertySchemaGuard.isString(schema) ||
+    ElicitationPropertySchemaGuard.isNumber(schema) ||
+    ElicitationPropertySchemaGuard.isInteger(schema) ||
+    ElicitationPropertySchemaGuard.isBoolean(schema) ||
+    ElicitationPropertySchemaGuard.isArray(schema)
+  ) {
+    return schema;
+  }
+  throw new Error("Unsupported elicitation property schema");
 };
 
 const elicitationOptions = (
   schema: ElicitationPropertySchema
 ): { value: string; name: string; description?: string }[] | undefined => {
-  if (schema.type === "string") {
+  if (ElicitationPropertySchemaGuard.isString(schema)) {
     if (schema.oneOf) {
       return schema.oneOf.map((option) => ({
-        ...(elicitationOptionDescription(option._meta)
-          ? { description: elicitationOptionDescription(option._meta) }
+        ...(isNonEmpty(optionDescription(option))
+          ? { description: optionDescription(option) }
           : {}),
         name: option.title,
         value: option.const,
@@ -220,35 +268,50 @@ const elicitationOptions = (
     if (schema.enum) {
       return schema.enum.map((value) => ({ name: value, value }));
     }
+    return undefined;
   }
-  if (schema.type === "array") {
-    if ("anyOf" in schema.items) {
+  if (ElicitationPropertySchemaGuard.isArray(schema)) {
+    if (MultiSelectItems.isTitled(schema.items)) {
       return schema.items.anyOf.map((option) => ({
-        ...(elicitationOptionDescription(option._meta)
-          ? { description: elicitationOptionDescription(option._meta) }
+        ...(isNonEmpty(optionDescription(option))
+          ? { description: optionDescription(option) }
           : {}),
         name: option.title,
         value: option.const,
       }));
     }
-    return schema.items.enum.map((value) => ({ name: value, value }));
+    if (MultiSelectItems.isString(schema.items)) {
+      return schema.items.enum.map((value) => ({ name: value, value }));
+    }
+    throw new Error("Unsupported elicitation choice schema");
   }
-  return undefined;
+  if (
+    ElicitationPropertySchemaGuard.isBoolean(schema) ||
+    ElicitationPropertySchemaGuard.isNumber(schema) ||
+    ElicitationPropertySchemaGuard.isInteger(schema)
+  ) {
+    return undefined;
+  }
+  throw new Error("Unsupported elicitation property schema");
 };
 
-const elicitationRequest = (
+export const elicitationRequest = (
   request: Extract<CreateElicitationRequest, { mode: "form" }>
 ): AgentElicitationRequest => {
   const required = new Set(request.requestedSchema.required);
   const fields = Object.entries(request.requestedSchema.properties ?? {}).map(
-    ([name, schema]) => {
+    ([name, rawSchema]) => {
+      const schema = supportedElicitationSchema(rawSchema);
       const options = elicitationOptions(schema);
       let type: ElicitationField["type"];
-      if (schema.type === "boolean") {
+      if (ElicitationPropertySchemaGuard.isBoolean(schema)) {
         type = "boolean";
-      } else if (schema.type === "number" || schema.type === "integer") {
+      } else if (
+        ElicitationPropertySchemaGuard.isNumber(schema) ||
+        ElicitationPropertySchemaGuard.isInteger(schema)
+      ) {
         type = "number";
-      } else if (schema.type === "array") {
+      } else if (ElicitationPropertySchemaGuard.isArray(schema)) {
         type = "multiselect";
       } else {
         type = options ? "select" : "text";
@@ -257,7 +320,9 @@ const elicitationRequest = (
         ...(schema.default !== undefined && schema.default !== null
           ? { defaultValue: schema.default }
           : {}),
-        ...(schema.description ? { description: schema.description } : {}),
+        ...(isNonEmpty(schema.description)
+          ? { description: schema.description }
+          : {}),
         ...(options ? { options } : {}),
         label: schema.title ?? name,
         name,
@@ -267,7 +332,7 @@ const elicitationRequest = (
     }
   );
   return {
-    ...(request.requestedSchema.description
+    ...(isNonEmpty(request.requestedSchema.description)
       ? { context: request.requestedSchema.description }
       : {}),
     fields,
@@ -301,7 +366,10 @@ const stringValue = (
   ) {
     throw new Error(`${name} is too long`);
   }
-  if (schema.pattern && !new RegExp(schema.pattern, "u").test(value)) {
+  if (
+    isNonEmpty(schema.pattern) &&
+    !new RegExp(schema.pattern, "u").test(value)
+  ) {
     throw new Error(`${name} has an invalid format`);
   }
   return value;
@@ -374,19 +442,25 @@ const elicitationValue = (
   schema: ElicitationPropertySchema,
   value: unknown
 ): ElicitationContentValue => {
-  if (schema.type === "string") {
+  if (ElicitationPropertySchemaGuard.isString(schema)) {
     return stringValue(name, schema, value);
   }
-  if (schema.type === "boolean") {
+  if (ElicitationPropertySchemaGuard.isBoolean(schema)) {
     if (typeof value !== "boolean") {
       throw new TypeError(`Invalid value for ${name}`);
     }
     return value;
   }
-  if (schema.type === "number" || schema.type === "integer") {
+  if (
+    ElicitationPropertySchemaGuard.isNumber(schema) ||
+    ElicitationPropertySchemaGuard.isInteger(schema)
+  ) {
     return numberValue(name, schema, value);
   }
-  return choicesValue(name, schema, value);
+  if (ElicitationPropertySchemaGuard.isArray(schema)) {
+    return choicesValue(name, schema, value);
+  }
+  throw new Error(`Unsupported elicitation property schema for ${name}`);
 };
 
 const elicitationContent = (
@@ -485,10 +559,10 @@ const sessionPreview = (
   meta: Record<string, unknown> | null | undefined
 ): { preview?: string; previewRole?: "user" | "assistant" } => {
   const value = meta?.magPiAcp;
-  if (!value || typeof value !== "object") {
+  if (!isRecord(value)) {
     return {};
   }
-  const { preview, previewRole } = value as Record<string, unknown>;
+  const { preview, previewRole } = value;
   return typeof preview === "string" &&
     preview.length <= 160 &&
     (previewRole === "user" || previewRole === "assistant")
@@ -509,7 +583,8 @@ const allPlanEntriesCompleted = (entries: { status: string }[]): boolean =>
 
 // oxlint-disable-next-line complexity -- ACP session updates are a protocol union
 export const translateSessionUpdate = (
-  update: SessionUpdate
+  update: SessionUpdate,
+  meta?: Record<string, unknown> | null
 ): AgentUpdate | undefined => {
   switch (update.sessionUpdate) {
     case "user_message_chunk":
@@ -518,14 +593,22 @@ export const translateSessionUpdate = (
       if (update.content.type !== "text" && update.content.type !== "image") {
         return undefined;
       }
-      let kind: "user" | "assistant" | "thought" = "thought";
+      let kind: "user" | "assistant" | "thought" | "system" | "branchSummary" =
+        "thought";
       if (update.sessionUpdate === "user_message_chunk") {
         kind = "user";
+      } else if (
+        update.sessionUpdate === "agent_message_chunk" &&
+        meta?.[BRANCH_SUMMARY_CAPABILITY] === true
+      ) {
+        kind = "branchSummary";
       } else if (update.sessionUpdate === "agent_message_chunk") {
         kind = "assistant";
       }
       return {
-        ...(update.messageId ? { messageId: update.messageId } : {}),
+        ...(isNonEmpty(update.messageId)
+          ? { messageId: update.messageId }
+          : {}),
         kind,
         ...(update.content.type === "text"
           ? {
@@ -594,61 +677,110 @@ export const translateSessionUpdate = (
         type: "sessionInfo",
       };
     }
+    case "compaction_summary_chunk":
+    case "compaction_update":
+    case "current_mode_update":
+    case "plan_removed":
+    case "plan_update": {
+      return undefined;
+    }
     default: {
       return undefined;
     }
   }
 };
 
-const terminalAuthentication = (
-  error: unknown
+const stringArguments = (value: unknown): value is string[] =>
+  Array.isArray(value) &&
+  value.every((argument) => typeof argument === "string");
+
+const stringEnvironment = (value: unknown): value is Record<string, string> =>
+  isRecord(value) &&
+  Object.values(value).every((entry) => typeof entry === "string");
+
+const standardTerminalAuthentication = (
+  method: unknown,
+  launch: AgentLaunch
 ): TerminalAuthentication | undefined => {
-  const data = (error as { data?: unknown } | null)?.data as
-    | { authMethods?: unknown }
-    | null
-    | undefined;
+  if (!isRecord(method)) {
+    return undefined;
+  }
+  const { args, env: rawEnv, name, type } = method;
+  if (
+    type !== "terminal" ||
+    (args !== undefined && !stringArguments(args)) ||
+    (rawEnv !== undefined && !stringEnvironment(rawEnv))
+  ) {
+    return undefined;
+  }
+  const launchArgs = args ?? [];
+  const env = {
+    ...launch.env,
+    ...rawEnv,
+  };
+  return {
+    args: [...launch.args, ...launchArgs],
+    command: launch.command,
+    ...(Object.keys(env).length ? { env } : {}),
+    label: typeof name === "string" ? name : "Authenticate",
+  };
+};
+
+const legacyTerminalAuthentication = (
+  method: unknown
+): TerminalAuthentication | undefined => {
+  if (!isRecord(method)) {
+    return undefined;
+  }
+  const { _meta: rawMeta, name } = method;
+  const meta = isRecord(rawMeta) ? rawMeta : undefined;
+  const rawPrivateLaunch = meta?.["terminal-auth"];
+  const privateLaunch = isRecord(rawPrivateLaunch)
+    ? rawPrivateLaunch
+    : undefined;
+  const {
+    args,
+    command,
+    env: rawEnv,
+    label: privateLabel,
+  } = privateLaunch ?? {};
+  if (typeof command !== "string" || !stringArguments(args)) {
+    return undefined;
+  }
+  const env = stringEnvironment(rawEnv) ? rawEnv : undefined;
+  let label = typeof name === "string" ? name : "Authenticate";
+  if (typeof privateLabel === "string") {
+    label = privateLabel;
+  }
+  return {
+    args,
+    command,
+    ...(env && Object.keys(env).length ? { env } : {}),
+    label,
+  };
+};
+
+export const terminalAuthentication = (
+  error: unknown,
+  launch?: AgentLaunch
+): TerminalAuthentication | undefined => {
+  const data = isRecord(error) && isRecord(error.data) ? error.data : undefined;
   if (!Array.isArray(data?.authMethods)) {
     return undefined;
   }
+  if (launch) {
+    for (const method of data.authMethods) {
+      const authentication = standardTerminalAuthentication(method, launch);
+      if (authentication) {
+        return authentication;
+      }
+    }
+  }
   for (const method of data.authMethods) {
-    if (!method || typeof method !== "object") {
-      continue;
+    const authentication = legacyTerminalAuthentication(method);
+    if (authentication) {
+      return authentication;
     }
-    const record = method as Record<string, unknown>;
-    const meta = record._meta as Record<string, unknown> | null | undefined;
-    const launch = meta?.["terminal-auth"] as
-      | Record<string, unknown>
-      | null
-      | undefined;
-    if (typeof launch?.command !== "string" || !Array.isArray(launch.args)) {
-      continue;
-    }
-    if (!launch.args.every((argument) => typeof argument === "string")) {
-      continue;
-    }
-    const rawEnv = launch.env;
-    const env =
-      rawEnv && typeof rawEnv === "object"
-        ? Object.fromEntries(
-            Object.entries(rawEnv).filter(
-              (entry): entry is [string, string] => typeof entry[1] === "string"
-            )
-          )
-        : undefined;
-    let label = "Authenticate";
-    if (typeof record.name === "string") {
-      label = record.name;
-    }
-    const { label: launchLabel } = launch;
-    if (typeof launchLabel === "string") {
-      label = launchLabel;
-    }
-    return {
-      args: launch.args as string[],
-      command: launch.command,
-      ...(env && Object.keys(env).length ? { env } : {}),
-      label,
-    };
   }
   return undefined;
 };
@@ -656,19 +788,180 @@ const terminalAuthentication = (
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const toAgentError = (error: unknown): AgentError =>
-  error instanceof Error && "authentication" in error
-    ? (error as AgentError)
-    : Object.assign(new Error(errorMessage(error)), {
-        authentication: terminalAuthentication(error),
-      });
+const toAgentError = (error: unknown, launch?: AgentLaunch): AgentError =>
+  Object.assign(
+    error instanceof Error ? error : new Error(errorMessage(error)),
+    { authentication: terminalAuthentication(error, launch) }
+  );
+
+const invalidResponse = (name: string): Error =>
+  new Error(`Invalid MagPi ${name} response`);
+
+export const sessionOperations = (
+  agentCapabilities: unknown
+): AgentSessionOperations => {
+  const meta =
+    isRecord(agentCapabilities) && isRecord(agentCapabilities._meta)
+      ? agentCapabilities._meta
+      : undefined;
+  return {
+    branchSummary: meta?.[BRANCH_SUMMARY_CAPABILITY] === true,
+    forkPicker: meta?.[FORK_PICKER_CAPABILITY] === true,
+    treePicker: meta?.[TREE_PICKER_CAPABILITY] === true,
+  };
+};
+
+export const decodeForkTargets = (value: unknown): AgentForkTarget[] => {
+  if (!isRecord(value) || !Array.isArray(value.messages)) {
+    throw invalidResponse("fork messages");
+  }
+  return value.messages.map((candidate) => {
+    if (
+      !isRecord(candidate) ||
+      typeof candidate.entryId !== "string" ||
+      !candidate.entryId.trim() ||
+      typeof candidate.text !== "string"
+    ) {
+      throw invalidResponse("fork messages");
+    }
+    return { entryId: candidate.entryId, text: candidate.text };
+  });
+};
+
+interface NativeTreeNode {
+  children: NativeTreeNode[];
+  entry: Record<string, unknown> & { id: string; type: string };
+}
+
+const decodeTreeNode = (value: unknown): NativeTreeNode => {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.entry) ||
+    !Array.isArray(value.children)
+  ) {
+    throw invalidResponse("tree");
+  }
+  if (
+    typeof value.entry.id !== "string" ||
+    !value.entry.id.trim() ||
+    typeof value.entry.type !== "string"
+  ) {
+    throw invalidResponse("tree");
+  }
+  return {
+    children: value.children.map(decodeTreeNode),
+    entry: { ...value.entry, id: value.entry.id, type: value.entry.type },
+  };
+};
+
+const messageText = (message: Record<string, unknown>): string | undefined => {
+  if (typeof message.content === "string") {
+    return message.content;
+  }
+  if (!Array.isArray(message.content)) {
+    return undefined;
+  }
+  const text = message.content
+    .filter(
+      (content): content is Record<string, unknown> =>
+        isRecord(content) &&
+        content.type === "text" &&
+        typeof content.text === "string"
+    )
+    .map((content) => String(content.text))
+    .join("");
+  return text || undefined;
+};
+
+export const decodeTreeTargets = (value: unknown): AgentTreeTarget[] => {
+  if (!isRecord(value) || !Array.isArray(value.tree)) {
+    throw invalidResponse("tree");
+  }
+  if (value.leafId !== null && typeof value.leafId !== "string") {
+    throw invalidResponse("tree");
+  }
+  const roots = value.tree.map(decodeTreeNode);
+  const active = new WeakMap<NativeTreeNode, boolean>();
+  const markActive = (node: NativeTreeNode): boolean => {
+    const result =
+      node.entry.id === value.leafId || node.children.some(markActive);
+    active.set(node, result);
+    return result;
+  };
+  for (const root of roots) {
+    markActive(root);
+  }
+  const targets: AgentTreeTarget[] = [];
+  const visit = (node: NativeTreeNode, depth: number): void => {
+    const { children, entry } = node;
+    const childDepth = depth + (children.length > 1 ? 1 : 0);
+    const message = isRecord(entry.message) ? entry.message : undefined;
+    const { role } = message ?? {};
+    if (
+      entry.type !== "message" ||
+      !message ||
+      (role !== "user" && role !== "assistant")
+    ) {
+      for (const child of children) {
+        visit(child, childDepth);
+      }
+      return;
+    }
+    const text = messageText(message);
+    if (role === "assistant" && !isNonEmpty(text)) {
+      for (const child of children) {
+        visit(child, childDepth);
+      }
+      return;
+    }
+    targets.push({
+      activeBranch: active.get(node) === true,
+      current: entry.id === value.leafId,
+      depth,
+      entryId: entry.id,
+      role,
+      text: text ?? "Image prompt",
+    });
+    for (const child of children) {
+      visit(child, childDepth);
+    }
+  };
+  for (const root of roots) {
+    visit(root, 0);
+  }
+  return targets;
+};
+
+export const decodeTreeNavigationResult = (
+  value: unknown
+): AgentTreeNavigationResult => {
+  if (
+    !isRecord(value) ||
+    (value.leafId !== null && typeof value.leafId !== "string")
+  ) {
+    throw invalidResponse("tree navigation");
+  }
+  if (value.draft === undefined || value.draft === null || value.draft === "") {
+    return {};
+  }
+  if (typeof value.draft !== "string") {
+    throw invalidResponse("tree navigation");
+  }
+  return { draft: value.draft };
+};
 
 class AcpConnection implements AgentConnection {
   private child?: ChildProcessWithoutNullStreams;
+  // oxlint-disable-next-line typescript/no-deprecated -- migration intentionally retains the ACP v1 compatibility wrapper
   private connection?: ClientSideConnection;
   private cwd?: string;
   private starting?: Promise<void>;
   private disposed = false;
+  private operations: AgentSessionOperations = {
+    branchSummary: false,
+    forkPicker: false,
+    treePicker: false,
+  };
   private readonly launch: AgentLaunch;
   private readonly handlers: AgentHandlers;
   private readonly log: (message: string) => void;
@@ -683,9 +976,9 @@ class AcpConnection implements AgentConnection {
     this.log = log;
   }
 
-  create(cwd: string) {
+  async create(cwd: string) {
     this.cwd = cwd;
-    return AcpConnection.call(async () => {
+    return await this.call(async () => {
       await this.start();
       const session = await this.requireConnection().newSession({
         cwd,
@@ -693,29 +986,42 @@ class AcpConnection implements AgentConnection {
       });
       return {
         configOptions: configOptions(session.configOptions),
+        operations: this.operations,
         sessionId: session.sessionId,
       };
     });
   }
 
-  fork(sessionId: string, cwd: string, messageId: string) {
-    return AcpConnection.call(async () => {
+  async fork(sessionId: string, cwd: string, entryId: string) {
+    return await this.call(async () => {
       await this.start();
       const session = await this.requireConnection().unstable_forkSession({
-        _meta: { "magpi-acp/client-message-id": messageId },
+        _meta: { [FORK_ENTRY_ID_META]: entryId },
         cwd,
         mcpServers: [],
         sessionId,
       });
       return {
         configOptions: configOptions(session.configOptions),
+        operations: this.operations,
         sessionId: session.sessionId,
       };
     });
   }
 
-  history(cwd: string) {
-    return AcpConnection.call(async () => {
+  async forkTargets(sessionId: string) {
+    return await this.call(async () => {
+      await this.start();
+      const response = await this.requireConnection().request<
+        unknown,
+        { sessionId: string }
+      >(FORK_MESSAGES_METHOD, { sessionId });
+      return decodeForkTargets(response);
+    });
+  }
+
+  async history(cwd: string) {
+    return await this.call(async () => {
       await this.start();
       const sessions = [];
       let cursor: string | undefined;
@@ -724,7 +1030,7 @@ class AcpConnection implements AgentConnection {
         // oxlint-disable-next-line no-await-in-loop
         const page = await this.requireConnection().listSessions({
           cwd,
-          ...(cursor ? { cursor } : {}),
+          ...(isNonEmpty(cursor) ? { cursor } : {}),
         });
         sessions.push(
           ...page.sessions
@@ -733,42 +1039,66 @@ class AcpConnection implements AgentConnection {
               cwd: session.cwd,
               ...sessionPreview(session._meta),
               sessionId: session.sessionId,
-              ...(session.title ? { title: session.title } : {}),
-              ...(session.updatedAt &&
+              ...(isNonEmpty(session.title) ? { title: session.title } : {}),
+              ...(isNonEmpty(session.updatedAt) &&
               Number.isFinite(Date.parse(session.updatedAt))
                 ? { updatedAt: session.updatedAt }
                 : {}),
             }))
         );
         cursor = page.nextCursor ?? undefined;
-      } while (cursor);
+      } while (isNonEmpty(cursor));
       return sessions;
     });
   }
 
-  load(sessionId: string, cwd: string) {
+  async load(sessionId: string, cwd: string) {
     this.cwd = cwd;
-    return AcpConnection.call(async () => {
+    return await this.call(async () => {
       await this.start();
       const session = await this.requireConnection().loadSession({
         cwd,
         mcpServers: [],
         sessionId,
       });
-      return { configOptions: configOptions(session.configOptions), sessionId };
+      return {
+        configOptions: configOptions(session.configOptions),
+        operations: this.operations,
+        sessionId,
+      };
     });
   }
 
-  prompt(
+  async navigateTree(
     sessionId: string,
-    text: string,
-    messageId: string,
-    images: PromptImage[]
+    entryId: string,
+    options: AgentTreeNavigationOptions
   ) {
-    return AcpConnection.call(async () => {
+    return await this.call(async () => {
+      await this.start();
+      const response = await this.requireConnection().request<
+        unknown,
+        AgentTreeNavigationOptions & { entryId: string; sessionId: string }
+      >(NAVIGATE_TREE_METHOD, { ...options, entryId, sessionId });
+      return decodeTreeNavigationResult(response);
+    });
+  }
+
+  async treeTargets(sessionId: string) {
+    return await this.call(async () => {
+      await this.start();
+      const response = await this.requireConnection().request<
+        unknown,
+        { sessionId: string }
+      >(TREE_METHOD, { sessionId });
+      return decodeTreeTargets(response);
+    });
+  }
+
+  async prompt(sessionId: string, text: string, images: PromptImage[]) {
+    return await this.call(async () => {
       await this.start();
       const response = await this.requireConnection().prompt({
-        _meta: { "magpi-acp/client-message-id": messageId },
         prompt: await promptContent(this.cwd, text, images),
         sessionId,
       });
@@ -779,29 +1109,19 @@ class AcpConnection implements AgentConnection {
     });
   }
 
-  cancel(sessionId: string): Promise<void> {
-    return AcpConnection.call(async () => {
+  async cancel(sessionId: string): Promise<void> {
+    await this.call(async () => {
       await this.start();
       await this.requireConnection().cancel({ sessionId });
     });
   }
 
-  rollback(sessionId: string, messageId: string): Promise<void> {
-    return AcpConnection.call(async () => {
-      await this.start();
-      await this.requireConnection().extMethod("_magpi-acp/session/rewind", {
-        clientMessageId: messageId,
-        sessionId,
-      });
-    });
-  }
-
-  setConfig(
+  async setConfig(
     sessionId: string,
     configId: string,
     value: string | boolean
   ): Promise<void> {
-    return AcpConnection.call(async () => {
+    await this.call(async () => {
       await this.start();
       await this.requireConnection().setSessionConfigOption(
         typeof value === "boolean"
@@ -821,11 +1141,11 @@ class AcpConnection implements AgentConnection {
     this.child = undefined;
   }
 
-  private static async call<T>(operation: () => Promise<T>): Promise<T> {
+  private async call<T>(operation: () => Promise<T>): Promise<T> {
     try {
       return await operation();
     } catch (error) {
-      throw toAgentError(error);
+      throw toAgentError(error, this.launch);
     }
   }
 
@@ -870,7 +1190,8 @@ class AcpConnection implements AgentConnection {
           toAgentError(
             new Error(
               `MagPi ACP exited${code === null ? ` (${signal ?? "unknown"})` : ` (${code})`}`
-            )
+            ),
+            this.launch
           )
         );
       }
@@ -891,34 +1212,43 @@ class AcpConnection implements AgentConnection {
         child.stdout.on("data", (chunk: Buffer | string) => {
           controller.enqueue(new Uint8Array(Buffer.from(chunk)));
         });
-        child.stdout.on("end", () => controller.close());
-        child.stdout.on("error", (error) => controller.error(error));
+        child.stdout.on("end", () => {
+          controller.close();
+        });
+        child.stdout.on("error", (error) => {
+          controller.error(error);
+        });
       },
     });
     const client: Client = {
+      createElicitation: async (request) => {
+        if (!CreateElicitationRequestGuard.isForm(request)) {
+          return { action: "decline" };
+        }
+        let translated: AgentElicitationRequest;
+        try {
+          translated = elicitationRequest(request);
+        } catch {
+          return { action: "decline" };
+        }
+        const response = await this.handlers.elicitation(translated);
+        return elicitationResponse(request, response);
+      },
       requestPermission: async (request) => {
         const response = await this.handlers.permission(
           permissionRequest(request)
         );
         return permissionResponse(response);
       },
-      sessionUpdate: ({ update }) => {
-        const translated = translateSessionUpdate(update);
+      sessionUpdate: async ({ update, _meta }) => {
+        await Promise.resolve();
+        const translated = translateSessionUpdate(update, _meta);
         if (translated) {
           this.handlers.update(translated);
         }
-        return Promise.resolve();
-      },
-      unstable_createElicitation: async (request) => {
-        if (request.mode !== "form") {
-          return { action: "decline" };
-        }
-        const response = await this.handlers.elicitation(
-          elicitationRequest(request)
-        );
-        return elicitationResponse(request, response);
       },
     };
+    // oxlint-disable-next-line typescript/no-deprecated -- migration intentionally retains the ACP v1 compatibility wrapper
     const connection = new ClientSideConnection(
       () => client,
       ndJsonStream(output, input)
@@ -928,6 +1258,7 @@ class AcpConnection implements AgentConnection {
     const initialized = connection.initialize({
       clientCapabilities: {
         _meta: { "terminal-auth": true },
+        auth: { terminal: true },
         elicitation: { form: {} },
         plan: {},
       },
@@ -935,12 +1266,14 @@ class AcpConnection implements AgentConnection {
       protocolVersion: 1,
     });
     const childError = async (): Promise<never> => {
-      const [error] = await once(child, "error");
-      throw error;
+      const errors: unknown = await once(child, "error");
+      throw Array.isArray(errors) ? errors[0] : errors;
     };
-    await Promise.race([initialized, childError()]);
+    const response = await Promise.race([initialized, childError()]);
+    this.operations = sessionOperations(response.agentCapabilities);
   }
 
+  // oxlint-disable-next-line typescript/no-deprecated -- migration intentionally retains the ACP v1 compatibility wrapper
   private requireConnection(): ClientSideConnection {
     if (!this.connection) {
       throw new Error("MagPi ACP is not connected");

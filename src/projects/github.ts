@@ -1,9 +1,6 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
+import { exec } from "../exec";
+import { isRecord } from "../present";
 import type { GitHubIssue } from "./projects";
-
-const exec = promisify(execFile);
 
 export const listOpenGitHubIssues = async (
   projectRoot: string,
@@ -28,11 +25,7 @@ export const listOpenGitHubIssues = async (
       { cwd: projectRoot, encoding: "utf-8" }
     ));
   } catch (error) {
-    const failure = error as {
-      code?: unknown;
-      message?: unknown;
-      stderr?: unknown;
-    };
+    const failure = isRecord(error) ? error : {};
     if (failure.code === "ENOENT") {
       throw new Error(
         "GitHub CLI (gh) is required to open issues. Install it and try again.",
@@ -63,12 +56,12 @@ export const listOpenGitHubIssues = async (
     );
   }
   return value.map((candidate) => {
-    if (!candidate || typeof candidate !== "object") {
+    if (!isRecord(candidate)) {
       throw new TypeError(
         "GitHub issue list could not be read: invalid GitHub issue"
       );
     }
-    const issue = candidate as Record<string, unknown>;
+    const issue = candidate;
     if (
       typeof issue.number !== "number" ||
       !Number.isInteger(issue.number) ||

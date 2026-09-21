@@ -22,7 +22,9 @@ export const SteeringControl = ({
         id="clear-steering"
         title="Clear all steering messages"
         aria-label="Clear all steering messages"
-        onClick={() => postMessage({ type: "clearSteering" })}
+        onClick={() => {
+          postMessage({ type: "clearSteering" });
+        }}
       >
         Clear all
       </button>
@@ -36,9 +38,9 @@ export const SteeringControl = ({
               className="icon"
               title="Send immediately"
               aria-label="Send steering message immediately"
-              onClick={() =>
-                postMessage({ id: message.id, type: "sendSteering" })
-              }
+              onClick={() => {
+                postMessage({ id: message.id, type: "sendSteering" });
+              }}
             >
               <Icon
                 className="steering-action-icon"
@@ -50,9 +52,9 @@ export const SteeringControl = ({
               className="icon"
               title="Remove"
               aria-label="Remove steering message"
-              onClick={() =>
-                postMessage({ id: message.id, type: "removeSteering" })
-              }
+              onClick={() => {
+                postMessage({ id: message.id, type: "removeSteering" });
+              }}
             >
               <Icon className="steering-action-icon" kind="x" title="Remove" />
             </button>

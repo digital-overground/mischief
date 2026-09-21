@@ -2,15 +2,16 @@ import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { isRecord } from "./present";
 import type { AgentLaunch } from "./threads/acp";
 import type { SetupOption } from "./webview/protocol";
 
-const ADDON_SOURCES = {
+const ADDON_SOURCES: Readonly<Record<string, string>> = {
   "ask-user": "npm:pi-ask-user",
   "matt-pocock-skills": "git:github.com/mattpocock/skills",
   ponytail: "git:github.com/DietrichGebert/ponytail",
   todo: "npm:@juicesharp/rpiv-todo",
-} as const;
+};
 
 export const RECOMMENDED_ADDONS: SetupOption[] = [
   {
@@ -44,10 +45,13 @@ export const missingRecommendedAddons = (
 ): SetupOption[] => {
   let packages: unknown[] = [];
   try {
-    const settings = JSON.parse(
+    const settings: unknown = JSON.parse(
       readFileSync(path.join(agentDir, "settings.json"), "utf-8")
-    ) as { packages?: unknown };
-    packages = Array.isArray(settings.packages) ? settings.packages : [];
+    );
+    packages =
+      isRecord(settings) && Array.isArray(settings.packages)
+        ? settings.packages
+        : [];
   } catch {
     // Missing or invalid settings means no Pi packages are installed.
   }
@@ -55,24 +59,28 @@ export const missingRecommendedAddons = (
     if (typeof entry === "string") {
       return [entry];
     }
-    if (entry && typeof entry === "object" && "source" in entry) {
-      const { source } = entry as { source?: unknown };
+    if (isRecord(entry)) {
+      const { source } = entry;
       return typeof source === "string" ? [source] : [];
     }
     return [];
   });
   return RECOMMENDED_ADDONS.filter(({ id }) => {
-    const source = ADDON_SOURCES[id as keyof typeof ADDON_SOURCES];
-    return !installed.some(
-      (candidate) => candidate === source || candidate.startsWith(`${source}@`)
+    const source = ADDON_SOURCES[id];
+    return (
+      source !== undefined &&
+      !installed.some(
+        (candidate) =>
+          candidate === source || candidate.startsWith(`${source}@`)
+      )
     );
   });
 };
 
 export const addOnInstallCommand = (selected: string[]): string | undefined => {
   const sources = RECOMMENDED_ADDONS.flatMap(({ id }) => {
-    const source = ADDON_SOURCES[id as keyof typeof ADDON_SOURCES];
-    return selected.includes(id) && source ? [source] : [];
+    const source = ADDON_SOURCES[id];
+    return selected.includes(id) && source !== undefined ? [source] : [];
   });
   return sources.length > 0
     ? sources.map((source) => `pi install ${source}`).join(" && ")

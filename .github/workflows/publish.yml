@@ -9,7 +9,7 @@ on:
       - package.json
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 jobs:
@@ -33,9 +33,13 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - name: Publish
+      - name: Publish and tag
         if: github.event_name == 'push'
         run: |
+          VERSION=$(node -p "require('./package.json').version")
+          test -z "$(git ls-remote --tags origin "refs/tags/v$VERSION")"
           pnpm install --frozen-lockfile
           pnpm check
           pnpm exec vsce publish --azure-credential --no-dependencies
+          git tag "v$VERSION"
+          git push origin "v$VERSION"

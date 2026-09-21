@@ -3,6 +3,7 @@ import type {
   PromptImage,
   ThreadDetail,
   ThreadInteractionResponse,
+  ThreadSessionOperation,
   ThreadsSnapshot,
   TranscriptItem,
 } from "../threads/threads";
@@ -52,13 +53,24 @@ export type HostToWebviewMessage =
       item: RenderedTranscriptItem;
       streaming: boolean;
     }
+  | {
+      type: "sessionOperation";
+      threadId: string;
+      operation: ThreadSessionOperation;
+    }
   | { type: "contextItems"; items: string[] }
   | { type: "setAllExpanded"; expanded: boolean }
   | { type: "showSettings"; assignWorkspaceColors: boolean };
 
 export type WebviewToHostMessage =
   | {
-      type: "ready" | "contextItems" | "newThread" | "threadHistory";
+      type:
+        | "ready"
+        | "contextItems"
+        | "newThread"
+        | "threadHistory"
+        | "forkThread"
+        | "navigateThreadTree";
     }
   | {
       type:
@@ -69,12 +81,7 @@ export type WebviewToHostMessage =
       path: string;
     }
   | {
-      type:
-        | "selectThread"
-        | "removeThread"
-        | "renameThread"
-        | "forkThread"
-        | "rollbackThread";
+      type: "selectThread" | "removeThread" | "renameThread";
       id: string;
     }
   | {

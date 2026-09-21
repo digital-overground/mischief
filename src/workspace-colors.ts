@@ -5,6 +5,8 @@ import path from "node:path";
 import { applyEdits, modify, parse } from "jsonc-parser/lib/esm/main.js";
 import * as vscode from "vscode";
 
+import { isDefined, isNonEmpty, isRecord } from "./present";
+
 const BACKGROUND_KEYS = [
   "editor.background",
   "titleBar.activeBackground",
@@ -61,9 +63,7 @@ interface Rgba {
 }
 
 const object = (value: unknown): Record<string, unknown> | undefined =>
-  value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+  isRecord(value) ? value : undefined;
 
 const rgba = (color: string): Rgba | undefined => {
   const value = color.slice(1);
@@ -72,7 +72,8 @@ const rgba = (color: string): Rgba | undefined => {
   }
   const expanded =
     value.length < 5
-      ? [...value].map((character) => character.repeat(2)).join("")
+      ? // oxlint-disable-next-line typescript/no-misused-spread -- validated hex is ASCII
+        [...value].map((character) => character.repeat(2)).join("")
       : value;
   if (!/^[\da-f]+$/iu.test(expanded)) {
     return undefined;
@@ -173,7 +174,7 @@ const activeThemePath = (): string | undefined => {
   const active = vscode.workspace
     .getConfiguration("workbench")
     .get<string>("colorTheme");
-  if (!active) {
+  if (!isNonEmpty(active)) {
     return undefined;
   }
   for (const extension of vscode.extensions.all) {
@@ -246,13 +247,13 @@ export const workspaceColorOverrides = (
     (left, right) =>
       contrast(selected, right.color) - contrast(selected, left.color)
   );
-  if (!foreground || contrast(selected, foreground.color) < 4.5) {
+  if (!isDefined(foreground) || contrast(selected, foreground.color) < 4.5) {
     return undefined;
   }
   const value = hex(selected);
-  return Object.fromEntries([
-    ...WINDOW_BACKGROUND_KEYS.map((key) => [key, value]),
-    ...WINDOW_FOREGROUND_KEYS.map((key) => [key, foreground.value]),
+  return Object.fromEntries<string>([
+    ...WINDOW_BACKGROUND_KEYS.map((key) => [key, value] as const),
+    ...WINDOW_FOREGROUND_KEYS.map((key) => [key, foreground.value] as const),
   ]);
 };
 
@@ -279,7 +280,7 @@ const readWorkspaceSettings = async (
   try {
     source = await readFile(file, "utf-8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+    if (!isRecord(error) || error.code !== "ENOENT") {
       throw error;
     }
   }
@@ -309,7 +310,7 @@ const windowColor = (value: unknown): string | undefined => {
   for (const [key, nested] of Object.entries(colors)) {
     if (key.startsWith("[")) {
       const color = windowColor(nested);
-      if (color) {
+      if (isNonEmpty(color)) {
         return color;
       }
     }
@@ -338,7 +339,7 @@ export const assignWorkspaceColors = async (
     return false;
   }
   const themePath = activeThemePath();
-  if (!themePath) {
+  if (!isNonEmpty(themePath)) {
     return false;
   }
   const overrides = workspaceColorOverrides(
@@ -389,7 +390,7 @@ export const ensureWorkspaceColors = async (
     return false;
   }
   const themePath = activeThemePath();
-  if (!themePath) {
+  if (!isNonEmpty(themePath)) {
     return false;
   }
   const overrides = workspaceColorOverrides(

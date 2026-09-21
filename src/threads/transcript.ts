@@ -1,30 +1,33 @@
 import { randomUUID } from "node:crypto";
 
+import { isNonEmpty, isNonZero } from "../present";
 import type { AgentToolUpdate, AgentUpdate, TranscriptItem } from "./threads";
 
 const appendMessage = (
   items: TranscriptItem[],
-  kind: "user" | "assistant" | "thought",
+  kind: "user" | "assistant" | "thought" | "system" | "branchSummary",
   text?: string,
   images?: TranscriptItem["images"],
   messageId?: string
 ): TranscriptItem | undefined => {
-  if (!text && !images?.length) {
+  if (!isNonEmpty(text) && !isNonZero(images?.length)) {
     return undefined;
   }
-  const id = messageId ? `${kind}:${messageId}` : undefined;
-  const existing = id ? items.find((item) => item.id === id) : items.at(-1);
+  const id = isNonEmpty(messageId) ? `${kind}:${messageId}` : undefined;
+  const existing = isNonEmpty(id)
+    ? items.find((item) => item.id === id)
+    : items.at(-1);
   if (existing?.kind === kind) {
     existing.text = (existing.text ?? "") + (text ?? "");
-    if (images?.length) {
+    if (isNonZero(images?.length)) {
       existing.images = [...(existing.images ?? []), ...images];
     }
   } else {
     items.push({
       id: id ?? randomUUID(),
       kind,
-      ...(text ? { text } : {}),
-      ...(images?.length ? { images } : {}),
+      ...(isNonEmpty(text) ? { text } : {}),
+      ...(isNonZero(images?.length) ? { images } : {}),
     });
   }
   return existing?.kind === kind ? existing : items.at(-1);
@@ -61,7 +64,7 @@ const upsertTool = (
   if (update.locations) {
     item.locations = update.locations;
   }
-  if (update.diffs?.length) {
+  if (isNonZero(update.diffs?.length)) {
     item.diffs = update.diffs;
   }
   if (update.terminalOutput !== undefined) {
@@ -95,7 +98,7 @@ const upsertPlan = (
 
 export const archiveCompletedPlan = (items: TranscriptItem[]): void => {
   const index = items.findIndex(
-    (item) => item.kind === "plan" && item.allCompleted
+    (item) => item.kind === "plan" && item.allCompleted === true
   );
   if (index === -1) {
     return;

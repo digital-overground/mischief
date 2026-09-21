@@ -4,13 +4,17 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import { isDefined, isNonEmpty } from "../present";
 import { ProfileDatabase } from "../profile-database/profile-database";
+import { testValue } from "../test-value";
 import { Threads } from "./threads";
 import type {
   AgentConnection,
   AgentConnectionFactory,
   AgentHandlers,
   AgentPromptResult,
+  AgentTreeNavigationOptions,
+  AgentTreeTarget,
   PromptImage,
   ThreadConfigOption,
   ThreadsChange,
@@ -38,9 +42,16 @@ class FakeAgent {
   loadCalls = 0;
   loadRequests: { sessionId: string; cwd: string }[] = [];
   initialConfigOptions: ThreadConfigOption[] = [];
+  operations = {
+    branchSummary: true,
+    forkPicker: true,
+    treePicker: true,
+  };
   failCreate = false;
   createError?: Error;
   replayOnLoad = false;
+  replayBranchSummary = false;
+  failLoad = false;
   askPermission = false;
   askElicitation = false;
   richUpdates = false;
@@ -63,8 +74,29 @@ class FakeAgent {
     previewRole?: "user" | "assistant";
   }[] = [];
   historyCalls: string[] = [];
-  forkCalls: { sessionId: string; cwd: string; messageId: string }[] = [];
-  rollbackCalls: { sessionId: string; messageId: string }[] = [];
+  forkCalls: { sessionId: string; cwd: string; entryId: string }[] = [];
+  forkTargetCalls: string[] = [];
+  forkTargetEntries = [{ entryId: "pi-user-1", text: "Fork from here" }];
+  forkGate?: Deferred;
+  treeTargetCalls: string[] = [];
+  treeTargetEntries: AgentTreeTarget[] = [
+    {
+      activeBranch: true,
+      current: true,
+      depth: 0,
+      entryId: "pi-user-1",
+      role: "user",
+      text: "Try this again",
+    },
+  ];
+  navigateTreeCalls: {
+    sessionId: string;
+    entryId: string;
+    options: AgentTreeNavigationOptions;
+  }[] = [];
+  navigationResult: { draft?: string } = { draft: "Try this again" };
+  navigationError?: Error;
+  navigationGate?: Deferred;
   update?: AgentHandlers["update"];
   private readonly permissionStartedDeferred = deferred();
   private readonly elicitationStartedDeferred = deferred();
@@ -101,13 +133,14 @@ class FakeAgent {
   private connection(handlers: AgentHandlers): AgentConnection {
     this.update = handlers.update;
     return {
-      cancel: () => {
+      cancel: async () => {
+        await Promise.resolve();
         for (const resolve of this.promptResolvers.splice(0)) {
           resolve({ stopReason: "cancelled" });
         }
-        return Promise.resolve();
       },
-      create: () => {
+      create: async () => {
+        await Promise.resolve();
         this.createCalls += 1;
         if (this.createError) {
           throw this.createError;
@@ -115,28 +148,41 @@ class FakeAgent {
         if (this.failCreate) {
           throw new Error("Agent unavailable");
         }
-        return Promise.resolve({
+        return {
           configOptions: this.initialConfigOptions,
+          operations: this.operations,
           sessionId: "session-1",
-        });
+        };
       },
       dispose: () => {
         this.disposed = true;
       },
-      fork: (sessionId, cwd, messageId) => {
-        this.forkCalls.push({ cwd, messageId, sessionId });
-        return Promise.resolve({
+      fork: async (sessionId, cwd, entryId) => {
+        this.forkCalls.push({ cwd, entryId, sessionId });
+        await this.forkGate?.promise;
+        return {
           configOptions: [],
+          operations: this.operations,
           sessionId: "forked-session",
-        });
+        };
       },
-      history: (cwd) => {
+      forkTargets: async (sessionId) => {
+        await Promise.resolve();
+        this.forkTargetCalls.push(sessionId);
+        return this.forkTargetEntries;
+      },
+      history: async (cwd) => {
+        await Promise.resolve();
         this.historyCalls.push(cwd);
-        return Promise.resolve(this.historyEntries);
+        return this.historyEntries;
       },
-      load: (sessionId, cwd) => {
+      load: async (sessionId, cwd) => {
+        await Promise.resolve();
         this.loadCalls += 1;
         this.loadRequests.push({ cwd, sessionId });
+        if (this.failLoad) {
+          throw new Error("Load failed");
+        }
         if (this.replayOnLoad) {
           handlers.update({
             kind: "user",
@@ -150,10 +196,29 @@ class FakeAgent {
             text: "Restored.",
             type: "message",
           });
+          if (this.replayBranchSummary) {
+            handlers.update({
+              kind: "branchSummary",
+              text: "Preserve the adapter decision.",
+              type: "message",
+            });
+          }
         }
-        return Promise.resolve({ configOptions: [], sessionId });
+        return {
+          configOptions: [],
+          operations: this.operations,
+          sessionId,
+        };
       },
-      prompt: async (_sessionId, _text, _messageId, images) => {
+      navigateTree: async (sessionId, entryId, options) => {
+        this.navigateTreeCalls.push({ entryId, options, sessionId });
+        if (this.navigationError) {
+          throw this.navigationError;
+        }
+        await this.navigationGate?.promise;
+        return this.navigationResult;
+      },
+      prompt: async (_sessionId, _text, images) => {
         this.promptImages = images;
         if (this.holdPrompts) {
           this.promptCalls += 1;
@@ -170,7 +235,7 @@ class FakeAgent {
             this.promptResolvers.push(resolve);
           });
           this.markPromptStarted(this.promptCalls);
-          return result;
+          return await result;
         }
         if (this.richUpdates) {
           handlers.update({
@@ -262,13 +327,14 @@ class FakeAgent {
         handlers.update({ title: "Fix tests", type: "sessionInfo" });
         return { stopReason: "completed" };
       },
-      rollback: (sessionId, messageId) => {
-        this.rollbackCalls.push({ messageId, sessionId });
-        return Promise.resolve();
-      },
-      setConfig: (sessionId, configId, value) => {
+      setConfig: async (sessionId, configId, value) => {
+        await Promise.resolve();
         this.configChange = { configId, sessionId, value };
-        return Promise.resolve();
+      },
+      treeTargets: async (sessionId) => {
+        await Promise.resolve();
+        this.treeTargetCalls.push(sessionId);
+        return this.treeTargetEntries;
       },
     };
   }
@@ -291,7 +357,11 @@ describe("threads module", () => {
   });
 
   afterEach(async () => {
-    await Promise.all(instances.map((threads) => threads.dispose()));
+    await Promise.all(
+      instances.map(async (threads) => {
+        await threads.dispose();
+      })
+    );
     await database.dispose();
     await rm(profileDirectory, { force: true, recursive: true });
   });
@@ -347,8 +417,8 @@ describe("threads module", () => {
           [firstId, "first-session"],
           [secondId, "second-session"],
         ] as const
-      ).map(([id, sessionId]) =>
-        remoteDatabase.apply({
+      ).map(async ([id, sessionId]) => {
+        await remoteDatabase.apply({
           thread: {
             createdAt,
             id,
@@ -359,8 +429,8 @@ describe("threads module", () => {
             workspace: "/remote",
           },
           type: "putThread",
-        })
-      )
+        });
+      })
     );
     await remoteDatabase.apply({
       threadId: firstId,
@@ -368,7 +438,9 @@ describe("threads module", () => {
       workspace: "/remote",
     });
     await vi.waitFor(
-      () => expect(database.snapshot().threads).toHaveLength(2),
+      () => {
+        expect(database.snapshot().threads).toHaveLength(2);
+      },
       { timeout: 2000 }
     );
     const sourceAgent = new FakeAgent();
@@ -395,8 +467,8 @@ describe("threads module", () => {
   test("opening a Workspace clears stale live Thread statuses", async () => {
     const createdAt = "2026-09-11T12:00:00.000Z";
     await Promise.all(
-      (["running", "waiting"] as const).map((status, index) =>
-        database.apply({
+      (["running", "waiting"] as const).map(async (status, index) => {
+        await database.apply({
           thread: {
             createdAt,
             id: `10000000-0000-4000-8000-00000000000${index + 1}`,
@@ -406,8 +478,8 @@ describe("threads module", () => {
             workspace: "/workspace",
           },
           type: "putThread",
-        })
-      )
+        });
+      })
     );
     const threads = createThreads(new FakeAgent().factory);
 
@@ -569,7 +641,7 @@ describe("threads module", () => {
     expect(agent.createCalls).toBe(1);
     expect(threads.snapshot().selected).toMatchObject({
       configOptions: [{ currentValue: "high", id: "thinking" }],
-      id: expect.any(String),
+      id: testValue<unknown>(expect.any(String)),
       status: "idle",
     });
   });
@@ -597,115 +669,397 @@ describe("threads module", () => {
     expect(restored.snapshot().selected?.id).toBe(secondId);
   });
 
-  test("forks before a user message and restores it as an editable draft", async () => {
+  test("forks from a native target without changing the source Thread", async () => {
     const agent = new FakeAgent();
     const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
     await threads.prompt("Fork from here");
-    const message = threads
-      .snapshot()
-      .selected?.items.find((item) => item.kind === "user");
-    if (!message) {
-      throw new Error("Missing user message");
+    const source = threads.snapshot().selected;
+    if (!isNonEmpty(source?.id)) {
+      throw new Error("Missing source Thread");
+    }
+    const context = await threads.forkTargets();
+    const [target] = context.targets;
+    if (!isDefined(target)) {
+      throw new Error("Missing fork target");
     }
 
-    await threads.fork(message.id);
+    await threads.fork(context.threadId, target);
 
+    expect(agent.forkTargetCalls).toStrictEqual(["session-1"]);
     expect(agent.forkCalls).toStrictEqual([
       {
         cwd: "/workspace",
-        messageId: message.id,
+        entryId: "pi-user-1",
         sessionId: "session-1",
       },
     ]);
     expect(threads.snapshot().selected).toMatchObject({
       drafts: ["Fork from here"],
-      id: expect.any(String),
+      id: testValue<unknown>(expect.not.stringMatching(source.id)),
       items: [],
       name: "Fix tests (fork)",
     });
+    expect(threads.snapshot().threads).toStrictEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: source.id, name: "Fix tests" }),
+      ])
+    );
   });
 
-  test("forks at an agent response without restoring a draft", async () => {
+  test("rejects unavailable and stale fork pickers", async () => {
+    const agent = new FakeAgent();
+    agent.operations.forkPicker = false;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("First Thread");
+
+    await expect(threads.forkTargets()).rejects.toThrow(
+      "does not support Fork Thread"
+    );
+
+    agent.operations.forkPicker = true;
+    agent.holdPrompts = true;
+    const running = threads.prompt("Still running");
+    await agent.firstPromptStarted;
+    await expect(threads.forkTargets()).rejects.toThrow(
+      "current turn to finish"
+    );
+    await threads.cancel();
+    await running;
+
+    await threads.newThread();
+    const context = await threads.forkTargets();
+    const [target] = context.targets;
+    if (!isDefined(target)) {
+      throw new Error("Missing fork target");
+    }
+    await threads.newThread();
+
+    await expect(threads.fork(context.threadId, target)).rejects.toThrow(
+      "selected Thread changed"
+    );
+    expect(agent.forkCalls).toStrictEqual([]);
+  });
+
+  test("blocks source prompts without stealing a newer selection during fork", async () => {
+    const agent = new FakeAgent();
+    agent.forkGate = deferred();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Source Thread");
+    const sourceId = threads.snapshot().selected?.id;
+    if (!isNonEmpty(sourceId)) {
+      throw new Error("Missing source Thread");
+    }
+    await threads.newThread();
+    const otherId = threads.snapshot().selected?.id;
+    if (!isNonEmpty(otherId)) {
+      throw new Error("Missing other Thread");
+    }
+    await threads.select(sourceId);
+    const context = await threads.forkTargets();
+    const [target] = context.targets;
+    if (!isDefined(target)) {
+      throw new Error("Missing fork target");
+    }
+
+    const forking = threads.fork(context.threadId, target);
+    expect(threads.snapshot().selected?.sessionOperation).toBeTruthy();
+    await expect(threads.prompt("Too soon")).rejects.toThrow(
+      "Thread operation to finish"
+    );
+    await threads.select(otherId);
+    agent.forkGate.resolve();
+    await forking;
+
+    expect(threads.snapshot().selected?.id).toBe(otherId);
+    expect(threads.snapshot().threads.map((thread) => thread.name)).toContain(
+      "Fix tests (fork)"
+    );
+  });
+
+  test("keeps a fork child registered when replay fails", async () => {
     const agent = new FakeAgent();
     const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
-    await threads.prompt("Fork after the response");
-    const message = threads
-      .snapshot()
-      .selected?.items.find((item) => item.kind === "assistant");
-    if (!message) {
-      throw new Error("Missing agent response");
+    await threads.prompt("Fork from here");
+    const context = await threads.forkTargets();
+    const [target] = context.targets;
+    if (!isDefined(target)) {
+      throw new Error("Missing fork target");
+    }
+    agent.failLoad = true;
+
+    await threads.fork(context.threadId, target);
+
+    expect(threads.snapshot().selected).toMatchObject({
+      error: "Load failed",
+      status: "error",
+    });
+    expect(threads.snapshot().threads).toStrictEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "Fix tests (fork)", status: "error" }),
+      ])
+    );
+  });
+
+  test("navigates to a native tree target and reloads the same Thread", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Old branch");
+    const [source] = threads.snapshot().threads;
+    if (!isDefined(source)) {
+      throw new Error("Missing source Thread");
+    }
+    const context = await threads.treeTargets();
+    const [target] = context.targets;
+    if (!isDefined(target)) {
+      throw new Error("Missing tree target");
+    }
+    agent.replayOnLoad = true;
+    agent.replayBranchSummary = true;
+    const changes: (ThreadsChange | undefined)[] = [];
+    threads.onChange((change) => {
+      changes.push(change);
+    });
+
+    await threads.navigateTree(context.threadId, target, {
+      customInstructions: "Focus on unresolved errors",
+      summarize: true,
+    });
+
+    expect(agent.treeTargetCalls).toStrictEqual(["session-1"]);
+    expect(agent.navigateTreeCalls).toStrictEqual([
+      {
+        entryId: "pi-user-1",
+        options: {
+          customInstructions: "Focus on unresolved errors",
+          summarize: true,
+        },
+        sessionId: "session-1",
+      },
+    ]);
+    expect(agent.loadRequests).toContainEqual({
+      cwd: "/workspace",
+      sessionId: "session-1",
+    });
+    expect(
+      changes.filter((change) => change?.type === "transcript")
+    ).toStrictEqual([]);
+    expect(threads.snapshot()).toMatchObject({
+      selected: {
+        drafts: ["Try this again"],
+        id: source.id,
+        items: [
+          { kind: "user", text: "Restore me" },
+          { kind: "assistant", text: "Restored." },
+          {
+            kind: "branchSummary",
+            text: "Preserve the adapter decision.",
+          },
+        ],
+      },
+      threads: [{ createdAt: source.createdAt, id: source.id }],
+    });
+  });
+
+  test("assistant tree navigation adds no draft and preserves existing drafts", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Old branch");
+    const first = await threads.treeTargets();
+    const [userTarget] = first.targets;
+    if (!isDefined(userTarget)) {
+      throw new Error("Missing user tree target");
+    }
+    await threads.navigateTree(first.threadId, userTarget);
+    agent.navigationResult = { draft: "Do not restore an assistant message" };
+    agent.treeTargetEntries = [
+      {
+        activeBranch: true,
+        current: true,
+        depth: 1,
+        entryId: "pi-assistant-1",
+        role: "assistant",
+        text: "Done",
+      },
+    ];
+    const second = await threads.treeTargets();
+    const [assistantTarget] = second.targets;
+    if (!isDefined(assistantTarget)) {
+      throw new Error("Missing assistant tree target");
     }
 
-    await threads.fork(message.id);
+    await threads.navigateTree(second.threadId, assistantTarget);
 
-    expect(agent.forkCalls).toStrictEqual([
+    expect(agent.navigateTreeCalls.at(-1)).toStrictEqual({
+      entryId: "pi-assistant-1",
+      options: { summarize: false },
+      sessionId: "session-1",
+    });
+    expect(threads.snapshot().selected?.drafts).toStrictEqual([
+      "Try this again",
+    ]);
+  });
+
+  test("rejects branch summaries when the Agent does not advertise support", async () => {
+    const agent = new FakeAgent();
+    agent.operations.branchSummary = false;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Old branch");
+    const context = await threads.treeTargets();
+    const [target] = context.targets;
+    if (!isDefined(target)) {
+      throw new Error("Missing tree target");
+    }
+
+    expect(context.branchSummarySupported).toBeFalsy();
+    await expect(
+      threads.navigateTree(context.threadId, target, { summarize: true })
+    ).rejects.toThrow("does not support branch summaries");
+    expect(agent.navigateTreeCalls).toStrictEqual([]);
+  });
+
+  test("rejects unavailable, running, and stale tree navigation", async () => {
+    const agent = new FakeAgent();
+    agent.operations.treePicker = false;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("First Thread");
+
+    await expect(threads.treeTargets()).rejects.toThrow(
+      "does not support Navigate Thread Tree"
+    );
+
+    agent.operations.treePicker = true;
+    agent.holdPrompts = true;
+    const running = threads.prompt("Still running");
+    await agent.firstPromptStarted;
+    await expect(threads.treeTargets()).rejects.toThrow(
+      "current turn to finish"
+    );
+    await threads.cancel();
+    await running;
+
+    await threads.newThread();
+    const context = await threads.treeTargets();
+    const [target] = context.targets;
+    if (!isDefined(target)) {
+      throw new Error("Missing tree target");
+    }
+    await threads.newThread();
+
+    await expect(
+      threads.navigateTree(context.threadId, target)
+    ).rejects.toThrow("selected Thread changed");
+    expect(agent.navigateTreeCalls).toStrictEqual([]);
+  });
+
+  test("tree navigation failure preserves the old transcript", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Old branch");
+    const context = await threads.treeTargets();
+    const [target] = context.targets;
+    if (!isDefined(target)) {
+      throw new Error("Missing tree target");
+    }
+    const oldItems = threads.snapshot().selected?.items;
+    agent.navigationError = new Error("Navigation failed");
+
+    await expect(
+      threads.navigateTree(context.threadId, target, { summarize: true })
+    ).rejects.toThrow("Navigation failed");
+
+    expect(agent.navigateTreeCalls).toStrictEqual([
       {
-        cwd: "/workspace",
-        messageId: "pi-assistant-1",
+        entryId: "pi-user-1",
+        options: { summarize: true },
         sessionId: "session-1",
       },
     ]);
     expect(threads.snapshot().selected).toMatchObject({
-      drafts: [],
-      id: expect.any(String),
-      items: [],
-      name: "Fix tests (fork)",
+      items: oldItems,
+      status: "idle",
     });
+    expect(threads.snapshot().selected?.sessionOperation).toBeUndefined();
   });
 
-  test("rolls back before the selected user message and restores its draft", async () => {
+  test("tree replay failure clears stale transcript and remains retryable", async () => {
     const agent = new FakeAgent();
     const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
-    await threads.prompt("Restore me");
-    await threads.prompt("Later message");
-    const message = threads
-      .snapshot()
-      .selected?.items.find(
-        (item) => item.kind === "user" && item.text === "Restore me"
-      );
-    if (!message) {
-      throw new Error("Missing user message");
+    await threads.prompt("Old branch");
+    const context = await threads.treeTargets();
+    const [target] = context.targets;
+    if (!isDefined(target)) {
+      throw new Error("Missing tree target");
     }
-    agent.replayOnLoad = true;
+    agent.failLoad = true;
 
-    await threads.rollback(message.id);
+    await threads.navigateTree(context.threadId, target);
 
-    expect(agent.rollbackCalls).toStrictEqual([
-      { messageId: message.id, sessionId: "session-1" },
-    ]);
     expect(threads.snapshot().selected).toMatchObject({
-      drafts: ["Restore me"],
+      drafts: ["Try this again"],
+      error: "Load failed",
       items: [],
+      status: "error",
     });
   });
 
-  test("rolls back through the selected agent response without restoring a draft", async () => {
+  test("tree navigation cannot send on its source or steal a newer selection", async () => {
     const agent = new FakeAgent();
+    agent.navigationGate = deferred();
     const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
-    await threads.prompt("Keep this turn");
-    await threads.prompt("Remove this turn");
-    const message = threads
-      .snapshot()
-      .selected?.items.find((item) => item.kind === "assistant");
-    if (!message) {
-      throw new Error("Missing agent response");
+    await threads.prompt("Source Thread");
+    const sourceId = threads.snapshot().selected?.id;
+    if (!isNonEmpty(sourceId)) {
+      throw new Error("Missing source Thread");
+    }
+    await threads.newThread();
+    const otherId = threads.snapshot().selected?.id;
+    if (!isNonEmpty(otherId)) {
+      throw new Error("Missing other Thread");
+    }
+    await threads.select(sourceId);
+    const changes: (ThreadsChange | undefined)[] = [];
+    threads.onChange((change) => {
+      changes.push(change);
+    });
+    const context = await threads.treeTargets();
+    const [target] = context.targets;
+    if (!isDefined(target)) {
+      throw new Error("Missing tree target");
     }
 
-    await threads.rollback(message.id);
+    const navigating = threads.navigateTree(context.threadId, target, {
+      summarize: true,
+    });
+    expect(threads.snapshot().selected?.sessionOperation).toBe("branchSummary");
+    expect(changes.at(-1)).toStrictEqual({
+      operation: "branchSummary",
+      threadId: sourceId,
+      type: "sessionOperation",
+    });
+    await expect(threads.prompt("Too soon")).rejects.toThrow(
+      "Thread operation to finish"
+    );
+    await threads.select(otherId);
+    agent.navigationGate.resolve();
+    await navigating;
 
-    expect(agent.rollbackCalls).toStrictEqual([
-      { messageId: "pi-assistant-1", sessionId: "session-1" },
-    ]);
+    expect(threads.snapshot().selected?.id).toBe(otherId);
+    await threads.select(sourceId);
     expect(threads.snapshot().selected).toMatchObject({
-      drafts: [],
-      items: [
-        { kind: "user", text: "Keep this turn" },
-        { kind: "assistant", text: "Done." },
-      ],
+      drafts: ["Try this again"],
+      items: [],
+      status: "idle",
     });
   });
 
@@ -715,7 +1069,9 @@ describe("threads module", () => {
     const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
     const changes: (ThreadsChange | undefined)[] = [];
-    threads.onChange((change) => changes.push(change));
+    threads.onChange((change) => {
+      changes.push(change);
+    });
 
     const first = threads.prompt("First");
     expect(threads.snapshot().selected).toMatchObject({
@@ -726,7 +1082,9 @@ describe("threads module", () => {
     expect(threads.snapshot().selected?.streaming).toBeTruthy();
     expect(changes).toContainEqual(
       expect.objectContaining({
-        item: expect.objectContaining({ kind: "assistant", text: "Partial" }),
+        item: testValue<unknown>(
+          expect.objectContaining({ kind: "assistant", text: "Partial" })
+        ),
         streaming: true,
         type: "transcript",
       })
@@ -774,14 +1132,16 @@ describe("threads module", () => {
     await agent.secondPromptStarted;
 
     expect(threads.snapshot().selected).toMatchObject({
-      items: expect.arrayContaining([
-        expect.objectContaining({
-          cancelled: true,
-          kind: "user",
-          text: "First",
-        }),
-        expect.objectContaining({ kind: "user", text: "Send me now" }),
-      ]),
+      items: testValue<unknown>(
+        expect.arrayContaining([
+          expect.objectContaining({
+            cancelled: true,
+            kind: "user",
+            text: "First",
+          }),
+          expect.objectContaining({ kind: "user", text: "Send me now" }),
+        ])
+      ),
       steering: [],
     });
     agent.promptResolvers[0]?.({ stopReason: "completed" });
@@ -1093,24 +1453,6 @@ describe("threads module", () => {
         id: "assistant:pi-assistant-1",
         kind: "assistant",
         text: "Restored.",
-      },
-    ]);
-
-    await restored.rollback("user:pi-user-1");
-    expect(loadingAgent.rollbackCalls).toStrictEqual([
-      { messageId: "pi-user-1", sessionId: "session-1" },
-    ]);
-
-    const forkingAgent = new FakeAgent();
-    forkingAgent.replayOnLoad = true;
-    const forking = createThreads(forkingAgent.factory);
-    await forking.openWorkspace("/workspace");
-    await forking.fork("user:pi-user-1");
-    expect(forkingAgent.forkCalls).toStrictEqual([
-      {
-        cwd: "/workspace",
-        messageId: "pi-user-1",
-        sessionId: "session-1",
       },
     ]);
   });

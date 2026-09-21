@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   chmod,
@@ -10,14 +9,14 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 
 import { afterEach, describe, expect, test, vi } from "vitest";
 
+import { exec } from "../exec";
+import { isNonEmpty } from "../present";
 import { ProfileDatabase } from "../profile-database/profile-database";
 import { issueWorkspaceName, locateWorkspace, Projects } from "./projects";
 
-const exec = promisify(execFile);
 const log = vi.fn<(message: string) => void>();
 const profileDatabases: ProfileDatabase[] = [];
 const temporaryFolders: string[] = [];
@@ -53,8 +52,10 @@ const gitOutput = async (cwd: string, ...args: string[]): Promise<string> => {
   return stdout.trim();
 };
 
-const unexpectedRepositoryChoice = (): Promise<never> =>
-  Promise.reject(new Error("repository should already be configured"));
+const unexpectedRepositoryChoice = async (): Promise<never> => {
+  await Promise.resolve();
+  throw new Error("repository should already be configured");
+};
 
 const fakeGitHubCli = async (
   cwd: string,
@@ -89,7 +90,9 @@ const createProjects = async (currentWorkspace?: string): Promise<Projects> =>
   new Projects(
     await openProfileDatabase(
       undefined,
-      currentWorkspace ? await realpath(currentWorkspace) : undefined
+      isNonEmpty(currentWorkspace)
+        ? await realpath(currentWorkspace)
+        : undefined
     )
   );
 
@@ -101,12 +104,14 @@ describe("projects module", () => {
     delete process.env.MISCHIEF_GH_ERROR;
     delete process.env.MISCHIEF_GH_OUTPUT;
     await Promise.all(
-      profileDatabases.splice(0).map((database) => database.dispose())
+      profileDatabases.splice(0).map(async (database) => {
+        await database.dispose();
+      })
     );
     await Promise.all(
-      temporaryFolders
-        .splice(0)
-        .map((folder) => rm(folder, { force: true, recursive: true }))
+      temporaryFolders.splice(0).map(async (folder) => {
+        await rm(folder, { force: true, recursive: true });
+      })
     );
   });
 
@@ -247,9 +252,10 @@ describe("projects module", () => {
       "atomicobject/issues"
     );
     const chooseRepository = vi.fn<(repository: string) => Promise<string>>(
-      (repository) => {
+      async (repository) => {
+        await Promise.resolve();
         expect(repository).toBe("owner/mischief");
-        return Promise.resolve("atomicobject/issues");
+        return "atomicobject/issues";
       }
     );
 

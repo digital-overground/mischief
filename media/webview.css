@@ -150,12 +150,45 @@ main > section {
   flex: 0 1 auto;
 }
 #thread {
+  position: relative;
   min-width: 0;
   min-height: 72px;
   flex: 1 0 72px;
   overflow: hidden;
   border-bottom: 0;
   overflow-wrap: anywhere;
+}
+#thread-content {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.thread-operation-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: var(--vscode-textLink-foreground);
+  background: color-mix(
+    in srgb,
+    var(--vscode-editor-background, var(--vscode-sideBar-background)) 88%,
+    transparent
+  );
+  font-family: var(--mischief-ui-font);
+  font-weight: 600;
+}
+.thread-operation-spinner {
+  font-family: var(--mischief-mono-font);
+  font-size: 18px;
+}
+.thread-operation-spinner::before {
+  content: "⠋";
+  animation: thread-status-frame 600ms step-end infinite;
 }
 header {
   min-height: 26px;
@@ -432,15 +465,9 @@ select:disabled {
 #thread-title {
   font-size: 12px;
 }
-#usage-control,
-#history-control {
+#usage-control {
   position: relative;
   flex: none;
-}
-#history-control {
-  margin-left: 6px;
-}
-#history-control + #usage-control {
   margin-left: auto;
 }
 #usage-control[hidden],
@@ -494,84 +521,6 @@ select:disabled {
   margin-bottom: 12px;
   font-size: 15px;
   font-weight: 600;
-}
-#history-list {
-  position: fixed;
-  z-index: 3;
-  max-height: 500px;
-  overflow-y: auto;
-  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
-  border-radius: 4px;
-  padding: 4px 0;
-  background: var(--vscode-editorWidget-background);
-  box-shadow: 0 2px 8px var(--vscode-widget-shadow);
-  outline: none;
-}
-.history-entry {
-  position: relative;
-  outline: none;
-}
-.history-entry.user {
-  margin: 2px 4px;
-  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
-  border-radius: 4px;
-  background: var(--vscode-editor-background, var(--vscode-sideBar-background));
-  font-family: var(--mischief-mono-font);
-}
-.history-entry.assistant {
-  font-family: var(--mischief-ui-font);
-}
-.history-entry:hover,
-.history-entry:focus-within {
-  background: var(--vscode-list-hoverBackground);
-}
-.history-entry:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
-  outline-offset: -1px;
-}
-.history-message {
-  display: block;
-  padding: 5px 62px 5px 8px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.history-actions {
-  position: absolute;
-  top: 50%;
-  right: 4px;
-  display: flex;
-  gap: 2px;
-  visibility: hidden;
-  transform: translateY(-50%);
-}
-.history-entry:hover .history-actions,
-.history-entry:focus-within .history-actions {
-  visibility: visible;
-}
-.history-action {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  place-items: center;
-  border: 0;
-  border-radius: 3px;
-  padding: 4px;
-  background: var(--vscode-list-hoverBackground);
-  color: inherit;
-  cursor: pointer;
-}
-.history-action:hover,
-.history-action:focus-visible {
-  background: var(--vscode-toolbar-hoverBackground);
-}
-.history-action:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-.history-action .lucide {
-  width: 16px;
-  height: 16px;
 }
 #compact {
   width: 100%;
@@ -772,6 +721,9 @@ article.entry {
 .entry.system {
   --entry-accent: var(--vscode-descriptionForeground);
 }
+.entry.branch-summary {
+  --entry-accent: var(--hl-accent-alt);
+}
 .entry-icon {
   flex: none;
   display: inline-flex;
@@ -823,11 +775,13 @@ pre {
   line-height: 1.35;
 }
 .thinking-group,
-.tool-group {
+.tool-group,
+.branch-summary {
   display: block;
 }
 .thinking-heading,
-.tool-group-heading {
+.tool-group-heading,
+.branch-summary-heading {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -835,8 +789,16 @@ pre {
   font-family: var(--mischief-ui-font);
   font-weight: 500;
 }
+.branch-summary-heading::before {
+  width: 10px;
+  content: "▸";
+}
+.branch-summary[open] > .branch-summary-heading::before {
+  content: "▾";
+}
 .thinking-content,
 .tool-group-content,
+.branch-summary-content,
 .ask-user-content {
   margin: 8px 0 0 6px;
   border-left: 1px solid
@@ -1301,7 +1263,8 @@ fieldset.interaction-field {
 }
 @media (prefers-reduced-motion: reduce) {
   .plan-task-indicator::before,
-  .tool-operation-status:is(.pending, .in_progress)::before {
+  .tool-operation-status:is(.pending, .in_progress)::before,
+  .thread-operation-spinner::before {
     animation: none;
   }
   .plan-task-indicator::before {
@@ -1492,7 +1455,8 @@ footer {
   padding: 2px 12px 4px;
 }
 #footer-new-thread,
-#history {
+#footer-fork-thread,
+#footer-navigate-tree {
   flex: none;
   border: 0;
   background: transparent;
@@ -1505,12 +1469,14 @@ footer {
   justify-content: center;
 }
 #footer-new-thread .lucide,
-#history .lucide {
+#footer-fork-thread .lucide,
+#footer-navigate-tree .lucide {
   width: 18px;
   height: 18px;
 }
 #usage,
-#history {
+#footer-fork-thread,
+#footer-navigate-tree {
   border: 0;
   background: transparent;
 }

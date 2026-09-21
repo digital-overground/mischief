@@ -1,22 +1,23 @@
-// @vitest-environment jsdom
-
 import { act } from "react";
+// @vitest-environment jsdom
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import { isDefined } from "../present";
+import { testValue } from "../test-value";
 import type { HostToWebviewMessage } from "./protocol";
 
 const postMessage = vi.fn<(message: unknown) => void>();
-const writeText = vi.fn<(text: string) => Promise<void>>(() =>
-  Promise.resolve()
-);
+const writeText = vi.fn<(text: string) => Promise<void>>(async () => {
+  await Promise.resolve();
+});
 vi.stubGlobal("acquireVsCodeApi", () => ({ postMessage }));
 Object.defineProperty(navigator, "clipboard", {
   configurable: true,
   value: { writeText },
 });
-(
-  globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+testValue<{ IS_REACT_ACT_ENVIRONMENT?: boolean }>(
+  globalThis
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { App } = await import("./app");
@@ -43,14 +44,20 @@ const threadState = (id: string, drafts: string[]): HostToWebviewMessage => ({
 });
 
 const renderApp = async (): Promise<() => Promise<void>> => {
+  await Promise.resolve();
   const container = document.querySelector("#root");
   if (!(container instanceof HTMLElement)) {
     throw new Error("Missing test root");
   }
   const root = createRoot(container);
-  await act(() => root.render(<App />));
+  act(() => {
+    root.render(<App />);
+  });
   return async () => {
-    await act(() => root.unmount());
+    await Promise.resolve();
+    act(() => {
+      root.unmount();
+    });
   };
 };
 
@@ -68,7 +75,7 @@ describe("React webview", () => {
 
   test("continues text-based setup when Enter is pressed", async () => {
     const unmount = await renderApp();
-    await act(() => {
+    act(() => {
       window.dispatchEvent(
         new MessageEvent<HostToWebviewMessage>("message", {
           data: {
@@ -109,13 +116,15 @@ describe("React webview", () => {
         ".setup-option input[type='checkbox']"
       ),
     ];
-    if (!composer || !options[0]) {
+    if (!composer || !isDefined(options[0])) {
       throw new Error("Missing setup controls");
     }
     expect(options.map(({ checked }) => checked)).toStrictEqual([true, true]);
-    await act(() => options[0]?.click());
+    act(() => {
+      options[0]?.click();
+    });
 
-    await act(() => {
+    act(() => {
       composer.dispatchEvent(
         new KeyboardEvent("keydown", {
           bubbles: true,
@@ -138,7 +147,7 @@ describe("React webview", () => {
 
   test("keeps the Project list visible while maximizing the current Thread", async () => {
     const unmount = await renderApp();
-    await act(() => {
+    act(() => {
       window.dispatchEvent(
         new MessageEvent<HostToWebviewMessage>("message", {
           data: {
@@ -187,7 +196,9 @@ describe("React webview", () => {
     }
     const maximizeIcon = maximize.innerHTML;
 
-    await act(() => maximize.click());
+    act(() => {
+      maximize.click();
+    });
     expect({
       iconChanged: maximize.innerHTML !== maximizeIcon,
       maximized: maximize.getAttribute("aria-pressed"),
@@ -212,7 +223,9 @@ describe("React webview", () => {
       workspaces: 0,
     });
 
-    await act(() => maximize.click());
+    act(() => {
+      maximize.click();
+    });
     expect({
       maximized: maximize.getAttribute("aria-pressed"),
       projectExpanded: document
@@ -228,7 +241,7 @@ describe("React webview", () => {
     });
 
     postMessage.mockClear();
-    await act(() => {
+    act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
           data: { expanded: false, type: "setAllExpanded" },
@@ -250,7 +263,7 @@ describe("React webview", () => {
     });
 
     postMessage.mockClear();
-    await act(() => {
+    act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
           data: { expanded: true, type: "setAllExpanded" },
@@ -285,7 +298,7 @@ describe("React webview", () => {
         throw new Error("Missing maximize button");
       }
 
-      await act(() =>
+      void act(() =>
         maximize.dispatchEvent(
           new MouseEvent("mouseover", {
             bubbles: true,
@@ -296,17 +309,19 @@ describe("React webview", () => {
       );
 
       expect(document.querySelector('[role="tooltip"]')).toBeNull();
-      await act(() => vi.advanceTimersByTime(350));
+      void act(() => vi.advanceTimersByTime(350));
       expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(
         "Maximize Current Thread"
       );
-      await act(() =>
+      void act(() =>
         maximize.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }))
       );
       expect(document.querySelector('[role="tooltip"]')).toBeNull();
-      await act(() => maximize.focus());
+      act(() => {
+        maximize.focus();
+      });
       expect(document.querySelector('[role="tooltip"]')).toBeNull();
-      await act(() => vi.advanceTimersByTime(350));
+      void act(() => vi.advanceTimersByTime(350));
       expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(
         "Maximize Current Thread"
       );
@@ -330,12 +345,20 @@ describe("React webview", () => {
       throw new Error("Missing Settings controls");
     }
     Object.defineProperties(dialog, {
-      close: { value: () => dialog.removeAttribute("open") },
-      showModal: { value: () => dialog.setAttribute("open", "") },
+      close: {
+        value: () => {
+          dialog.removeAttribute("open");
+        },
+      },
+      showModal: {
+        value: () => {
+          dialog.setAttribute("open", "");
+        },
+      },
     });
     const defaultChecked = checkbox.checked;
 
-    await act(() => {
+    act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
           data: {
@@ -362,20 +385,24 @@ describe("React webview", () => {
     });
 
     postMessage.mockClear();
-    await act(() => checkbox.click());
+    act(() => {
+      checkbox.click();
+    });
     expect(postMessage).toHaveBeenCalledExactlyOnceWith({
       type: "setAssignWorkspaceColors",
       value: true,
     });
 
-    await act(() => close.click());
+    act(() => {
+      close.click();
+    });
     expect(dialog.open).toBeFalsy();
     await unmount();
   });
 
   test("routes open GitHub issues from a Project", async () => {
     const unmount = await renderApp();
-    await act(() => {
+    act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
           data: {
@@ -399,7 +426,9 @@ describe("React webview", () => {
     }
     postMessage.mockClear();
 
-    await act(() => openIssues.click());
+    act(() => {
+      openIssues.click();
+    });
 
     expect({
       circles: icon.querySelectorAll("circle").length,
@@ -417,7 +446,7 @@ describe("React webview", () => {
 
   test("renders nested Navigator controls and attention", async () => {
     const unmount = await renderApp();
-    await act(() => {
+    act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
           data: {
@@ -530,12 +559,16 @@ describe("React webview", () => {
         headerSelected: false,
         threads: [
           {
-            activity: expect.stringMatching(/^(?:now|\d+(?:min|h|d))$/u),
+            activity: testValue<unknown>(
+              expect.stringMatching(/^(?:now|\d+(?:min|h|d))$/u)
+            ),
             name: "Current",
             selected: true,
           },
           {
-            activity: expect.stringMatching(/^(?:now|\d+(?:min|h|d))$/u),
+            activity: testValue<unknown>(
+              expect.stringMatching(/^(?:now|\d+(?:min|h|d))$/u)
+            ),
             name: "Error",
             selected: false,
           },
@@ -612,12 +645,16 @@ describe("React webview", () => {
     if (!projectTitle || !projectToggle) {
       throw new Error("Missing Project toggle");
     }
-    await act(() => projectTitle.click());
+    act(() => {
+      projectTitle.click();
+    });
     const projectCollapsed = {
       expanded: projectToggle.getAttribute("aria-expanded"),
       workspaces: document.querySelectorAll(".workspace-node").length,
     };
-    await act(() => projectTitle.click());
+    act(() => {
+      projectTitle.click();
+    });
     expect({
       collapsed: projectCollapsed,
       expanded: {
@@ -636,27 +673,39 @@ describe("React webview", () => {
       throw new Error("Missing Thread History control");
     }
     postMessage.mockClear();
-    await act(() => history.click());
+    act(() => {
+      history.click();
+    });
     const historyMessage = [...postMessage.mock.calls];
 
     const [, renameError] = document.querySelectorAll<HTMLButtonElement>(
       '.workspace-node.current [aria-label="Rename Thread"]'
     );
-    if (!renameError) {
+    if (!isDefined(renameError)) {
       throw new Error("Missing Thread rename control");
     }
     postMessage.mockClear();
-    await act(() => renameError.click());
+    act(() => {
+      renameError.click();
+    });
 
     const [currentToggle, remoteToggle] =
       document.querySelectorAll<HTMLButtonElement>(".workspace-toggle");
     const currentWorkspaceTitle = document.querySelector<HTMLElement>(
       ".workspace-node.current .workspace-label"
     );
-    if (!(currentToggle && remoteToggle && currentWorkspaceTitle)) {
+    if (
+      !(
+        isDefined(currentToggle) &&
+        isDefined(remoteToggle) &&
+        currentWorkspaceTitle
+      )
+    ) {
       throw new Error("Missing Workspace toggles");
     }
-    await act(() => currentWorkspaceTitle.click());
+    act(() => {
+      currentWorkspaceTitle.click();
+    });
     const collapsed = {
       expanded: currentToggle.getAttribute("aria-expanded"),
       headerSelected: document
@@ -666,7 +715,9 @@ describe("React webview", () => {
         ".workspace-node.current .thread-row.selected"
       ),
     };
-    await act(() => currentWorkspaceTitle.click());
+    act(() => {
+      currentWorkspaceTitle.click();
+    });
     const reexpanded = {
       expanded: currentToggle.getAttribute("aria-expanded"),
       headerSelected: document
@@ -676,7 +727,9 @@ describe("React webview", () => {
         ".workspace-node.current .thread-row.selected .name"
       )?.textContent,
     };
-    await act(() => remoteToggle.click());
+    act(() => {
+      remoteToggle.click();
+    });
     const toggleMessages = [...postMessage.mock.calls];
     const remoteThread = document.querySelector<HTMLButtonElement>(
       ".workspace-node:not(.current) .thread-row .row-open"
@@ -685,7 +738,9 @@ describe("React webview", () => {
       throw new Error("Missing remote Thread");
     }
     postMessage.mockClear();
-    await act(() => remoteThread.click());
+    act(() => {
+      remoteThread.click();
+    });
     expect({
       collapsed,
       historyMessage,
@@ -728,13 +783,17 @@ describe("React webview", () => {
       throw new Error("Missing remote Workspace controls");
     }
     postMessage.mockClear();
-    await act(() => remoteWorkspaceTitle.click());
+    act(() => {
+      remoteWorkspaceTitle.click();
+    });
     const remoteCollapsed = {
       expanded: remoteToggle.getAttribute("aria-expanded"),
       messages: [...postMessage.mock.calls],
     };
     postMessage.mockClear();
-    await act(() => openWorkspaceWindow.click());
+    act(() => {
+      openWorkspaceWindow.click();
+    });
     expect({
       collapsed: remoteCollapsed,
       opened: {
@@ -774,7 +833,7 @@ describe("React webview", () => {
       },
     ];
 
-    await act(() => {
+    act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
     });
 
@@ -905,7 +964,7 @@ describe("React webview", () => {
       },
     ];
 
-    await act(() => {
+    act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
     });
 
@@ -915,7 +974,11 @@ describe("React webview", () => {
     const fileGroup = document.querySelector<HTMLElement>(
       ".file-operations-group"
     );
-    if (!terminalGroups[0] || !terminalGroups[1] || !fileGroup) {
+    if (
+      !isDefined(terminalGroups[0]) ||
+      !isDefined(terminalGroups[1]) ||
+      !fileGroup
+    ) {
       throw new Error("Missing operation groups");
     }
     expect({
@@ -1108,10 +1171,10 @@ describe("React webview", () => {
 
     const [firstCommand, secondCommand] =
       terminalGroups[0].querySelectorAll<HTMLDetailsElement>(".tool-operation");
-    if (!(firstCommand && secondCommand)) {
+    if (!(isDefined(firstCommand) && isDefined(secondCommand))) {
       throw new Error("Missing Terminal operations");
     }
-    await act(() => firstCommand.querySelector("summary")?.click());
+    act(() => firstCommand.querySelector("summary")?.click());
     expect({
       firstOpen: firstCommand.open,
       output: firstCommand.querySelector(".tool-body")?.textContent,
@@ -1132,8 +1195,12 @@ describe("React webview", () => {
       throw new Error("Missing file actions");
     }
     postMessage.mockClear();
-    await act(() => openLocation.click());
-    await act(() => openDiff.click());
+    act(() => {
+      openLocation.click();
+    });
+    act(() => {
+      openDiff.click();
+    });
     expect(postMessage.mock.calls).toStrictEqual([
       [
         {
@@ -1189,12 +1256,13 @@ describe("React webview", () => {
       },
       type: "state",
     };
-    await act(() => {
+    act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
     });
     expect(
       postMessage.mock.calls.filter(
-        ([message]) => (message as { type?: string }).type === "contextItems"
+        ([message]) =>
+          testValue<{ type?: string }>(message).type === "contextItems"
       )
     ).toHaveLength(1);
     const composer = document.querySelector<HTMLTextAreaElement>("#composer");
@@ -1223,7 +1291,7 @@ describe("React webview", () => {
     scrollTop.mockClear();
     clientHeight.mockClear();
 
-    await act(() => {
+    act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
           data: {
@@ -1263,7 +1331,7 @@ describe("React webview", () => {
     state.threads.selected.items = [
       { id: "assistant", kind: "assistant", text: "Copy this" },
     ];
-    await act(() => {
+    act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
     });
     const body = document.querySelector<HTMLElement>("#transcript .body");
@@ -1287,14 +1355,14 @@ describe("React webview", () => {
     expect(document.querySelector(".toast")?.textContent).toBe(
       "copied to clipboard"
     );
-    await act(() => vi.advanceTimersByTime(1));
+    void act(() => vi.advanceTimersByTime(1));
     expect(selection.toString()).toBe("");
     await unmount();
   });
 
   test("defers worst-case context matching outside the input event", async () => {
     const unmount = await renderApp();
-    await act(() => {
+    act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
           data: {
@@ -1328,11 +1396,11 @@ describe("React webview", () => {
           if (typeof property === "string" && /^\d+$/u.test(property)) {
             reads += 1;
           }
-          return Reflect.get(target, property, receiver);
+          return testValue<unknown>(Reflect.get(target, property, receiver));
         },
       }
     );
-    await act(() => {
+    act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
           data: { items: candidates, type: "contextItems" },
@@ -1340,17 +1408,17 @@ describe("React webview", () => {
       );
     });
     const composer = document.querySelector<HTMLTextAreaElement>("#composer");
-    const valueSetter = Object.getOwnPropertyDescriptor(
+    const valueDescriptor = Object.getOwnPropertyDescriptor(
       HTMLTextAreaElement.prototype,
       "value"
-    )?.set;
-    if (!composer || !valueSetter) {
+    );
+    if (!composer || !valueDescriptor?.set) {
       throw new Error("Missing composer");
     }
     postMessage.mockClear();
     let synchronousReads = -1;
-    await act(() => {
-      valueSetter.call(composer, "@missing");
+    act(() => {
+      valueDescriptor.set?.call(composer, "@missing");
       composer.setSelectionRange(8, 8);
       composer.dispatchEvent(new Event("input", { bubbles: true }));
       synchronousReads = reads;
@@ -1369,7 +1437,7 @@ describe("React webview", () => {
   test("keeps composer drafts with their Threads while switching", async () => {
     const unmount = await renderApp();
 
-    await act(() =>
+    void act(() =>
       window.dispatchEvent(
         new MessageEvent("message", { data: threadState("original", []) })
       )
@@ -1380,7 +1448,7 @@ describe("React webview", () => {
     }
     composer.value = "Original draft";
 
-    await act(() =>
+    void act(() =>
       window.dispatchEvent(
         new MessageEvent("message", {
           data: threadState("fork", ["Fork from here"]),
@@ -1389,14 +1457,14 @@ describe("React webview", () => {
     );
     expect(composer.value).toBe("Fork from here");
 
-    await act(() =>
+    void act(() =>
       window.dispatchEvent(
         new MessageEvent("message", { data: threadState("original", []) })
       )
     );
     expect(composer.value).toBe("Original draft");
 
-    await act(() =>
+    void act(() =>
       window.dispatchEvent(
         new MessageEvent("message", { data: threadState("fork", []) })
       )
@@ -1405,9 +1473,36 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("appends a tree-navigation draft without losing typed text", async () => {
+    const unmount = await renderApp();
+    void act(() =>
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("selected", []) })
+      )
+    );
+    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+    if (!composer) {
+      throw new Error("Missing composer");
+    }
+    composer.value = "Unsent local draft";
+    postMessage.mockClear();
+
+    void act(() =>
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: threadState("selected", ["Try this again"]),
+        })
+      )
+    );
+
+    expect(composer.value).toBe("Unsent local draft\n\nTry this again");
+    expect(postMessage).toHaveBeenCalledWith({ type: "draftsConsumed" });
+    await unmount();
+  });
+
   test("autocompletes advertised slash commands and sends unknown slash text", async () => {
     const unmount = await renderApp();
-    await act(() => {
+    act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
           data: {
@@ -1441,16 +1536,17 @@ describe("React webview", () => {
       );
     });
     const composer = document.querySelector<HTMLTextAreaElement>("#composer");
-    const valueSetter = Object.getOwnPropertyDescriptor(
+    const valueDescriptor = Object.getOwnPropertyDescriptor(
       HTMLTextAreaElement.prototype,
       "value"
-    )?.set;
-    if (!composer || !valueSetter) {
+    );
+    if (!composer || !valueDescriptor?.set) {
       throw new Error("Missing composer");
     }
     const input = async (value: string): Promise<void> => {
-      await act(() => {
-        valueSetter.call(composer, value);
+      await Promise.resolve();
+      act(() => {
+        valueDescriptor.set?.call(composer, value);
         composer.setSelectionRange(value.length, value.length);
         composer.dispatchEvent(new Event("input", { bubbles: true }));
       });
@@ -1472,16 +1568,16 @@ describe("React webview", () => {
       "#context-suggestions button"
     );
     const scrollIntoView = vi.fn<(options?: ScrollIntoViewOptions) => void>();
-    if (!resume) {
+    if (!isDefined(resume)) {
       throw new Error("Missing second command suggestion");
     }
     resume.scrollIntoView = scrollIntoView;
-    await act(() => {
+    act(() => {
       composer.dispatchEvent(
         new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })
       );
     });
-    await act(() => {
+    act(() => {
       composer.dispatchEvent(
         new KeyboardEvent("keydown", { bubbles: true, key: "Enter" })
       );
@@ -1501,14 +1597,14 @@ describe("React webview", () => {
     if (!review) {
       throw new Error("Missing command suggestion");
     }
-    await act(() => {
+    act(() => {
       review.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     });
     expect(composer.value).toBe("/review ");
 
     postMessage.mockClear();
     await input("/new");
-    await act(() => {
+    act(() => {
       composer.dispatchEvent(
         new KeyboardEvent("keydown", { bubbles: true, key: "Enter" })
       );
@@ -1554,7 +1650,7 @@ describe("React webview", () => {
       },
       type: "state",
     };
-    await act(() => {
+    act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
     });
     const select = document.querySelector<HTMLSelectElement>(
@@ -1566,7 +1662,7 @@ describe("React webview", () => {
     select.focus();
     select.value = "provider/two";
 
-    await act(() => {
+    act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
           data: {
@@ -1618,6 +1714,11 @@ describe("React webview", () => {
           id: "thread-1",
           items: [
             {
+              id: "summary-1",
+              kind: "branchSummary",
+              text: "Preserve the adapter decision.",
+            },
+            {
               id: "plan-1",
               kind: "plan",
               planEntries: [
@@ -1639,11 +1740,31 @@ describe("React webview", () => {
       },
       type: "state",
     };
-    await act(() => {
+    act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent<HostToWebviewMessage>("message", {
+          data: {
+            operation: "branchSummary",
+            threadId: "thread-1",
+            type: "sessionOperation",
+          },
+        })
+      );
     });
 
     expect({
+      branchBody: document.querySelector(".branch-summary-content")
+        ?.textContent,
+      branchHeading: document.querySelector(".branch-summary-heading")
+        ?.textContent,
+      branchIcon: document
+        .querySelector(".branch-summary-heading [role='img']")
+        ?.getAttribute("aria-label"),
+      branchOpen:
+        document.querySelector<HTMLDetailsElement>(".branch-summary")?.open,
       completedIcon: document.querySelector<HTMLElement>(
         ".plan-task.completed .plan-task-icon"
       )?.title,
@@ -1651,19 +1772,30 @@ describe("React webview", () => {
         "--mischief-mono-font"
       ),
       plan: document.querySelector("#plan-body")?.textContent,
-      processing: document.querySelector(
+      planProcessing: document.querySelector(
         '.plan-task-indicator[aria-label="In progress"]'
       ),
       steering: document
         .querySelector("#steering")
         ?.textContent?.includes("Keep the controls small"),
+      summaryOverlay: document.querySelector(".thread-operation-overlay")
+        ?.textContent,
+      threadContentInert: document
+        .querySelector("#thread-content")
+        ?.hasAttribute("inert"),
       title: document.querySelector("#thread-title")?.textContent,
     }).toStrictEqual({
+      branchBody: "Preserve the adapter decision.",
+      branchHeading: "Branch summary",
+      branchIcon: "Branch summary",
+      branchOpen: false,
       completedIcon: "Completed",
       font: "Test Mono",
       plan: "Inspect the viewRefactor the viewTest the view",
-      processing: expect.any(HTMLElement),
+      planProcessing: testValue<unknown>(expect.any(HTMLElement)),
       steering: true,
+      summaryOverlay: "Generating branch summary…",
+      threadContentInert: true,
       title: "React refactor",
     });
 
@@ -1674,10 +1806,10 @@ describe("React webview", () => {
     if (!sendSteering || !clearPlan) {
       throw new Error("Missing Thread controls");
     }
-    await act(() => {
+    act(() => {
       sendSteering.click();
     });
-    await act(() => {
+    act(() => {
       clearPlan.click();
     });
 
@@ -1747,7 +1879,7 @@ describe("React webview", () => {
       },
       type: "state",
     };
-    await act(() => {
+    act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
     });
 
@@ -1782,13 +1914,13 @@ describe("React webview", () => {
         "Immutable once round startsGames can trust the roster for the whole round.",
         "Editable until first scoreChanges remain possible until scoring begins.",
       ],
-      icon: expect.any(SVGElement),
+      icon: testValue<unknown>(expect.any(SVGElement)),
       question: "Can Team membership change after a round starts?",
       tooltips: ["Submit", "Cancel"],
     });
 
     postMessage.mockClear();
-    await act(() => {
+    act(() => {
       choices[0]?.click();
       custom.value = "Allow admins to correct mistakes.";
       submit.click();

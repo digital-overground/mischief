@@ -45,6 +45,24 @@ export const App = (): React.JSX.Element => {
       } else if (event.data.type === "state") {
         setSnapshot(event.data);
         setTranscript({ items: [], streaming: false });
+      } else if (event.data.type === "sessionOperation") {
+        const { data: update } = event;
+        setSnapshot((current) => {
+          const { selected } = current.threads;
+          if (selected?.id !== update.threadId) {
+            return current;
+          }
+          return {
+            ...current,
+            threads: {
+              ...current.threads,
+              selected: {
+                ...selected,
+                sessionOperation: update.operation,
+              },
+            },
+          };
+        });
       } else if (event.data.type === "transcript") {
         const update = event.data;
         setTranscript((current) => {
@@ -64,7 +82,9 @@ export const App = (): React.JSX.Element => {
     };
     window.addEventListener("message", receive);
     postMessage({ type: "ready" });
-    return () => window.removeEventListener("message", receive);
+    return () => {
+      window.removeEventListener("message", receive);
+    };
   }, []);
 
   useEffect(() => {
@@ -99,7 +119,9 @@ export const App = (): React.JSX.Element => {
           expandAllRequest={expandAllRequest}
           projects={snapshot.projects}
           threads={snapshot.threads}
-          onExpand={() => setThreadMaximized(false)}
+          onExpand={() => {
+            setThreadMaximized(false);
+          }}
         />
         <ThreadView
           contextItems={contextItems}
