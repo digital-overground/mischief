@@ -28,11 +28,12 @@ describe("setup", () => {
   test("builds add-on installs from the allowlist in display order", () => {
     expect(RECOMMENDED_ADDONS.map(({ id }) => id)).toStrictEqual([
       "todo",
-      "ask-user",
       "ponytail",
       "matt-pocock-skills",
     ]);
-    expect(addOnInstallCommand(["unknown", "ponytail", "todo"])).toBe(
+    expect(
+      addOnInstallCommand(["unknown", "ask-user", "ponytail", "todo"])
+    ).toBe(
       "pi install npm:@juicesharp/rpiv-todo && pi install git:github.com/DietrichGebert/ponytail"
     );
   });
@@ -45,7 +46,6 @@ describe("setup", () => {
       JSON.stringify({
         packages: [
           "npm:@juicesharp/rpiv-todo",
-          "npm:pi-ask-user",
           "git:github.com/DietrichGebert/ponytail",
           "git:github.com/mattpocock/skills",
         ],

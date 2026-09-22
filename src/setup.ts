@@ -7,7 +7,6 @@ import type { AgentLaunch } from "./threads/acp";
 import type { SetupOption } from "./webview/protocol";
 
 const ADDON_SOURCES: Readonly<Record<string, string>> = {
-  "ask-user": "npm:pi-ask-user",
   "matt-pocock-skills": "git:github.com/mattpocock/skills",
   ponytail: "git:github.com/DietrichGebert/ponytail",
   todo: "npm:@juicesharp/rpiv-todo",
@@ -19,12 +18,6 @@ export const RECOMMENDED_ADDONS: SetupOption[] = [
       "Highly recommended — shows agent plans as live, persistent checklists in Mischief.",
     id: "todo",
     label: "Todo",
-  },
-  {
-    description:
-      "Highly recommended — lets the agent ask structured questions with selectable answers.",
-    id: "ask-user",
-    label: "Ask User",
   },
   {
     description: "Keeps implementations minimal and avoids over-engineering.",
