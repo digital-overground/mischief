@@ -24,6 +24,23 @@ const MarkdownBody = ({
     <div
       className={className}
       dangerouslySetInnerHTML={{ __html: item.html }}
+      onClick={(event) => {
+        if (!(event.target instanceof Element)) {
+          return;
+        }
+        const href = event.target.closest("a")?.getAttribute("href");
+        if (
+          href === null ||
+          href === undefined ||
+          href.length === 0 ||
+          href.startsWith("#") ||
+          (/^[a-z][a-z\d+.-]*:/iu.test(href) && !/^file:/iu.test(href))
+        ) {
+          return;
+        }
+        event.preventDefault();
+        postMessage({ href, type: "openTranscriptLink" });
+      }}
     />
   ) : (
     <div className={className}>{item.text ?? ""}</div>

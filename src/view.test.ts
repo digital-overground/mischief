@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { setImmediate } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 
 import { describe, expect, test, vi } from "vitest";
 
@@ -35,6 +36,9 @@ const vscode = vi.hoisted(() => ({
   }),
   showInputBox: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   showQuickPick: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+  showTextDocument: vi.fn<() => Promise<void>>(async () => {
+    await Promise.resolve();
+  }),
   updateConfiguration: vi.fn<
     (key: string, value: unknown, target: number) => Promise<void>
   >(async () => {
@@ -69,6 +73,7 @@ vi.mock(import("vscode"), () =>
       showInformationMessage: vscode.showInformationMessage,
       showInputBox: vscode.showInputBox,
       showQuickPick: vscode.showQuickPick,
+      showTextDocument: vscode.showTextDocument,
     },
     workspace: {
       getConfiguration: () => ({
@@ -2237,6 +2242,52 @@ describe("view provider", () => {
     vscode.assignWorkspaceColors = true;
   });
 
+  test("opens file links from transcript Markdown in the owning Workspace", async () => {
+    let receive: ((message: unknown) => void) | undefined;
+    const workspace = process.cwd();
+    const { showTextDocument } = vscode;
+    showTextDocument.mockClear();
+    const provider = new MischiefView(
+      testValue<never>({}),
+      testValue<never>({
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({ threads: [], workspace }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase())
+    );
+    await provider.resolveWebviewView(
+      testValue<never>({
+        onDidDispose: vi.fn<() => void>(),
+        webview: {
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => `webview:${uri.fsPath}`,
+          }),
+          cspSource: "webview-csp",
+          html: "",
+          onDidReceiveMessage: (listener: (message: unknown) => void) => {
+            receive = listener;
+          },
+          options: {},
+          postMessage: vi.fn<() => void>(),
+        },
+      })
+    );
+
+    receive?.({
+      href: pathToFileURL(path.join(workspace, "src/view.ts")).href,
+      type: "openTranscriptLink",
+    });
+
+    await vi.waitFor(() => {
+      expect(showTextDocument).toHaveBeenCalledExactlyOnceWith(
+        { fsPath: path.join(workspace, "src/view.ts") },
+        { preview: true }
+      );
+    });
+  });
+
   test("renders Markdown without allowing raw HTML", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     const webview = {
@@ -2261,7 +2312,7 @@ describe("view provider", () => {
             {
               id: "assistant-1",
               kind: "assistant",
-              text: "**Bold** <script>alert(1)</script>",
+              text: "**Bold** <script>alert(1)</script> [Open](file:///workspace/src/view.ts)",
             },
           ],
         },
@@ -2284,7 +2335,7 @@ describe("view provider", () => {
       threads: { selected: { items: { html: string }[] } };
     }>(postMessage.mock.calls.at(-1)?.[0]);
     expect(state.threads.selected.items[0]?.html).toBe(
-      "<p><strong>Bold</strong> &lt;script&gt;alert(1)&lt;/script&gt;</p>\n"
+      '<p><strong>Bold</strong> &lt;script&gt;alert(1)&lt;/script&gt; <a href="file:///workspace/src/view.ts">Open</a></p>\n'
     );
   });
 });

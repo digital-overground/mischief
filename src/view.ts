@@ -1,5 +1,6 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import MarkdownIt from "markdown-it";
 import * as vscode from "vscode";
@@ -55,6 +56,9 @@ const workspaceColorsEnabled = (): boolean =>
     .getConfiguration("mischief")
     .get<boolean>("assignWorkspaceColors", true);
 const markdown = new MarkdownIt({ breaks: true, html: false, linkify: true });
+const validateMarkdownLink = markdown.validateLink.bind(markdown);
+markdown.validateLink = (href) =>
+  /^file:/iu.test(href) || validateMarkdownLink(href);
 
 const renderTranscriptItem = (
   item: TranscriptItem
@@ -798,6 +802,10 @@ export class MischiefView implements vscode.WebviewViewProvider {
       );
       return;
     }
+    if (data.type === "openTranscriptLink" && typeof data.href === "string") {
+      await this.openTranscriptLink(data.href);
+      return;
+    }
     if (data.type === "openDiff" && typeof data.path === "string") {
       await this.openDiff(data.path);
     }
@@ -1113,6 +1121,50 @@ export class MischiefView implements vscode.WebviewViewProvider {
       isNonZero(line) && line > 0
         ? new vscode.Range(line - 1, 0, line - 1, 0)
         : undefined;
+    await vscode.window.showTextDocument(vscode.Uri.file(candidate), {
+      preview: true,
+      ...(selection ? { selection } : {}),
+    });
+  }
+
+  private async openTranscriptLink(href: string): Promise<void> {
+    const { workspace } = this.threads.snapshot();
+    if (workspace === undefined) {
+      return;
+    }
+    let target: URL;
+    try {
+      target = new URL(href, pathToFileURL(`${workspace}${path.sep}`));
+    } catch {
+      return;
+    }
+    const { hash, protocol } = target;
+    if (protocol !== "file:") {
+      return;
+    }
+    let root: string;
+    let candidate: string;
+    try {
+      [root, candidate] = await Promise.all([
+        realpath(workspace),
+        realpath(fileURLToPath(target)),
+      ]);
+    } catch {
+      return;
+    }
+    const relative = path.relative(root, candidate);
+    if (
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    ) {
+      return;
+    }
+    const line = /^#L(?<line>[1-9]\d*)$/iu.exec(hash)?.groups?.line;
+    const selection =
+      line === undefined
+        ? undefined
+        : new vscode.Range(Number(line) - 1, 0, Number(line) - 1, 0);
     await vscode.window.showTextDocument(vscode.Uri.file(candidate), {
       preview: true,
       ...(selection ? { selection } : {}),

@@ -1208,6 +1208,41 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("opens linked transcript files in the host", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (state.type !== "state" || !state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    state.threads.selected.items = [
+      {
+        html: '<p><a href="src/view.ts">src/view.ts</a></p>',
+        id: "assistant",
+        kind: "assistant",
+      },
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    postMessage.mockClear();
+
+    const link = document.querySelector<HTMLAnchorElement>("#transcript a");
+    if (!link) {
+      throw new Error("Missing transcript file link");
+    }
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    act(() => {
+      link.dispatchEvent(click);
+    });
+
+    expect(click.defaultPrevented).toBeTruthy();
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({
+      href: "src/view.ts",
+      type: "openTranscriptLink",
+    });
+    await unmount();
+  });
+
   test("applies streaming transcript items without replacing history or composer text", async () => {
     const unmount = await renderApp();
     const state: HostToWebviewMessage = {

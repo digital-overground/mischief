@@ -101,4 +101,5 @@ export type WebviewToHostMessage =
   | { type: "setConfig"; id: string; value: string | boolean }
   | { type: "respond"; id: string; response: ThreadInteractionResponse }
   | { type: "openLocation"; path: string; line?: number }
+  | { type: "openTranscriptLink"; href: string }
   | { type: "openDiff"; path: string };
