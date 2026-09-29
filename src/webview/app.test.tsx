@@ -587,17 +587,13 @@ describe("React webview", () => {
       closeIcons: document.querySelectorAll(
         '[aria-label="Close Workspace"] .thread-action-icon'
       ).length,
+      footerNewThread: document.querySelectorAll("#footer-new-thread").length,
       history: document.querySelectorAll(
         '.workspace-node.current [aria-label="Thread History"]'
       ).length,
       newThread: document.querySelectorAll(
         '.workspace-node.current [aria-label="New Thread"]'
       ).length,
-      newThreadMatchesFooter:
-        document.querySelector(
-          '.workspace-node.current [aria-label="New Thread"] svg'
-        )?.innerHTML ===
-        document.querySelector("#footer-new-thread svg")?.innerHTML,
       newWorkspaceIcons: document.querySelectorAll(
         '[aria-label="New Workspace"] .thread-action-icon'
       ).length,
@@ -619,9 +615,9 @@ describe("React webview", () => {
       attention: 2,
       branchIcons: 2,
       closeIcons: 2,
+      footerNewThread: 0,
       history: 1,
       newThread: 1,
-      newThreadMatchesFooter: true,
       newWorkspaceIcons: 1,
       openWorkspaceWindows: 1,
       remoteHistory: 0,
@@ -1348,6 +1344,83 @@ describe("React webview", () => {
       scrollHeight: scrollHeight.mock.calls.length,
       scrollTop: scrollTop.mock.calls.length,
     }).toStrictEqual({ clientHeight: 0, scrollHeight: 0, scrollTop: 0 });
+    await unmount();
+  });
+
+  test("history follows streamed messages and a jump stays put during later updates", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (state.type !== "state" || !state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    state.threads.selected.items = [
+      { id: "prompt", kind: "user", text: "Prompt" },
+      { id: "response", kind: "assistant", text: "Partial" },
+      { id: "tool", kind: "tool", title: "Read" },
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            item: { id: "response", kind: "assistant", text: "Updated" },
+            streaming: true,
+            threadId: "selected",
+            type: "transcript",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    const scrollIntoView = vi.fn<(options: ScrollIntoViewOptions) => void>();
+    const target = document.querySelector<HTMLElement>(
+      '[data-message-id="prompt"]'
+    );
+    if (!target) {
+      throw new Error("Missing prompt");
+    }
+    target.scrollIntoView = scrollIntoView;
+    const chat = document.querySelector<HTMLElement>("#chat");
+    if (!chat) {
+      throw new Error("Missing chat");
+    }
+    const scroll = vi.fn<(value: number) => void>();
+    Object.defineProperty(chat, "scrollTop", {
+      configurable: true,
+      get: () => 0,
+      set: (value: number) => {
+        scroll(value);
+      },
+    });
+    act(() => {
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="Message history"]')
+        ?.click();
+    });
+    expect(
+      [...document.querySelectorAll("#history-list .history-entry")].map(
+        (row) => row.textContent
+      )
+    ).toStrictEqual(["Prompt", "Updated"]);
+    act(() => {
+      document
+        .querySelector<HTMLButtonElement>("#history-list .history-jump")
+        ?.click();
+    });
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+    scroll.mockClear();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            item: { id: "later", kind: "assistant", text: "Later" },
+            streaming: true,
+            threadId: "selected",
+            type: "transcript",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    expect(scroll).not.toHaveBeenCalled();
     await unmount();
   });
 

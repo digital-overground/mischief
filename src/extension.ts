@@ -13,9 +13,9 @@ import {
   nextSoftwareRequirement,
 } from "./setup";
 import type { SoftwareRequirement } from "./setup";
-import { acpConnectionFactory } from "./threads/acp";
-import type { AgentLaunch } from "./threads/acp";
-import { Threads } from "./threads/threads";
+import { acpConnectionFactory } from "./threads/acp/acp";
+import type { AgentLaunch } from "./threads/acp/models";
+import { Threads } from "./threads/threads/threads";
 import { MischiefView, registerMischiefView } from "./view";
 import type { ThreadSetup } from "./view";
 import type { SetupStep } from "./webview/protocol";

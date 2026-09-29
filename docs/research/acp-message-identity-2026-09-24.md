@@ -1,0 +1,16 @@
+# ACP message identity in Mischief / MagPi (2026-09-24)
+
+## Answer
+
+The latest published MagPi ACP is **0.2.0**, built from `98db7c90`; it does **not** currently send ACP `messageId` on live or replayed message chunks. Standard ACP message IDs exist, but adopting the field does not automatically make their values equal to Pi session-tree entry IDs. Don't add a new proprietary client message ID to solve this; first make MagPi supply standard ACP `messageId` and explicitly align/translate it with its existing native-target APIs.
+
+## Evidence (primary sources)
+
+- [npm's latest `magpi-acp` manifest](https://registry.npmjs.org/magpi-acp/latest) reports version `0.2.0`, Git head `98db7c90`, and `@agentclientprotocol/sdk: ^1.4.0`. This repo and the neighboring MagPi checkout both install SDK `1.4.0`; `src/extension.ts` selects a configured MagPi binary, sibling `../magpi-acp/dist/index.js`, or `magpi-acp` from PATH. A custom binary could behave differently.
+- MagPi [live assistant text/thought updates](https://github.com/digital-overground/magpi-acp/blob/98db7c90/src/acp/magpi-session.ts#L723-L740) and [replayed user/assistant updates](https://github.com/digital-overground/magpi-acp/blob/98db7c90/src/acp/agent.ts#L1013-L1039) omit `messageId`. The [replay reader](https://github.com/digital-overground/magpi-acp/blob/98db7c90/src/acp/pi-session-tree.ts#L80-L103) has native Pi entry IDs but `replayMessage()` does not pass them into those updates. MagPi's `_magpi-acp/session/fork-messages` / `tree` return Pi `entryId` values; see `src/threads/acp.ts` `decodeForkTargets` / `decodeTreeTargets`.
+- Mischief creates an [optimistic UUID for each prompt](../../src/threads/threads.ts) (`Threads.prompt()`) and its [reducer](../../src/threads/transcript.ts) uses `${kind}:${messageId}` when an ACP ID exists, otherwise a local UUID. Its stored Thread record does not persist transcript message IDs (`StoredThread` in `src/threads/threads.ts`). Thus an old Thread's _age_ does not prove its loaded message IDs are incompatible.
+- [ACP v1 message IDs](https://agentclientprotocol.com/protocol/v1/prompt-turn) are optional Agent-generated **opaque** IDs for grouping message chunks; [ACP v2 requires them](https://agentclientprotocol.com/protocol/v2/migration) but they remain opaque, not defined as Pi entry IDs. [ACP v2 prompt acceptance](https://agentclientprotocol.com/protocol/v2/prompt-lifecycle) returns the user `messageId`; this codebase uses v1, so that facility is not currently available.
+
+## Implication for the history popup
+
+Use existing local IDs only for rendering and jumping. For direct Fork/Tree, never send a local UUID or blindly parsed ACP ID to Pi: obtain the native target from MagPi and verify the _same_ message is identified. The minimal upstream prerequisite is for MagPi to emit standard ACP `messageId` on messages and establish a stable exact mapping to its native fork/tree targets (using Pi entry IDs as the ACP IDs if it can do so without violating streaming identity). No extra client-generated surrogate keys, stored mappings, or old-Thread migration. A click with incompatible IDs should fail visibly, not target a similarly worded message. Targeted fork/tree themselves still use MagPi's private APIs; ACP `messageId` alone provides identity, not a standard navigate/fork-at-message operation.

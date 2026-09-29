@@ -544,7 +544,12 @@ const TranscriptEntry = ({
     </div>
   );
   return (
-    <article className={`entry ${item.kind}`}>
+    <article
+      className={`entry ${item.kind}`}
+      data-message-id={
+        item.kind === "user" || item.kind === "assistant" ? item.id : undefined
+      }
+    >
       {item.kind === "user" || item.kind === "assistant" ? null : (
         <Icon className="entry-icon" kind={meta.icon} title={meta.label} />
       )}

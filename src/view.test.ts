@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 
 import { describe, expect, test, vi } from "vitest";
 
-import { isDefined, isNonEmpty } from "./present";
+import { isNonEmpty } from "./present";
 import { testValue } from "./test-value";
 import { MischiefView } from "./view";
 
@@ -1038,38 +1038,23 @@ describe("view provider", () => {
     }
   );
 
-  test("selects a native fork target from a loading QuickPick", async () => {
-    const loading = {
-      busy: false,
-      dispose: vi.fn<() => void>(),
-      hide: vi.fn<() => void>(),
-      onDidHide: vi.fn<(_listener: () => void) => { dispose: () => void }>(
-        () => ({ dispose: vi.fn<() => void>() })
-      ),
-      placeholder: "",
-      show: vi.fn<() => void>(),
-      title: "",
-    };
-    vscode.createQuickPick.mockReset().mockReturnValue(loading);
+  test("routes targeted history actions without opening native target pickers", async () => {
     vscode.showQuickPick.mockReset().mockImplementation(async (items) => {
       await Promise.resolve();
       return testValue<unknown[]>(items)[0];
     });
-    const fork = vi.fn<() => Promise<void>>(async () => {
-      await Promise.resolve();
-    });
     const threads = {
-      fork,
-      forkTargets: async () => {
+      branchSummarySupported: vi.fn<() => boolean>(() => true),
+      forkMessage: vi.fn<(_threadId: string, _itemId: string) => Promise<void>>(
+        async () => {
+          await Promise.resolve();
+        }
+      ),
+      navigateTreeMessage: vi.fn<
+        (_threadId: string, _itemId: string, _options: unknown) => Promise<void>
+      >(async () => {
         await Promise.resolve();
-        return {
-          targets: [
-            { entryId: "pi-user-1", text: "First\n  prompt" },
-            { entryId: "pi-user-2", text: "Second prompt" },
-          ],
-          threadId: "source-thread",
-        };
-      },
+      }),
       onChange: vi.fn<() => void>(),
     };
     const provider = new MischiefView(
@@ -1079,590 +1064,69 @@ describe("view provider", () => {
       testValue<never>({}),
       testValue<never>(profileDatabase())
     );
-
-    await testValue<{ showForkThread: () => Promise<void> }>(
-      testValue<unknown>(provider)
-    ).showForkThread();
-
+    const host = testValue<{
+      handleThreadMessage: (
+        message: Record<string, unknown>
+      ) => Promise<boolean>;
+      render: () => Promise<void>;
+    }>(testValue<unknown>(provider));
+    host.render = async () => {
+      await Promise.resolve();
+    };
+    await expect(
+      host.handleThreadMessage({
+        messageId: "user:one",
+        threadId: "source",
+        type: "forkThread",
+      })
+    ).resolves.toBeTruthy();
+    await expect(
+      host.handleThreadMessage({
+        messageId: "assistant:two",
+        threadId: "source",
+        type: "navigateThreadTree",
+      })
+    ).resolves.toBeTruthy();
+    await expect(
+      host.handleThreadMessage({ threadId: "source", type: "forkThread" })
+    ).rejects.toThrow("Invalid transcript message target");
     expect({
-      disposed: loading.dispose.mock.calls.length,
-      hidden: loading.hide.mock.calls.length,
-      picker: vscode.showQuickPick.mock.calls,
-      shown: loading.show.mock.calls.length,
-      state: {
-        busy: loading.busy,
-        placeholder: loading.placeholder,
-        title: loading.title,
-      },
+      fork: threads.forkMessage.mock.calls,
+      navigation: threads.navigateTreeMessage.mock.calls,
+      summaryCount: vscode.showQuickPick.mock.calls.length,
     }).toStrictEqual({
-      disposed: 1,
-      hidden: 1,
-      picker: [
-        [
-          [
-            {
-              label: "Second prompt",
-              target: { entryId: "pi-user-2", text: "Second prompt" },
-            },
-            {
-              label: "First prompt",
-              target: { entryId: "pi-user-1", text: "First\n  prompt" },
-            },
-          ],
-          {
-            placeHolder: "Select a user message to edit in a new Thread",
-            title: "Fork Thread",
-          },
-        ],
-      ],
-      shown: 1,
-      state: {
-        busy: true,
-        placeholder: "Loading fork points…",
-        title: "Fork Thread",
-      },
-    });
-    expect(fork).toHaveBeenCalledExactlyOnceWith("source-thread", {
-      entryId: "pi-user-2",
-      text: "Second prompt",
+      fork: [["source", "user:one"]],
+      navigation: [["source", "assistant:two", { summarize: false }]],
+      summaryCount: 1,
     });
   });
 
-  test("does nothing when loading fork targets is cancelled", async () => {
-    let hide: (() => void) | undefined;
-    let resolveTargets:
-      | ((value: {
-          targets: { entryId: string; text: string }[];
-          threadId: string;
-        }) => void)
-      | undefined;
-    const loading = {
-      busy: false,
-      dispose: vi.fn<() => void>(),
-      hide: vi.fn<() => void>(),
-      onDidHide: (listener: () => void) => {
-        hide = listener;
-        return { dispose: vi.fn<() => void>() };
-      },
-      placeholder: "",
-      show: vi.fn<() => void>(),
-      title: "",
-    };
-    vscode.createQuickPick.mockReset().mockReturnValue(loading);
-    vscode.showQuickPick.mockReset();
-    const fork = vi.fn<() => Promise<void>>(async () => {
-      await Promise.resolve();
-    });
-    const provider = new MischiefView(
-      testValue<never>({}),
-      testValue<never>({
-        fork,
-        forkTargets: async () =>
-          // oxlint-disable-next-line promise/avoid-new -- controls picker cancellation timing
-          await new Promise((resolve) => {
-            resolveTargets = resolve;
-          }),
-        onChange: vi.fn<() => void>(),
-      }),
-      testValue<never>({ fsPath: process.cwd() }),
-      testValue<never>({}),
-      testValue<never>(profileDatabase())
-    );
-
-    const operation = testValue<{ showForkThread: () => Promise<void> }>(
-      testValue<unknown>(provider)
-    ).showForkThread();
-    hide?.();
-    resolveTargets?.({
-      targets: [{ entryId: "pi-user-1", text: "First" }],
-      threadId: "source-thread",
-    });
-    await operation;
-
-    expect(vscode.showQuickPick).not.toHaveBeenCalled();
-    expect(fork).not.toHaveBeenCalled();
-  });
-
-  test("reports when a Thread has no fork points", async () => {
-    const loading = {
-      busy: false,
-      dispose: vi.fn<() => void>(),
-      hide: vi.fn<() => void>(),
-      onDidHide: () => ({ dispose: vi.fn<() => void>() }),
-      placeholder: "",
-      show: vi.fn<() => void>(),
-      title: "",
-    };
-    vscode.createQuickPick.mockReset().mockReturnValue(loading);
-    vscode.showInformationMessage.mockClear();
-    const provider = new MischiefView(
-      testValue<never>({}),
-      testValue<never>({
-        forkTargets: async () => {
-          await Promise.resolve();
-          return { targets: [], threadId: "source-thread" };
-        },
-        onChange: vi.fn<() => void>(),
-      }),
-      testValue<never>({ fsPath: process.cwd() }),
-      testValue<never>({}),
-      testValue<never>(profileDatabase())
-    );
-
-    await testValue<{ showForkThread: () => Promise<void> }>(
-      testValue<unknown>(provider)
-    ).showForkThread();
-
-    expect(vscode.showInformationMessage).toHaveBeenCalledExactlyOnceWith(
-      "No fork points are available in this Thread."
-    );
-  });
-
-  test("presents and selects a native Thread tree target", async () => {
-    const loading = {
-      busy: false,
-      dispose: vi.fn<() => void>(),
-      hide: vi.fn<() => void>(),
-      onDidHide: vi.fn<(_listener: () => void) => { dispose: () => void }>(
-        () => ({ dispose: vi.fn<() => void>() })
-      ),
-      placeholder: "",
-      show: vi.fn<() => void>(),
-      title: "",
-    };
-    vscode.createQuickPick.mockReset().mockReturnValue(loading);
-    vscode.showQuickPick.mockReset().mockImplementation(async (items) => {
-      await Promise.resolve();
-      return testValue<unknown[]>(items)[1];
-    });
-    const navigateTree = vi.fn<() => Promise<void>>(async () => {
-      await Promise.resolve();
-    });
-    const targets = [
-      {
-        activeBranch: true,
-        current: false,
-        depth: 0,
-        entryId: "pi-user-1",
-        role: "user",
-        text: "First prompt",
-      },
-      {
-        activeBranch: true,
-        current: true,
-        depth: 1,
-        entryId: "pi-assistant-1",
-        role: "assistant",
-        text: "First\nanswer",
-      },
-      {
-        activeBranch: false,
-        current: false,
-        depth: 2,
-        entryId: "pi-user-2",
-        role: "user",
-        text: "Alternate",
-      },
-    ];
-    const provider = new MischiefView(
-      testValue<never>({}),
-      testValue<never>({
-        navigateTree,
-        onChange: vi.fn<() => void>(),
-        treeTargets: async () => {
-          await Promise.resolve();
-          return {
-            branchSummarySupported: true,
-            targets,
-            threadId: "source-thread",
-          };
-        },
-      }),
-      testValue<never>({ fsPath: process.cwd() }),
-      testValue<never>({}),
-      testValue<never>(profileDatabase())
-    );
-
-    await testValue<{ showNavigateThreadTree: () => Promise<void> }>(
-      testValue<unknown>(provider)
-    ).showNavigateThreadTree();
-
-    expect({
-      disposed: loading.dispose.mock.calls.length,
-      hidden: loading.hide.mock.calls.length,
-      picker: vscode.showQuickPick.mock.calls,
-      shown: loading.show.mock.calls.length,
-      state: {
-        busy: loading.busy,
-        placeholder: loading.placeholder,
-        title: loading.title,
-      },
-    }).toStrictEqual({
-      disposed: 1,
-      hidden: 1,
-      picker: [
-        [
-          [
-            {
-              label: "-- You: Alternate",
-              target: targets[2],
-            },
-            {
-              description: "current leaf",
-              label: "- Agent: First answer",
-              target: targets[1],
-            },
-            {
-              label: "You: First prompt",
-              target: targets[0],
-            },
-          ],
-          {
-            placeHolder: "Select a message to make active",
-            title: "Navigate Thread Tree",
-          },
-        ],
-      ],
-      shown: 1,
-      state: {
-        busy: true,
-        placeholder: "Loading Thread tree…",
-        title: "Navigate Thread Tree",
-      },
-    });
-    expect(navigateTree).toHaveBeenCalledExactlyOnceWith(
-      "source-thread",
-      targets[1],
-      { summarize: false }
-    );
-  });
-
-  test.each([
-    {
-      choice: 0,
-      expected: { summarize: false },
-      name: "without a summary",
-    },
-    {
-      choice: 1,
-      expected: { summarize: true },
-      name: "with Pi's default summary",
-    },
-    {
-      choice: 2,
-      customInstructions: "Focus on unresolved errors",
-      expected: {
-        customInstructions: "Focus on unresolved errors",
-        summarize: true,
-      },
-      name: "with custom summary focus",
-    },
-  ])("navigates $name", async ({ choice, customInstructions, expected }) => {
-    const loading = {
-      busy: false,
-      dispose: vi.fn<() => void>(),
-      hide: vi.fn<() => void>(),
-      onDidHide: () => ({ dispose: vi.fn<() => void>() }),
-      placeholder: "",
-      show: vi.fn<() => void>(),
-      title: "",
-    };
-    vscode.createQuickPick.mockReset().mockReturnValue(loading);
-    let picker = 0;
-    vscode.showQuickPick.mockReset().mockImplementation(async (items) => {
-      await Promise.resolve();
-      picker += 1;
-      return testValue<unknown[]>(items)[picker === 1 ? 0 : choice];
-    });
-    vscode.showInputBox.mockReset().mockResolvedValue(customInstructions);
-    const navigateTree = vi.fn<() => Promise<void>>(async () => {
-      await Promise.resolve();
-    });
-    const target = {
-      activeBranch: false,
-      current: false,
-      depth: 1,
-      entryId: "pi-user-2",
-      role: "user",
-      text: "Alternate",
-    } as const;
-    const provider = new MischiefView(
-      testValue<never>({}),
-      testValue<never>({
-        navigateTree,
-        onChange: vi.fn<() => void>(),
-        treeTargets: async () => {
-          await Promise.resolve();
-          return {
-            branchSummarySupported: true,
-            targets: [target],
-            threadId: "source-thread",
-          };
-        },
-      }),
-      testValue<never>({ fsPath: process.cwd() }),
-      testValue<never>({}),
-      testValue<never>(profileDatabase())
-    );
-    const render = vi.fn<() => Promise<boolean>>(async () => {
-      await Promise.resolve();
-      return true;
-    });
-    testValue<{ render: typeof render }>(provider).render = render;
-
-    await testValue<{ showNavigateThreadTree: () => Promise<void> }>(
-      testValue<unknown>(provider)
-    ).showNavigateThreadTree();
-
-    expect(vscode.showQuickPick.mock.calls[1]).toStrictEqual([
-      [
-        { label: "No summary", summarize: false },
-        { label: "Pi's default branch summary", summarize: true },
-        {
-          custom: true,
-          label: "Pi's branch summary with custom focus…",
-          summarize: true,
-        },
-      ],
-      {
-        placeHolder: "Choose how to handle the abandoned branch",
-        title: "Branch Summary",
-      },
-    ]);
-    expect(navigateTree).toHaveBeenCalledExactlyOnceWith(
-      "source-thread",
-      target,
-      expected
-    );
-    expect(vscode.showInputBox).toHaveBeenCalledTimes(choice === 2 ? 1 : 0);
-    expect(render).toHaveBeenCalledOnce();
-  });
-
-  test.each([
-    { custom: false, name: "branch-summary choice" },
-    { custom: true, name: "custom-focus input" },
-  ])("cancelling the $name does not navigate", async ({ custom }) => {
-    vscode.createQuickPick.mockReset().mockReturnValue({
-      busy: false,
-      dispose: vi.fn<() => void>(),
-      hide: vi.fn<() => void>(),
-      onDidHide: () => ({ dispose: vi.fn<() => void>() }),
-      placeholder: "",
-      show: vi.fn<() => void>(),
-      title: "",
-    });
-    let picker = 0;
-    vscode.showQuickPick.mockReset().mockImplementation(async (items) => {
-      await Promise.resolve();
-      picker += 1;
-      if (picker === 1) {
-        return testValue<unknown[]>(items)[0];
-      }
-      return custom ? testValue<unknown[]>(items)[2] : undefined;
-    });
-    vscode.showInputBox.mockReset();
-    const navigateTree = vi.fn<() => Promise<void>>(async () => {
-      await Promise.resolve();
-    });
-    const provider = new MischiefView(
-      testValue<never>({}),
-      testValue<never>({
-        navigateTree,
-        onChange: vi.fn<() => void>(),
-        treeTargets: async () => {
-          await Promise.resolve();
-          return {
-            branchSummarySupported: true,
-            targets: [
-              {
-                activeBranch: false,
-                current: false,
-                depth: 0,
-                entryId: "pi-user-2",
-                role: "user",
-                text: "Alternate",
-              },
-            ],
-            threadId: "source-thread",
-          };
-        },
-      }),
-      testValue<never>({ fsPath: process.cwd() }),
-      testValue<never>({}),
-      testValue<never>(profileDatabase())
-    );
-
-    await testValue<{ showNavigateThreadTree: () => Promise<void> }>(
-      testValue<unknown>(provider)
-    ).showNavigateThreadTree();
-
-    expect(navigateTree).not.toHaveBeenCalled();
-  });
-
-  test("marks the deepest visible target for a filtered active leaf", async () => {
-    vscode.createQuickPick.mockReset().mockReturnValue({
-      busy: false,
-      dispose: vi.fn<() => void>(),
-      hide: vi.fn<() => void>(),
-      onDidHide: () => ({ dispose: vi.fn<() => void>() }),
-      placeholder: "",
-      show: vi.fn<() => void>(),
-      title: "",
-    });
+  test("cancelling the history Tree summary choice leaves the Thread alone", async () => {
     vscode.showQuickPick.mockReset().mockResolvedValue(null);
-    const provider = new MischiefView(
-      testValue<never>({}),
-      testValue<never>({
-        onChange: vi.fn<() => void>(),
-        treeTargets: async () => {
-          await Promise.resolve();
-          return {
-            targets: [
-              {
-                activeBranch: true,
-                current: false,
-                depth: 0,
-                entryId: "pi-user-1",
-                role: "user",
-                text: "First",
-              },
-              {
-                activeBranch: true,
-                current: false,
-                depth: 1,
-                entryId: "pi-assistant-1",
-                role: "assistant",
-                text: "Answer",
-              },
-            ],
-            threadId: "source-thread",
-          };
-        },
-      }),
-      testValue<never>({ fsPath: process.cwd() }),
-      testValue<never>({}),
-      testValue<never>(profileDatabase())
-    );
-
-    await testValue<{ showNavigateThreadTree: () => Promise<void> }>(
-      testValue<unknown>(provider)
-    ).showNavigateThreadTree();
-
-    const [pickerCall] = vscode.showQuickPick.mock.calls;
-    if (!isDefined(pickerCall)) {
-      throw new Error("Missing tree picker");
-    }
-    expect(
-      testValue<{ description?: string }[]>(pickerCall[0]).map(
-        (item) => item.description ?? null
-      )
-    ).toStrictEqual(["active branch", null]);
-  });
-
-  test("does nothing when loading Thread tree targets is cancelled", async () => {
-    let hide: (() => void) | undefined;
-    let resolveTargets:
-      | ((value: {
-          targets: {
-            activeBranch: boolean;
-            current: boolean;
-            depth: number;
-            entryId: string;
-            role: "user";
-            text: string;
-          }[];
-          threadId: string;
-        }) => void)
-      | undefined;
-    const loading = {
-      busy: false,
-      dispose: vi.fn<() => void>(),
-      hide: vi.fn<() => void>(),
-      onDidHide: (listener: () => void) => {
-        hide = listener;
-        return { dispose: vi.fn<() => void>() };
-      },
-      placeholder: "",
-      show: vi.fn<() => void>(),
-      title: "",
-    };
-    vscode.createQuickPick.mockReset().mockReturnValue(loading);
-    vscode.showQuickPick.mockReset();
-    const navigateTree = vi.fn<() => Promise<void>>(async () => {
+    const navigateTreeMessage = vi.fn<() => Promise<void>>(async () => {
       await Promise.resolve();
     });
     const provider = new MischiefView(
       testValue<never>({}),
       testValue<never>({
-        navigateTree,
+        branchSummarySupported: () => true,
+        navigateTreeMessage,
         onChange: vi.fn<() => void>(),
-        treeTargets: async () =>
-          // oxlint-disable-next-line promise/avoid-new -- controls picker cancellation timing
-          await new Promise((resolve) => {
-            resolveTargets = resolve;
-          }),
       }),
       testValue<never>({ fsPath: process.cwd() }),
       testValue<never>({}),
       testValue<never>(profileDatabase())
     );
-
-    const operation = testValue<{
-      showNavigateThreadTree: () => Promise<void>;
-    }>(testValue<unknown>(provider)).showNavigateThreadTree();
-    hide?.();
-    resolveTargets?.({
-      targets: [
-        {
-          activeBranch: true,
-          current: true,
-          depth: 0,
-          entryId: "pi-user-1",
-          role: "user",
-          text: "First",
-        },
-      ],
-      threadId: "source-thread",
+    await testValue<{
+      handleThreadMessage: (
+        message: Record<string, unknown>
+      ) => Promise<boolean>;
+    }>(testValue<unknown>(provider)).handleThreadMessage({
+      messageId: "user:one",
+      threadId: "source",
+      type: "navigateThreadTree",
     });
-    await operation;
-
-    expect(vscode.showQuickPick).not.toHaveBeenCalled();
-    expect(navigateTree).not.toHaveBeenCalled();
-  });
-
-  test("reports when a Thread tree has no message entries", async () => {
-    const loading = {
-      busy: false,
-      dispose: vi.fn<() => void>(),
-      hide: vi.fn<() => void>(),
-      onDidHide: () => ({ dispose: vi.fn<() => void>() }),
-      placeholder: "",
-      show: vi.fn<() => void>(),
-      title: "",
-    };
-    vscode.createQuickPick.mockReset().mockReturnValue(loading);
-    vscode.showInformationMessage.mockClear();
-    const provider = new MischiefView(
-      testValue<never>({}),
-      testValue<never>({
-        onChange: vi.fn<() => void>(),
-        treeTargets: async () => {
-          await Promise.resolve();
-          return { targets: [], threadId: "source-thread" };
-        },
-      }),
-      testValue<never>({ fsPath: process.cwd() }),
-      testValue<never>({}),
-      testValue<never>(profileDatabase())
-    );
-
-    await testValue<{ showNavigateThreadTree: () => Promise<void> }>(
-      testValue<unknown>(provider)
-    ).showNavigateThreadTree();
-
-    expect(vscode.showInformationMessage).toHaveBeenCalledExactlyOnceWith(
-      "No message entries are available in this Thread tree."
-    );
+    expect(navigateTreeMessage).not.toHaveBeenCalled();
   });
 
   test("creates and seeds a Thread after transcript setup completes", async () => {

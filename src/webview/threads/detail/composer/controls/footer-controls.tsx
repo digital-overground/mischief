@@ -1,22 +1,24 @@
-import { isNonEmpty } from "../../../../../present";
-import { postMessage } from "../../../../bridge";
 import { SvgIcon } from "../../../../icon";
-import type { RenderedThreadDetail } from "../../../../protocol";
+import type {
+  RenderedThreadDetail,
+  RenderedTranscriptItem,
+} from "../../../../protocol";
 import { ConfigControl } from "./config-control";
+import { HistoryControl } from "./history-control";
 import { UsageControl } from "./usage-control";
 
 export const FooterControls = ({
-  onNewThread,
+  historyItems = [],
+  onJumpMessage,
   onSend,
   selected,
   setup = false,
-  workspace,
 }: {
-  onNewThread: () => void;
+  historyItems?: RenderedTranscriptItem[];
+  onJumpMessage?: (id: string) => void;
   onSend: () => void;
   selected?: RenderedThreadDetail;
   setup?: boolean;
-  workspace?: string;
 }): React.JSX.Element => {
   const running = Boolean(
     selected && ["running", "waiting"].includes(selected.status)
@@ -29,52 +31,12 @@ export const FooterControls = ({
   }
   return (
     <div className="footer-row">
-      <button
-        className="action"
-        id="footer-new-thread"
-        title="New Thread"
-        aria-label="New Thread"
-        disabled={!isNonEmpty(workspace)}
-        onClick={onNewThread}
-      >
-        <SvgIcon kind="chat" />
-      </button>
-      {selected?.forkSupported === true ? (
-        <button
-          className="action"
-          id="footer-fork-thread"
-          title="Fork Thread"
-          aria-label="Fork Thread"
-          type="button"
-          disabled={
-            selected.status !== "idle" ||
-            selected.sessionOperation !== undefined
-          }
-          onClick={() => {
-            postMessage({ type: "forkThread" });
-          }}
-        >
-          <SvgIcon kind="fork" />
-        </button>
-      ) : null}
-      {selected?.treeNavigationSupported === true ? (
-        <button
-          className="action"
-          id="footer-navigate-tree"
-          title="Navigate Thread Tree"
-          aria-label="Navigate Thread Tree"
-          type="button"
-          disabled={
-            selected.status !== "idle" ||
-            selected.sessionOperation !== undefined
-          }
-          onClick={() => {
-            postMessage({ type: "navigateThreadTree" });
-          }}
-        >
-          <SvgIcon kind="gitBranch" />
-        </button>
-      ) : null}
+      <HistoryControl
+        items={historyItems}
+        onJumpMessage={onJumpMessage}
+        selected={selected}
+        key={`history:${selected?.id ?? "none"}`}
+      />
       {selected?.usage && selected.usage.size > 0 ? (
         <UsageControl usage={selected.usage} key={selected.id} />
       ) : null}

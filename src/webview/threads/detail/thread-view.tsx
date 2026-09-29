@@ -53,10 +53,27 @@ export const ThreadView = ({
   }, [setup?.id, setup?.options]);
   const transcriptItems =
     transcript.threadId === selected?.id ? transcript.items : noTranscriptItems;
+  const historyItems = [...(selected?.items ?? [])];
+  for (const item of transcriptItems) {
+    const index = historyItems.findIndex(
+      (candidate) => candidate.id === item.id
+    );
+    if (index === -1) {
+      historyItems.push(item);
+    } else {
+      historyItems[index] = item;
+    }
+  }
+  const visibleMessages = historyItems.filter(
+    (item) => item.kind === "user" || item.kind === "assistant"
+  );
   const changed = previousThread.current !== selected?.id;
   useLayoutEffect(() => {
     const container = chat.current;
-    if (container && (changed || shouldStick.current)) {
+    if (changed) {
+      shouldStick.current = true;
+    }
+    if (container && shouldStick.current) {
       container.scrollTop = container.scrollHeight;
     }
     previousThread.current = selected?.id ?? null;
@@ -173,12 +190,23 @@ export const ThreadView = ({
         <SteeringControl messages={selected?.steering ?? []} />
         <PlanControl plan={plan} key={plan?.id ?? "no-plan"} />
         <Composer
+          historyItems={visibleMessages}
+          onJumpMessage={(id) => {
+            const target = [
+              ...(chat.current?.querySelectorAll<HTMLElement>(
+                "[data-message-id]"
+              ) ?? []),
+            ].find((element) => element.dataset.messageId === id);
+            if (target) {
+              shouldStick.current = false;
+              target.scrollIntoView({ block: "start" });
+            }
+          }}
           contextItems={contextItems}
           copyNotice={copyNotice}
           selected={selected}
           setup={Boolean(setup)}
           setupSelected={selectedSetupOptions}
-          workspace={snapshot.workspace}
         />
       </div>
       {isNonEmpty(processingLabel) ? (

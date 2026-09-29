@@ -1,227 +1,45 @@
 import { randomUUID } from "node:crypto";
 
-import { isDefined, isNonEmpty, isNonZero } from "../present";
+import { isDefined, isNonEmpty, isNonZero } from "../../present";
 import type {
   DatabaseThread,
   ProfileDatabase,
   ProfileDatabaseChange,
-} from "../profile-database/profile-database";
+} from "../../profile-database/profile-database";
+import type {
+  AgentSessionOperations,
+  AgentTreeNavigationOptions,
+} from "../acp/models";
+import type {
+  AgentConnection,
+  AgentConnectionFactory,
+  AgentError,
+  AgentElicitationRequest,
+  AgentElicitationResponse,
+  AgentPermissionRequest,
+  AgentPermissionResponse,
+  AgentUpdate,
+  PromptImage,
+  TerminalAuthentication,
+  ThreadCommand,
+  ThreadConfigOption,
+  ThreadUsage,
+} from "../model";
+import type {
+  ThreadDetail,
+  ThreadHistoryEntry,
+  ThreadIndicator,
+  ThreadInteraction,
+  ThreadInteractionResponse,
+  ThreadSessionOperation,
+  ThreadStatus,
+  ThreadsChange,
+  ThreadsSnapshot,
+  TranscriptItem,
+} from "./models";
 import { archiveCompletedPlan, reduceTranscript } from "./transcript";
 
 const STREAMING_IDLE_MS = 300;
-
-export interface ThreadConfigChoice {
-  value: string;
-  name: string;
-}
-
-export interface ThreadConfigGroup {
-  name: string;
-  options: ThreadConfigChoice[];
-}
-
-export type ThreadConfigOption =
-  | {
-      id: string;
-      name: string;
-      description?: string;
-      type: "select";
-      currentValue: string;
-      options: (ThreadConfigChoice | ThreadConfigGroup)[];
-    }
-  | {
-      id: string;
-      name: string;
-      description?: string;
-      type: "boolean";
-      currentValue: boolean;
-    };
-
-export interface AgentSessionOperations {
-  branchSummary: boolean;
-  forkPicker: boolean;
-  treePicker: boolean;
-}
-
-export interface AgentSession {
-  sessionId: string;
-  configOptions: ThreadConfigOption[];
-  operations: AgentSessionOperations;
-}
-
-export interface AgentForkTarget {
-  entryId: string;
-  text: string;
-}
-
-export interface AgentTreeTarget {
-  entryId: string;
-  role: "user" | "assistant";
-  text: string;
-  depth: number;
-  activeBranch: boolean;
-  current: boolean;
-}
-
-export interface AgentTreeNavigationOptions {
-  summarize: boolean;
-  customInstructions?: string;
-}
-
-export interface AgentTreeNavigationResult {
-  draft?: string;
-}
-
-export interface ThreadForkTargets {
-  threadId: string;
-  targets: AgentForkTarget[];
-}
-
-export interface ThreadTreeTargets {
-  branchSummarySupported: boolean;
-  threadId: string;
-  targets: AgentTreeTarget[];
-}
-
-export interface AgentPromptResult {
-  stopReason: "completed" | "cancelled";
-}
-
-export interface AgentHistoryEntry {
-  sessionId: string;
-  cwd: string;
-  title?: string;
-  updatedAt?: string;
-  preview?: string;
-  previewRole?: "user" | "assistant";
-}
-
-export interface ThreadHistoryEntry {
-  sessionId: string;
-  title: string;
-  updatedAt?: string;
-  preview?: string;
-  previewRole?: "user" | "assistant";
-}
-
-export interface PromptImage {
-  data: string;
-  mimeType: string;
-}
-
-export interface AgentPermissionRequest {
-  message: string;
-  options: { id: string; name: string; kind: string }[];
-}
-
-export type AgentPermissionResponse =
-  | { optionId: string }
-  | { cancelled: true };
-
-export interface AgentElicitationRequest {
-  message: string;
-  context?: string;
-  fields: ElicitationField[];
-}
-
-export type AgentElicitationResponse =
-  | { action: "accept"; values: Record<string, unknown> }
-  | { action: "cancel" };
-
-export type AgentToolKind =
-  | "read"
-  | "edit"
-  | "delete"
-  | "move"
-  | "search"
-  | "execute"
-  | "think"
-  | "fetch"
-  | "switch_mode"
-  | "other";
-
-export interface AgentToolUpdate {
-  toolCallId: string;
-  toolKind?: AgentToolKind;
-  title?: string;
-  status?: string;
-  input?: string;
-  output?: string;
-  terminalOutput?: string;
-  locations?: { path: string; line?: number }[];
-  diffs?: { path: string; oldText?: string; newText: string }[];
-}
-
-export interface ThreadCommand {
-  name: string;
-  description: string;
-  inputHint?: string;
-}
-
-export type AgentUpdate =
-  | {
-      type: "message";
-      kind: "user" | "assistant" | "thought" | "system" | "branchSummary";
-      text?: string;
-      images?: PromptImage[];
-      messageId?: string;
-    }
-  | ({ type: "tool" } & AgentToolUpdate)
-  | {
-      type: "plan";
-      text: string;
-      allCompleted: boolean;
-      entries: PlanEntry[];
-    }
-  | { type: "usage"; usage: ThreadUsage }
-  | { type: "commands"; commands: ThreadCommand[] }
-  | { type: "config"; options: ThreadConfigOption[] }
-  | { type: "sessionInfo"; title?: string; updatedAt?: string };
-
-export interface AgentError extends Error {
-  readonly authentication?: TerminalAuthentication;
-}
-
-export interface AgentHandlers {
-  error: (error: AgentError) => void;
-  elicitation: (
-    request: AgentElicitationRequest
-  ) => Promise<AgentElicitationResponse>;
-  permission: (
-    request: AgentPermissionRequest
-  ) => Promise<AgentPermissionResponse>;
-  update: (update: AgentUpdate) => void;
-}
-
-export interface AgentConnection {
-  cancel: (sessionId: string) => Promise<void>;
-  create: (cwd: string) => Promise<AgentSession>;
-  dispose: () => void;
-  fork: (
-    sessionId: string,
-    cwd: string,
-    entryId: string
-  ) => Promise<AgentSession>;
-  forkTargets: (sessionId: string) => Promise<AgentForkTarget[]>;
-  history: (cwd: string) => Promise<AgentHistoryEntry[]>;
-  load: (sessionId: string, cwd: string) => Promise<AgentSession>;
-  navigateTree: (
-    sessionId: string,
-    entryId: string,
-    options: AgentTreeNavigationOptions
-  ) => Promise<AgentTreeNavigationResult>;
-  prompt: (
-    sessionId: string,
-    text: string,
-    images: PromptImage[]
-  ) => Promise<AgentPromptResult>;
-  treeTargets: (sessionId: string) => Promise<AgentTreeTarget[]>;
-  setConfig: (
-    sessionId: string,
-    configId: string,
-    value: string | boolean
-  ) => Promise<void>;
-}
 
 const indicatorFor = (
   status: ThreadStatus,
@@ -242,148 +60,10 @@ const indicatorFor = (
 const indicatorNeedsAttention = (indicator: ThreadIndicator): boolean =>
   indicator === "waiting" || indicator === "completed" || indicator === "error";
 
-export type AgentConnectionFactory = (
-  handlers: AgentHandlers
-) => AgentConnection;
-
-export interface PlanEntry {
-  content: string;
-  status: string;
-}
-
-export type ThreadStatus = "idle" | "running" | "waiting" | "error";
-export type ThreadSessionOperation = "fork" | "navigateTree" | "branchSummary";
-export type ThreadIndicator =
-  | "active"
-  | "waiting"
-  | "completed"
-  | "idle"
-  | "error";
-
-export interface TranscriptItem {
-  id: string;
-  kind:
-    | "user"
-    | "assistant"
-    | "thought"
-    | "tool"
-    | "plan"
-    | "completedPlan"
-    | "system"
-    | "branchSummary";
-  text?: string;
-  allCompleted?: boolean;
-  planEntries?: PlanEntry[];
-  images?: PromptImage[];
-  title?: string;
-  status?: string;
-  toolKind?: AgentToolKind;
-  input?: string;
-  output?: string;
-  locations?: { path: string; line?: number }[];
-  diffs?: { path: string; oldText?: string; newText: string }[];
-  queued?: number;
-  cancelled?: boolean;
-}
-
-export interface ThreadSummary {
-  id: string;
-  workspace: string;
-  name: string;
-  indicator: ThreadIndicator;
-  needsAttention: boolean;
-  updatedAt: string;
-}
-
-export interface ElicitationField {
-  name: string;
-  label: string;
-  description?: string;
-  type: "text" | "number" | "boolean" | "select" | "multiselect";
-  required: boolean;
-  defaultValue?: string | number | boolean | string[];
-  options?: { value: string; name: string; description?: string }[];
-}
-
-export type ThreadInteraction =
-  | {
-      id: string;
-      kind: "permission";
-      message: string;
-      options: { id: string; name: string; kind: string }[];
-    }
-  | {
-      id: string;
-      kind: "elicitation";
-      message: string;
-      context?: string;
-      fields: ElicitationField[];
-    };
-
-export type ThreadInteractionResponse =
-  | { action: "select"; optionId: string }
-  | { action: "accept"; values: Record<string, unknown> }
-  | { action: "cancel" };
-
-export interface TerminalAuthentication {
-  command: string;
-  args: string[];
-  env?: Record<string, string>;
-  label: string;
-}
-
-export interface ThreadUsage {
-  used: number;
-  size: number;
-}
-
-export interface SteeringMessage {
-  id: string;
-  text: string;
-}
-
 const agentAuthentication = (
   error: unknown
 ): TerminalAuthentication | undefined =>
   error instanceof Error ? (error as AgentError).authentication : undefined;
-
-export interface ThreadDetail {
-  id: string | null;
-  name: string;
-  status: ThreadStatus;
-  streaming: boolean;
-  usage?: ThreadUsage;
-  items: TranscriptItem[];
-  commands: ThreadCommand[];
-  configOptions: ThreadConfigOption[];
-  interaction?: ThreadInteraction;
-  authentication?: TerminalAuthentication;
-  error?: string;
-  drafts: string[];
-  forkSupported?: boolean;
-  treeNavigationSupported?: boolean;
-  sessionOperation?: ThreadSessionOperation;
-  steering: SteeringMessage[];
-}
-
-export interface ThreadsSnapshot {
-  workspace?: string;
-  threads: ThreadSummary[];
-  selected?: ThreadDetail;
-}
-
-export type ThreadsChange =
-  | {
-      type: "transcript";
-      threadId: string;
-      item: TranscriptItem;
-      streaming: boolean;
-    }
-  | {
-      type: "sessionOperation";
-      threadId: string;
-      operation: ThreadSessionOperation;
-    };
 
 interface StoredThread {
   id: string;
@@ -412,7 +92,13 @@ interface Runtime {
   commands: ThreadCommand[];
   configOptions: ThreadConfigOption[];
   drafts: string[];
-  pending: { id: string; text: string; images: PromptImage[] }[];
+  pending: {
+    id: string;
+    text: string;
+    images: PromptImage[];
+    echoedId?: string;
+  }[];
+  activePrompt?: Runtime["pending"][number];
   retryImages?: PromptImage[];
   sessionOperation?: ThreadSessionOperation;
   setup?: Promise<string>;
@@ -836,6 +522,7 @@ export class Threads {
       if (!isNonEmpty(record.sessionId)) {
         throw new Error(record.error ?? "Agent unavailable");
       }
+      runtime.activePrompt = pending;
       const result = await runtime.connection.prompt(
         record.sessionId,
         pending.text,
@@ -860,6 +547,7 @@ export class Threads {
       record.authentication =
         agentAuthentication(error) ?? record.authentication;
     } finally {
+      runtime.activePrompt = undefined;
       runtime.pending = runtime.pending.filter(
         (message) => message.id !== pending.id
       );
@@ -1010,32 +698,35 @@ export class Threads {
     this.emit();
   }
 
-  async forkTargets(): Promise<ThreadForkTargets> {
-    const { record, runtime } = this.requireSessionOperationContext(
-      this.selectedId,
-      "fork"
+  async forkMessage(threadId: string, itemId: string): Promise<void> {
+    const { runtime } = this.requireSessionOperationContext(threadId, "fork");
+    const messageId = Threads.transcriptMessageId(runtime, itemId, "user");
+    await this.forkAt(
+      threadId,
+      messageId,
+      runtime.items.find((item) => item.id === itemId)?.text ?? ""
     );
-    return {
-      targets: await runtime.connection.forkTargets(record.sessionId),
-      threadId: record.id,
-    };
   }
 
-  async fork(threadId: string, target: AgentForkTarget): Promise<void> {
+  private async forkAt(
+    threadId: string,
+    id: string,
+    text: string
+  ): Promise<void> {
     const { record, runtime } = this.requireSessionOperationContext(
       threadId,
       "fork"
     );
-    if (!target.entryId.trim()) {
+    if (!isNonEmpty(id)) {
       throw new Error("Invalid fork target");
     }
     runtime.sessionOperation = "fork";
     this.emit();
     try {
-      const setup = await runtime.connection.fork(
+      const setup = await runtime.connection.forkMessage(
         record.sessionId,
         record.workspace,
-        target.entryId
+        id
       );
       const now = new Date().toISOString();
       const fork: StoredThread = {
@@ -1055,35 +746,67 @@ export class Threads {
         await this.selectThread(fork.workspace, fork.id);
       }
       await this.load(fork);
-      this.runtimes.get(fork.id)?.drafts.push(target.text);
+      this.runtimes.get(fork.id)?.drafts.push(text);
     } finally {
       runtime.sessionOperation = undefined;
       this.emit();
     }
   }
 
-  async treeTargets(): Promise<ThreadTreeTargets> {
-    const { record, runtime } = this.requireSessionOperationContext(
-      this.selectedId,
-      "navigateTree"
-    );
-    return {
-      branchSummarySupported: runtime.operations.branchSummary,
-      targets: await runtime.connection.treeTargets(record.sessionId),
-      threadId: record.id,
-    };
+  branchSummarySupported(threadId: string): boolean {
+    return this.requireSessionOperationContext(threadId, "navigateTree").runtime
+      .operations.branchSummary;
   }
 
-  async navigateTree(
+  async navigateTreeMessage(
     threadId: string,
-    target: AgentTreeTarget,
+    itemId: string,
+    options?: AgentTreeNavigationOptions
+  ): Promise<void> {
+    const { runtime } = this.requireSessionOperationContext(
+      threadId,
+      "navigateTree"
+    );
+    const item = runtime.items.find((candidate) => candidate.id === itemId);
+    if (item?.kind !== "user" && item?.kind !== "assistant") {
+      throw new Error("Message identity is unavailable in this Thread");
+    }
+    const messageId = Threads.transcriptMessageId(runtime, itemId, item.kind);
+    await this.navigateMessage(threadId, messageId, item.kind, options);
+  }
+
+  private static transcriptMessageId(
+    runtime: Runtime,
+    itemId: string,
+    kind: "user" | "assistant"
+  ): string {
+    const prefix = `${kind}:`;
+    const item = runtime.items.find(
+      (candidate) => candidate.id === itemId && candidate.kind === kind
+    );
+    if (
+      !item ||
+      !itemId.startsWith(prefix) ||
+      !isNonEmpty(itemId.slice(prefix.length)) ||
+      item.queued !== undefined ||
+      item.cancelled === true
+    ) {
+      throw new Error("Message identity is unavailable in this Thread");
+    }
+    return itemId.slice(prefix.length);
+  }
+
+  private async navigateMessage(
+    threadId: string,
+    messageId: string,
+    role: "user" | "assistant",
     options?: AgentTreeNavigationOptions
   ): Promise<void> {
     const { record, runtime } = this.requireSessionOperationContext(
       threadId,
       "navigateTree"
     );
-    if (!target.entryId.trim()) {
+    if (!isNonEmpty(messageId)) {
       throw new Error("Invalid tree target");
     }
     const navigationOptions = options ?? { summarize: false };
@@ -1099,9 +822,9 @@ export class Threads {
       type: "sessionOperation",
     });
     try {
-      const result = await runtime.connection.navigateTree(
+      const result = await runtime.connection.navigateTreeMessage(
         record.sessionId,
-        target.entryId,
+        messageId,
         navigationOptions
       );
       runtime.items = [];
@@ -1109,7 +832,7 @@ export class Threads {
       record.error = undefined;
       record.authentication = undefined;
       await this.reload(record, runtime);
-      if (target.role === "user" && isNonEmpty(result.draft)) {
+      if (role === "user" && isNonEmpty(result.draft)) {
         runtime.drafts.push(result.draft);
       }
     } finally {
@@ -1242,10 +965,10 @@ export class Threads {
       configOptions: runtime?.configOptions ?? [],
       ...(isNonEmpty(record.error) ? { error: record.error } : {}),
       drafts: runtime?.drafts ?? [],
-      ...(runtime?.operations.forkPicker === true
+      ...(runtime?.operations.forkMessage === true
         ? { forkSupported: true }
         : {}),
-      ...(runtime?.operations.treePicker === true
+      ...(runtime?.operations.treeNavigation === true
         ? { treeNavigationSupported: true }
         : {}),
       id: record.id,
@@ -1407,8 +1130,8 @@ export class Threads {
       items: [],
       operations: {
         branchSummary: false,
-        forkPicker: false,
-        treePicker: false,
+        forkMessage: false,
+        treeNavigation: false,
       },
       pending: [],
       status: record.status,
@@ -1472,6 +1195,26 @@ export class Threads {
     const runtime = this.runtimes.get(record.id);
     if (!runtime) {
       return;
+    }
+    if (update.type === "message" && update.kind === "user") {
+      const pending = runtime.activePrompt;
+      if (pending && isNonEmpty(update.messageId)) {
+        if (pending.echoedId === update.messageId) {
+          return;
+        }
+        if (pending.echoedId === undefined) {
+          const item = runtime.items.find(
+            (candidate) => candidate.id === pending.id
+          );
+          if (item) {
+            pending.echoedId = update.messageId;
+            pending.id = `user:${update.messageId}`;
+            item.id = pending.id;
+            this.emit();
+            return;
+          }
+        }
+      }
     }
     if (update.type === "message" && update.kind !== "user") {
       this.markStreaming(runtime, update.text ?? "");
@@ -1613,8 +1356,8 @@ export class Threads {
     }
     const supported =
       operation === "fork"
-        ? runtime.operations.forkPicker
-        : runtime.operations.treePicker;
+        ? runtime.operations.forkMessage
+        : runtime.operations.treeNavigation;
     if (!supported) {
       throw new Error(`This Agent does not support ${title}`);
     }

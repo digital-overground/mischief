@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { isRecord } from "./present";
-import type { AgentLaunch } from "./threads/acp";
+import type { AgentLaunch } from "./threads/acp/models";
 import type { SetupOption } from "./webview/protocol";
 
 const ADDON_SOURCES: Readonly<Record<string, string>> = {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 
-import type { ThreadUsage } from "../../../../../threads/threads";
+import type { ThreadUsage } from "../../../../../threads/model";
 import { postMessage } from "../../../../bridge";
 
 const formatUsage = (value: number): string =>

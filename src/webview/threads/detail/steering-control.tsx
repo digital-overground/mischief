@@ -1,4 +1,4 @@
-import type { SteeringMessage } from "../../../threads/threads";
+import type { SteeringMessage } from "../../../threads/threads/models";
 import { postMessage } from "../../bridge";
 import { Icon } from "../../icon";
 

@@ -1,8 +1,6 @@
 import { isNonEmpty } from "../../../present";
-import type {
-  ElicitationField,
-  ThreadInteraction,
-} from "../../../threads/threads";
+import type { ElicitationField } from "../../../threads/model";
+import type { ThreadInteraction } from "../../../threads/threads/models";
 import { postMessage } from "../../bridge";
 import { SvgIcon } from "../../icon";
 

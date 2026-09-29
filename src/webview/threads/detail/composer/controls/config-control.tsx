@@ -4,7 +4,7 @@ import { isNonEmpty } from "../../../../../present";
 import type {
   ThreadConfigChoice,
   ThreadConfigOption,
-} from "../../../../../threads/threads";
+} from "../../../../../threads/model";
 import { postMessage } from "../../../../bridge";
 import { Icon } from "../../../../icon";
 

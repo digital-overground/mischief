@@ -7,12 +7,10 @@ The original implementation plan was prepared on 2026-09-17 against Mischief `01
 ## Current contract
 
 - Mischief uses `@agentclientprotocol/sdk` `^1.4.0` and the SDK app-style `client()` API.
-- `src/threads/acp.ts` is the sole adapter for ACP and MagPi-private protocol details.
-- Fork targets come from `_magpi-acp/session/fork-messages` and use native Pi entry IDs.
-- Targeted forks send `_meta["magpi-acp/fork-entry-id"]` on the ACP fork request.
-- Tree targets come from `_magpi-acp/session/tree`.
-- Tree navigation uses `_magpi-acp/session/navigate-tree` and reloads the same Thread.
-- The Webview requests actions but never receives Pi entry IDs; native VS Code QuickPicks keep those IDs in the extension host.
+- `src/threads/acp/acp.ts` is the sole adapter for ACP and MagPi-private protocol details.
+- Transcript-row forks send ACP message IDs through `_meta["magpi-acp/fork-message-id"]`.
+- Transcript-row tree navigation sends ACP message IDs to `_magpi-acp/session/navigate-tree` and reloads the same Thread.
+- MagPi resolves native Pi targets; Mischief no longer requests native fork/tree target lists or shows footer Fork/Tree QuickPicks.
 - Private response payloads are decoded at the ACP adapter boundary.
 - Terminal authentication supports the standard ACP shape plus the temporary MagPi compatibility metadata.
 - No Profile Database migration or second persistence layer was required.

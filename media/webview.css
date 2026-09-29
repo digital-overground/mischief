@@ -1455,9 +1455,7 @@ footer {
   gap: 4px;
   padding: 2px 12px 4px;
 }
-#footer-new-thread,
-#footer-fork-thread,
-#footer-navigate-tree {
+#history-control > button {
   flex: none;
   border: 0;
   background: transparent;
@@ -1469,17 +1467,74 @@ footer {
   align-items: center;
   justify-content: center;
 }
-#footer-new-thread .lucide,
-#footer-fork-thread .lucide,
-#footer-navigate-tree .lucide {
+#history-control > button .lucide {
   width: 18px;
   height: 18px;
 }
 #usage,
-#footer-fork-thread,
-#footer-navigate-tree {
+#history-control > button {
   border: 0;
   background: transparent;
+}
+#history-control {
+  flex: none;
+}
+#history-list {
+  position: absolute;
+  z-index: 5;
+  bottom: 100%;
+  left: 8px;
+  width: min(500px, calc(100% - 16px));
+  max-height: 500px;
+  overflow-y: auto;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  background: var(--vscode-editorWidget-background);
+  box-shadow: 0 4px 12px var(--vscode-widget-shadow);
+}
+#history-list .history-entry {
+  display: flex;
+  align-items: center;
+  color: var(--vscode-foreground);
+}
+#history-list .history-entry.user {
+  color: var(--vscode-textLink-foreground);
+}
+#history-list .history-entry:hover,
+#history-list .history-entry:focus-within {
+  background: var(--vscode-list-hoverBackground);
+}
+#history-list .history-entry button {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+#history-list .history-entry button:disabled {
+  cursor: default;
+}
+#history-list .history-entry .history-jump {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#history-list .history-entry button:not(.history-jump) {
+  display: none;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+}
+#history-list .history-entry button:not(.history-jump) .lucide {
+  width: 16px;
+  height: 16px;
+}
+#history-list .history-entry:hover button:not(.history-jump),
+#history-list .history-entry:focus-within button:not(.history-jump) {
+  display: inline-flex;
 }
 #send {
   margin-left: 8px;

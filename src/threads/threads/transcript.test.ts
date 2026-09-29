@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import type { TranscriptItem } from "./threads";
+import type { TranscriptItem } from "./models";
 import { archiveCompletedPlan, reduceTranscript } from "./transcript";
 
 describe("transcript reducer", () => {

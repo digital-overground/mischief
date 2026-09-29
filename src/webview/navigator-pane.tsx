@@ -6,7 +6,7 @@ import type {
   ProjectsSnapshot,
   Workspace,
 } from "../projects/projects";
-import type { ThreadIndicator, ThreadSummary } from "../threads/threads";
+import type { ThreadIndicator, ThreadSummary } from "../threads/threads/models";
 import { postMessage } from "./bridge";
 import { SvgIcon } from "./icon";
 import type { RenderedThreadsSnapshot } from "./protocol";

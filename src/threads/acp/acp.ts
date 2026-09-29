@@ -27,46 +27,39 @@ import type {
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
 
-import { isNonEmpty, isRecord } from "../present";
+import { isNonEmpty, isRecord } from "../../present";
 import type {
   AgentConnection,
   AgentConnectionFactory,
   AgentError,
   AgentElicitationRequest,
   AgentElicitationResponse,
-  AgentForkTarget,
   AgentHandlers,
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentToolUpdate,
-  AgentTreeNavigationOptions,
-  AgentTreeNavigationResult,
-  AgentTreeTarget,
-  AgentSessionOperations,
   AgentUpdate,
   ElicitationField,
   PromptImage,
   TerminalAuthentication,
   ThreadConfigChoice,
   ThreadConfigOption,
-} from "./threads";
-
-export interface AgentLaunch {
-  command: string;
-  args: string[];
-  env?: Record<string, string>;
-}
+} from "../model";
+import type {
+  AgentLaunch,
+  AgentSessionOperations,
+  AgentTreeNavigationOptions,
+  AgentTreeNavigationResult,
+} from "./models";
 
 const MAX_CONTEXT_BYTES = 1_000_000;
 const MAX_CONTEXT_FILES = 20;
 
 export const BRANCH_SUMMARY_CAPABILITY = "magpi-acp/branch-summary";
-export const FORK_PICKER_CAPABILITY = "magpi-acp/fork-picker";
-export const TREE_PICKER_CAPABILITY = "magpi-acp/tree-picker";
-export const FORK_MESSAGES_METHOD = "_magpi-acp/session/fork-messages";
-export const TREE_METHOD = "_magpi-acp/session/tree";
+export const FORK_MESSAGE_CAPABILITY = "magpi-acp/fork-picker";
+export const TREE_NAVIGATION_CAPABILITY = "magpi-acp/tree-picker";
 export const NAVIGATE_TREE_METHOD = "_magpi-acp/session/navigate-tree";
-export const FORK_ENTRY_ID_META = "magpi-acp/fork-entry-id";
+export const FORK_MESSAGE_ID_META = "magpi-acp/fork-message-id";
 
 const referencedPaths = (text: string): string[] => [
   ...new Set(
@@ -798,130 +791,9 @@ export const sessionOperations = (
       : undefined;
   return {
     branchSummary: meta?.[BRANCH_SUMMARY_CAPABILITY] === true,
-    forkPicker: meta?.[FORK_PICKER_CAPABILITY] === true,
-    treePicker: meta?.[TREE_PICKER_CAPABILITY] === true,
+    forkMessage: meta?.[FORK_MESSAGE_CAPABILITY] === true,
+    treeNavigation: meta?.[TREE_NAVIGATION_CAPABILITY] === true,
   };
-};
-
-export const decodeForkTargets = (value: unknown): AgentForkTarget[] => {
-  if (!isRecord(value) || !Array.isArray(value.messages)) {
-    throw invalidResponse("fork messages");
-  }
-  return value.messages.map((candidate) => {
-    if (
-      !isRecord(candidate) ||
-      typeof candidate.entryId !== "string" ||
-      !candidate.entryId.trim() ||
-      typeof candidate.text !== "string"
-    ) {
-      throw invalidResponse("fork messages");
-    }
-    return { entryId: candidate.entryId, text: candidate.text };
-  });
-};
-
-interface NativeTreeNode {
-  children: NativeTreeNode[];
-  entry: Record<string, unknown> & { id: string; type: string };
-}
-
-const decodeTreeNode = (value: unknown): NativeTreeNode => {
-  if (
-    !isRecord(value) ||
-    !isRecord(value.entry) ||
-    !Array.isArray(value.children)
-  ) {
-    throw invalidResponse("tree");
-  }
-  if (
-    typeof value.entry.id !== "string" ||
-    !value.entry.id.trim() ||
-    typeof value.entry.type !== "string"
-  ) {
-    throw invalidResponse("tree");
-  }
-  return {
-    children: value.children.map(decodeTreeNode),
-    entry: { ...value.entry, id: value.entry.id, type: value.entry.type },
-  };
-};
-
-const messageText = (message: Record<string, unknown>): string | undefined => {
-  if (typeof message.content === "string") {
-    return message.content;
-  }
-  if (!Array.isArray(message.content)) {
-    return undefined;
-  }
-  const text = message.content
-    .filter(
-      (content): content is Record<string, unknown> =>
-        isRecord(content) &&
-        content.type === "text" &&
-        typeof content.text === "string"
-    )
-    .map((content) => String(content.text))
-    .join("");
-  return text || undefined;
-};
-
-export const decodeTreeTargets = (value: unknown): AgentTreeTarget[] => {
-  if (!isRecord(value) || !Array.isArray(value.tree)) {
-    throw invalidResponse("tree");
-  }
-  if (value.leafId !== null && typeof value.leafId !== "string") {
-    throw invalidResponse("tree");
-  }
-  const roots = value.tree.map(decodeTreeNode);
-  const active = new WeakMap<NativeTreeNode, boolean>();
-  const markActive = (node: NativeTreeNode): boolean => {
-    const result =
-      node.entry.id === value.leafId || node.children.some(markActive);
-    active.set(node, result);
-    return result;
-  };
-  for (const root of roots) {
-    markActive(root);
-  }
-  const targets: AgentTreeTarget[] = [];
-  const visit = (node: NativeTreeNode, depth: number): void => {
-    const { children, entry } = node;
-    const childDepth = depth + (children.length > 1 ? 1 : 0);
-    const message = isRecord(entry.message) ? entry.message : undefined;
-    const { role } = message ?? {};
-    if (
-      entry.type !== "message" ||
-      !message ||
-      (role !== "user" && role !== "assistant")
-    ) {
-      for (const child of children) {
-        visit(child, childDepth);
-      }
-      return;
-    }
-    const text = messageText(message);
-    if (role === "assistant" && !isNonEmpty(text)) {
-      for (const child of children) {
-        visit(child, childDepth);
-      }
-      return;
-    }
-    targets.push({
-      activeBranch: active.get(node) === true,
-      current: entry.id === value.leafId,
-      depth,
-      entryId: entry.id,
-      role,
-      text: text ?? "Image prompt",
-    });
-    for (const child of children) {
-      visit(child, childDepth);
-    }
-  };
-  for (const root of roots) {
-    visit(root, 0);
-  }
-  return targets;
 };
 
 export const decodeTreeNavigationResult = (
@@ -950,8 +822,8 @@ class AcpConnection implements AgentConnection {
   private disposed = false;
   private operations: AgentSessionOperations = {
     branchSummary: false,
-    forkPicker: false,
-    treePicker: false,
+    forkMessage: false,
+    treeNavigation: false,
   };
   private readonly launch: AgentLaunch;
   private readonly handlers: AgentHandlers;
@@ -986,13 +858,13 @@ class AcpConnection implements AgentConnection {
     });
   }
 
-  async fork(sessionId: string, cwd: string, entryId: string) {
+  async forkMessage(sessionId: string, cwd: string, messageId: string) {
     return await this.call(async () => {
       await this.start();
       const session = await this.requireAgent().request(
         methods.agent.session.fork,
         {
-          _meta: { [FORK_ENTRY_ID_META]: entryId },
+          _meta: { [FORK_MESSAGE_ID_META]: messageId },
           cwd,
           mcpServers: [],
           sessionId,
@@ -1003,17 +875,6 @@ class AcpConnection implements AgentConnection {
         operations: this.operations,
         sessionId: session.sessionId,
       };
-    });
-  }
-
-  async forkTargets(sessionId: string) {
-    return await this.call(async () => {
-      await this.start();
-      const response = await this.requireAgent().request<
-        unknown,
-        { sessionId: string }
-      >(FORK_MESSAGES_METHOD, { sessionId });
-      return decodeForkTargets(response);
     });
   }
 
@@ -1072,29 +933,18 @@ class AcpConnection implements AgentConnection {
     });
   }
 
-  async navigateTree(
+  async navigateTreeMessage(
     sessionId: string,
-    entryId: string,
+    messageId: string,
     options: AgentTreeNavigationOptions
   ) {
     return await this.call(async () => {
       await this.start();
       const response = await this.requireAgent().request<
         unknown,
-        AgentTreeNavigationOptions & { entryId: string; sessionId: string }
-      >(NAVIGATE_TREE_METHOD, { ...options, entryId, sessionId });
+        AgentTreeNavigationOptions & { messageId: string; sessionId: string }
+      >(NAVIGATE_TREE_METHOD, { ...options, messageId, sessionId });
       return decodeTreeNavigationResult(response);
-    });
-  }
-
-  async treeTargets(sessionId: string) {
-    return await this.call(async () => {
-      await this.start();
-      const response = await this.requireAgent().request<
-        unknown,
-        { sessionId: string }
-      >(TREE_METHOD, { sessionId });
-      return decodeTreeTargets(response);
     });
   }
 

@@ -20,17 +20,15 @@ import type {
   ProjectsSnapshot,
   Workspace,
 } from "./projects/projects";
+import type { AgentTreeNavigationOptions } from "./threads/acp/models";
+import type { PromptImage } from "./threads/model";
 import type {
-  AgentForkTarget,
-  AgentTreeNavigationOptions,
-  AgentTreeTarget,
-  PromptImage,
   ThreadHistoryEntry,
   ThreadInteractionResponse,
-  Threads,
   ThreadsChange,
   TranscriptItem,
-} from "./threads/threads";
+} from "./threads/threads/models";
+import type { Threads } from "./threads/threads/threads";
 import { webviewHtml } from "./webview";
 import type { HostToWebviewMessage, SetupStep } from "./webview/protocol";
 import {
@@ -112,21 +110,10 @@ interface ThreadHistoryQuickPickItem extends vscode.QuickPickItem {
   entry: ThreadHistoryEntry;
 }
 
-interface ForkQuickPickItem extends vscode.QuickPickItem {
-  target: AgentForkTarget;
-}
-
-interface TreeQuickPickItem extends vscode.QuickPickItem {
-  target: AgentTreeTarget;
-}
-
 interface BranchSummaryQuickPickItem extends vscode.QuickPickItem {
   custom?: true;
   summarize: boolean;
 }
-
-const pickerLabel = (text: string): string =>
-  text.replaceAll(/\s+/gu, " ").trim() || "Image prompt";
 
 const historyTime = (value: string, now = Date.now()): string => {
   const elapsed = Math.max(0, now - Date.parse(value));
@@ -722,12 +709,33 @@ export class MischiefView implements vscode.WebviewViewProvider {
       await this.threads.remove(data.id);
       return true;
     }
-    if (data.type === "forkThread") {
-      await this.showForkThread();
-      return true;
-    }
-    if (data.type === "navigateThreadTree") {
-      await this.showNavigateThreadTree();
+    if (data.type === "forkThread" || data.type === "navigateThreadTree") {
+      if (
+        typeof data.threadId !== "string" ||
+        !isNonEmpty(data.threadId) ||
+        data.threadId.length > 200 ||
+        typeof data.messageId !== "string" ||
+        !isNonEmpty(data.messageId) ||
+        data.messageId.length > 1000
+      ) {
+        throw new Error("Invalid transcript message target");
+      }
+      if (data.type === "forkThread") {
+        await this.threads.forkMessage(data.threadId, data.messageId);
+      } else {
+        const options = await MischiefView.chooseBranchSummary(
+          this.threads.branchSummarySupported(data.threadId),
+          false
+        );
+        if (options) {
+          await this.threads.navigateTreeMessage(
+            data.threadId,
+            data.messageId,
+            options
+          );
+          await this.render();
+        }
+      }
       return true;
     }
     if (data.type === "renameThread" && typeof data.id === "string") {
@@ -811,88 +819,12 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
   }
 
-  private async showForkThread(): Promise<void> {
-    const context = await loadWithQuickPick(
-      "Fork Thread",
-      "Loading fork points…",
-      async () => await this.threads.forkTargets()
-    );
-    if (!context) {
-      return;
-    }
-    if (!context.targets.length) {
-      await vscode.window.showInformationMessage(
-        "No fork points are available in this Thread."
-      );
-      return;
-    }
-    const selected = await vscode.window.showQuickPick<ForkQuickPickItem>(
-      context.targets.toReversed().map((target) => ({
-        label: pickerLabel(target.text),
-        target,
-      })),
-      {
-        placeHolder: "Select a user message to edit in a new Thread",
-        title: "Fork Thread",
-      }
-    );
-    if (selected) {
-      await this.threads.fork(context.threadId, selected.target);
-    }
-  }
-
-  private async showNavigateThreadTree(): Promise<void> {
-    const context = await loadWithQuickPick(
-      "Navigate Thread Tree",
-      "Loading Thread tree…",
-      async () => await this.threads.treeTargets()
-    );
-    if (!context) {
-      return;
-    }
-    if (!context.targets.length) {
-      await vscode.window.showInformationMessage(
-        "No message entries are available in this Thread tree."
-      );
-      return;
-    }
-    const currentVisible = context.targets.some((target) => target.current);
-    let activeTarget: AgentTreeTarget | undefined;
-    if (!currentVisible) {
-      for (const target of context.targets) {
-        if (
-          target.activeBranch &&
-          (!activeTarget || target.depth >= activeTarget.depth)
-        ) {
-          activeTarget = target;
-        }
-      }
-    }
-    const selected = await vscode.window.showQuickPick<TreeQuickPickItem>(
-      context.targets.toReversed().map((target) => {
-        const preview = pickerLabel(target.text);
-        let description: string | undefined;
-        if (target.current) {
-          description = "current leaf";
-        } else if (target.entryId === activeTarget?.entryId) {
-          description = "active branch";
-        }
-        return {
-          ...(isNonEmpty(description) ? { description } : {}),
-          label: `${target.depth ? `${"-".repeat(target.depth)} ` : ""}${target.role === "user" ? "You" : "Agent"}: ${preview}`,
-          target,
-        };
-      }),
-      {
-        placeHolder: "Select a message to make active",
-        title: "Navigate Thread Tree",
-      }
-    );
-    if (!selected) {
-      return;
-    }
+  private static async chooseBranchSummary(
+    supported: boolean,
+    current: boolean
+  ): Promise<AgentTreeNavigationOptions | undefined> {
     let options: AgentTreeNavigationOptions = { summarize: false };
-    if (context.branchSummarySupported && !selected.target.current) {
+    if (supported && !current) {
       const summary =
         await vscode.window.showQuickPick<BranchSummaryQuickPickItem>(
           [
@@ -910,7 +842,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
           }
         );
       if (!summary) {
-        return;
+        return undefined;
       }
       options = { summarize: summary.summarize };
       if (summary.custom) {
@@ -922,13 +854,12 @@ export class MischiefView implements vscode.WebviewViewProvider {
             value.trim() ? undefined : "Enter summary instructions",
         });
         if (customInstructions === undefined) {
-          return;
+          return undefined;
         }
         options.customInstructions = customInstructions;
       }
     }
-    await this.threads.navigateTree(context.threadId, selected.target, options);
-    await this.render();
+    return options;
   }
 
   private async showThreadHistory(): Promise<void> {

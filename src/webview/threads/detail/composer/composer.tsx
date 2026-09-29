@@ -9,9 +9,12 @@ import {
 import type { ClipboardEvent, KeyboardEvent } from "react";
 
 import { isDefined, isNonEmpty } from "../../../../present";
-import type { PromptImage, ThreadCommand } from "../../../../threads/threads";
+import type { PromptImage, ThreadCommand } from "../../../../threads/model";
 import { postMessage } from "../../../bridge";
-import type { RenderedThreadDetail } from "../../../protocol";
+import type {
+  RenderedThreadDetail,
+  RenderedTranscriptItem,
+} from "../../../protocol";
 import { FooterControls } from "./controls/footer-controls";
 
 interface ComposerMatch {
@@ -73,17 +76,19 @@ const matchingContextItems = (
 const ComposerView = ({
   contextItems,
   copyNotice,
+  historyItems,
+  onJumpMessage,
   selected,
   setup,
   setupSelected,
-  workspace,
 }: {
   contextItems: string[];
   copyNotice: number;
+  historyItems: RenderedTranscriptItem[];
+  onJumpMessage: (id: string) => void;
   selected?: RenderedThreadDetail;
   setup: boolean;
   setupSelected: string[];
-  workspace?: string;
 }): React.JSX.Element => {
   const box = useRef<HTMLTextAreaElement>(null);
   const suggestionsBox = useRef<HTMLDivElement>(null);
@@ -175,14 +180,6 @@ const ComposerView = ({
       box.current?.focus();
     }
   }, [selected?.id, setup]);
-
-  const newThread = (): void => {
-    if (!isNonEmpty(workspace)) {
-      return;
-    }
-    postMessage({ type: "newThread" });
-    box.current?.focus();
-  };
 
   const send = (): void => {
     if (setup) {
@@ -395,7 +392,8 @@ const ComposerView = ({
         ))}
       </div>
       <FooterControls
-        onNewThread={newThread}
+        historyItems={historyItems}
+        onJumpMessage={onJumpMessage}
         onSend={() => {
           if (running) {
             postMessage({ type: "cancel" });
@@ -405,7 +403,6 @@ const ComposerView = ({
         }}
         selected={selected}
         setup={setup}
-        workspace={workspace}
       />
     </footer>
   );

@@ -5,7 +5,10 @@ import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { testValue } from "../../../../../test-value";
-import type { RenderedThreadDetail } from "../../../../protocol";
+import type {
+  RenderedThreadDetail,
+  RenderedTranscriptItem,
+} from "../../../../protocol";
 
 const action = vi.fn<() => void>();
 const postMessage = vi.fn<(message: unknown) => void>();
@@ -34,12 +37,7 @@ const selected = (
 let root: Root;
 const renderFooter = (overrides: Partial<RenderedThreadDetail> = {}): void => {
   root.render(
-    <FooterControls
-      onNewThread={action}
-      onSend={action}
-      selected={selected(overrides)}
-      workspace="/workspace"
-    />
+    <FooterControls onSend={action} selected={selected(overrides)} />
   );
 };
 
@@ -61,6 +59,198 @@ describe("Footer controls", () => {
       root.unmount();
     });
     document.body.innerHTML = "";
+  });
+
+  test("shows browse-only message history and closes it on Thread change", () => {
+    const items: RenderedTranscriptItem[] = [
+      { id: "u", kind: "user", text: "Prompt" },
+      { id: "tool", kind: "tool", title: "Read" },
+      { id: "a", kind: "assistant", text: "Response" },
+      {
+        id: "image",
+        images: [{ data: "abc", mimeType: "image/png" }],
+        kind: "user",
+      },
+    ];
+    const jump = vi.fn<(id: string) => void>();
+    act(() => {
+      root.render(
+        <FooterControls
+          historyItems={items.filter(
+            (item) => item.kind === "user" || item.kind === "assistant"
+          )}
+          onJumpMessage={jump}
+          onSend={action}
+          selected={selected()}
+        />
+      );
+    });
+    const button = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Message history"]'
+    );
+    act(() => button?.click());
+    expect(
+      [...document.querySelectorAll("#history-list .history-entry")].map(
+        (row) => row.textContent
+      )
+    ).toStrictEqual(["Prompt", "Response", "Image prompt"]);
+    act(() => {
+      document
+        .querySelector<HTMLButtonElement>(
+          "#history-list .history-entry:last-child .history-jump"
+        )
+        ?.click();
+    });
+    expect(jump).toHaveBeenCalledWith("image");
+    expect(document.querySelector("#history-list")).toBeNull();
+    act(() => button?.click());
+    act(() => {
+      root.render(
+        <FooterControls
+          historyItems={items}
+          onJumpMessage={jump}
+          onSend={action}
+          selected={selected({ id: "other" })}
+        />
+      );
+    });
+    expect(document.querySelector("#history-list")).toBeNull();
+  });
+
+  test("sends transcript IDs for idle row actions, not for busy rows", () => {
+    const items: RenderedTranscriptItem[] = [
+      { id: "user:one", kind: "user", text: "Same" },
+      { id: "assistant:two", kind: "assistant", text: "Answer" },
+      { id: "user:three", kind: "user", text: "Same" },
+      { id: "local", kind: "user", text: "Old" },
+    ];
+    act(() => {
+      root.render(
+        <FooterControls
+          historyItems={items}
+          onSend={action}
+          selected={selected({
+            forkSupported: true,
+            treeNavigationSupported: true,
+          })}
+        />
+      );
+    });
+    act(() =>
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="Message history"]')
+        ?.click()
+    );
+    act(() =>
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="Fork at Same"]')
+        ?.click()
+    );
+    expect(postMessage).toHaveBeenCalledWith({
+      messageId: "user:one",
+      threadId: "thread",
+      type: "forkThread",
+    });
+    act(() =>
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="Message history"]')
+        ?.click()
+    );
+    act(() =>
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="Navigate to Answer"]')
+        ?.click()
+    );
+    expect(postMessage).toHaveBeenCalledWith({
+      messageId: "assistant:two",
+      threadId: "thread",
+      type: "navigateThreadTree",
+    });
+    act(() => {
+      root.render(
+        <FooterControls
+          historyItems={items}
+          onSend={action}
+          selected={selected({
+            forkSupported: true,
+            status: "running",
+            treeNavigationSupported: true,
+          })}
+        />
+      );
+    });
+    expect(document.querySelector('[aria-label="Fork at Same"]')).toBeNull();
+    expect(
+      document.querySelector('[aria-label="Navigate to Answer"]')
+    ).toBeNull();
+  });
+
+  test("keeps history on-screen in a narrow footer and focuses newest entries", () => {
+    act(() => {
+      root.render(
+        <FooterControls
+          historyItems={[{ id: "u", kind: "user", text: "Prompt" }]}
+          onSend={action}
+          selected={selected()}
+        />
+      );
+    });
+    const footer = document.querySelector<HTMLElement>("#root");
+    const button = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Message history"]'
+    );
+    if (!footer || !button) {
+      throw new Error("Missing history control");
+    }
+    vi.spyOn(button, "closest").mockReturnValue(footer);
+    vi.spyOn(footer, "getBoundingClientRect").mockReturnValue({
+      bottom: 500,
+      height: 30,
+      left: 0,
+      right: 180,
+      toJSON: () => ({}),
+      top: 470,
+      width: 180,
+      x: 0,
+      y: 470,
+    });
+    act(() => {
+      button.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, clientX: 179 })
+      );
+    });
+    const list = document.querySelector<HTMLElement>("#history-list");
+    expect(list?.style.left).toBe("8px");
+    expect(document.activeElement).toBe(list);
+    expect(button?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  test("closes message history on Escape and outside pointerdown", () => {
+    act(() => {
+      root.render(
+        <FooterControls
+          historyItems={[{ id: "u", kind: "user", text: "Prompt" }]}
+          onSend={action}
+          selected={selected()}
+        />
+      );
+    });
+    const button = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Message history"]'
+    );
+    act(() => button?.click());
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })
+      );
+    });
+    expect(document.querySelector("#history-list")).toBeNull();
+    expect(document.activeElement).toBe(button);
+    act(() => button?.click());
+    act(() => {
+      document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    expect(document.querySelector("#history-list")).toBeNull();
   });
 
   test("closes context usage when usage disappears", async () => {
@@ -91,72 +281,23 @@ describe("Footer controls", () => {
     ).toBeTruthy();
   });
 
-  test("shows id-free Thread operation actions only when supported", async () => {
-    await Promise.resolve();
+  test("keeps Fork and Tree actions in history rather than the footer", () => {
     act(() => {
-      renderFooter();
+      renderFooter({ forkSupported: true, treeNavigationSupported: true });
     });
     expect({
       fork: document.querySelector("#footer-fork-thread"),
       tree: document.querySelector("#footer-navigate-tree"),
     }).toStrictEqual({ fork: null, tree: null });
-
-    act(() => {
-      renderFooter({ forkSupported: true, treeNavigationSupported: true });
-    });
-    const fork = document.querySelector<HTMLButtonElement>(
-      'button[aria-label="Fork Thread"]'
-    );
-    const tree = document.querySelector<HTMLButtonElement>(
-      'button[aria-label="Navigate Thread Tree"]'
-    );
-    expect({
-      fork: { disabled: fork?.disabled, title: fork?.title },
-      tree: { disabled: tree?.disabled, title: tree?.title },
-    }).toStrictEqual({
-      fork: { disabled: false, title: "Fork Thread" },
-      tree: { disabled: false, title: "Navigate Thread Tree" },
-    });
-
-    act(() => fork?.click());
-    act(() => tree?.click());
-    expect(postMessage.mock.calls).toStrictEqual([
-      [{ type: "forkThread" }],
-      [{ type: "navigateThreadTree" }],
-    ]);
   });
 
-  test("disables Thread operations and Send during a Thread operation", async () => {
-    await Promise.resolve();
+  test("disables Send during a Thread operation", () => {
     act(() => {
-      renderFooter({
-        forkSupported: true,
-        sessionOperation: "navigateTree",
-        treeNavigationSupported: true,
-      });
+      renderFooter({ sessionOperation: "navigateTree" });
     });
-
-    expect({
-      fork: document.querySelector<HTMLButtonElement>("#footer-fork-thread")
-        ?.disabled,
-      send: document.querySelector<HTMLButtonElement>("#send")?.disabled,
-      tree: document.querySelector<HTMLButtonElement>("#footer-navigate-tree")
-        ?.disabled,
-    }).toStrictEqual({ fork: true, send: true, tree: true });
-
-    act(() => {
-      renderFooter({
-        forkSupported: true,
-        status: "running",
-        treeNavigationSupported: true,
-      });
-    });
-    expect({
-      fork: document.querySelector<HTMLButtonElement>("#footer-fork-thread")
-        ?.disabled,
-      tree: document.querySelector<HTMLButtonElement>("#footer-navigate-tree")
-        ?.disabled,
-    }).toStrictEqual({ fork: true, tree: true });
+    expect(
+      document.querySelector<HTMLButtonElement>("#send")?.disabled
+    ).toBeTruthy();
   });
 
   test("preserves the Agent's model option order", async () => {

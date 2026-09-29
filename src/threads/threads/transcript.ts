@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 
-import { isNonEmpty, isNonZero } from "../present";
-import type { AgentToolUpdate, AgentUpdate, TranscriptItem } from "./threads";
+import { isNonEmpty, isNonZero } from "../../present";
+import type { AgentToolUpdate, AgentUpdate } from "../model";
+import type { TranscriptItem } from "./models";
 
 const appendMessage = (
   items: TranscriptItem[],

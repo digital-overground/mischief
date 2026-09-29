@@ -1,12 +1,12 @@
 import type { ProjectsSnapshot } from "../projects/projects";
+import type { PromptImage } from "../threads/model";
 import type {
-  PromptImage,
   ThreadDetail,
   ThreadInteractionResponse,
   ThreadSessionOperation,
   ThreadsSnapshot,
   TranscriptItem,
-} from "../threads/threads";
+} from "../threads/threads/models";
 
 export interface RenderedTranscriptItem extends TranscriptItem {
   html?: string;
@@ -64,13 +64,12 @@ export type HostToWebviewMessage =
 
 export type WebviewToHostMessage =
   | {
-      type:
-        | "ready"
-        | "contextItems"
-        | "newThread"
-        | "threadHistory"
-        | "forkThread"
-        | "navigateThreadTree";
+      type: "ready" | "contextItems" | "newThread" | "threadHistory";
+    }
+  | {
+      type: "forkThread" | "navigateThreadTree";
+      threadId: string;
+      messageId: string;
     }
   | {
       type:
