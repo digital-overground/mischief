@@ -1,7 +1,7 @@
 {
   "name": "mischief",
   "displayName": "Mischief",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "A VS Code project, workspace, and agent-thread browser for MagPi.",
   "categories": [
     "Chat",
@@ -31,6 +31,7 @@
     "build:watch": "node esbuild.mjs --watch",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
+    "install:local": "pnpm check && pnpm exec vsce package --no-dependencies && code --install-extension \"mischief-$(node -p 'require(\"./package.json\").version').vsix\" --force",
     "lint": "ultracite check",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
@@ -104,12 +105,32 @@
         "title": "Mischief: New Thread"
       },
       {
+        "command": "mischief.addSelectionToCurrentThread",
+        "title": "Mischief → Current Thread"
+      },
+      {
+        "command": "mischief.addSelectionToNewThread",
+        "title": "Mischief → Start New Thread"
+      },
+      {
         "command": "mischief.settings",
         "title": "Mischief: Settings",
         "icon": "$(gear)"
       }
     ],
     "menus": {
+      "editor/context": [
+        {
+          "command": "mischief.addSelectionToCurrentThread",
+          "when": "editorHasSelection && resourceScheme == file",
+          "group": "mischief@1"
+        },
+        {
+          "command": "mischief.addSelectionToNewThread",
+          "when": "editorHasSelection && resourceScheme == file",
+          "group": "mischief@2"
+        }
+      ],
       "view/title": [
         {
           "command": "mischief.addWorkspace",

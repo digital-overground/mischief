@@ -157,6 +157,7 @@ export class Threads {
   private selectedId?: string;
   private viewedId?: string;
   private draft = false;
+  private draftMessages: string[] = [];
 
   constructor(
     database: ProfileDatabase,
@@ -182,6 +183,7 @@ export class Threads {
   }
 
   async openWorkspace(workspace: string): Promise<ThreadsSnapshot> {
+    this.draftMessages = [];
     this.workspace = workspace;
     this.viewedId = undefined;
     this.stored = this.database
@@ -315,6 +317,7 @@ export class Threads {
     if (!isNonEmpty(this.workspace)) {
       return;
     }
+    this.draftMessages = [];
     const now = new Date().toISOString();
     const record: StoredThread = {
       createdAt: now,
@@ -345,6 +348,7 @@ export class Threads {
       return record.workspace;
     }
     this.selectedId = id;
+    this.draftMessages = [];
     this.viewedId = id;
     record.unread = false;
     this.draft = false;
@@ -859,6 +863,7 @@ export class Threads {
       })
     );
     this.workspace = undefined;
+    this.draftMessages = [];
     this.selectedId = undefined;
     this.viewedId = undefined;
     this.draft = false;
@@ -885,14 +890,28 @@ export class Threads {
     this.viewedId = undefined;
   }
 
+  stageDraft(text: string): void {
+    if (!isNonEmpty(this.workspace)) {
+      return;
+    }
+    const runtime = isNonEmpty(this.selectedId)
+      ? this.runtimes.get(this.selectedId)
+      : undefined;
+    (runtime?.drafts ?? this.draftMessages).push(text);
+    this.emit();
+  }
+
   consumeDrafts(): void {
     const runtime = isNonEmpty(this.selectedId)
       ? this.runtimes.get(this.selectedId)
       : undefined;
-    if (!isNonZero(runtime?.drafts.length)) {
+    if (runtime && isNonZero(runtime.drafts.length)) {
+      runtime.drafts = [];
+    } else if (isNonZero(this.draftMessages.length)) {
+      this.draftMessages = [];
+    } else {
       return;
     }
-    runtime.drafts = [];
     this.emit();
   }
 
@@ -935,7 +954,7 @@ export class Threads {
       return {
         commands: [],
         configOptions: [],
-        drafts: [],
+        drafts: this.draftMessages,
         id: null,
         items: [],
         name: "New Thread",

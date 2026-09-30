@@ -236,6 +236,18 @@ export const activate = async (
     vscode.commands.registerCommand("mischief.newThread", async () => {
       await view.newThread();
     }),
+    vscode.commands.registerCommand(
+      "mischief.addSelectionToCurrentThread",
+      async () => {
+        await view.stageEditorSelection("current");
+      }
+    ),
+    vscode.commands.registerCommand(
+      "mischief.addSelectionToNewThread",
+      async () => {
+        await view.stageEditorSelection("new");
+      }
+    ),
     vscode.commands.registerCommand("mischief.settings", () => {
       view.showSettings();
     }),

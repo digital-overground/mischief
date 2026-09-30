@@ -19,6 +19,7 @@ const deferred = (): { promise: Promise<void>; resolve: () => void } => {
 };
 
 const vscode = vi.hoisted(() => ({
+  activeTextEditor: undefined as unknown,
   assignWorkspaceColors: true,
   createQuickPick: vi.fn<() => unknown>(),
   executeCommand: vi.fn<() => Promise<void>>(async () => {
@@ -37,6 +38,9 @@ const vscode = vi.hoisted(() => ({
   showInputBox: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   showQuickPick: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   showTextDocument: vi.fn<() => Promise<void>>(async () => {
+    await Promise.resolve();
+  }),
+  showWarningMessage: vi.fn<() => Promise<void>>(async () => {
     await Promise.resolve();
   }),
   updateConfiguration: vi.fn<
@@ -68,12 +72,16 @@ vi.mock(import("vscode"), () =>
     env: { openExternal: vscode.openExternal },
     extensions: { all: [] },
     window: {
+      get activeTextEditor() {
+        return vscode.activeTextEditor;
+      },
       createQuickPick: vscode.createQuickPick,
       showErrorMessage: vscode.showErrorMessage,
       showInformationMessage: vscode.showInformationMessage,
       showInputBox: vscode.showInputBox,
       showQuickPick: vscode.showQuickPick,
       showTextDocument: vscode.showTextDocument,
+      showWarningMessage: vscode.showWarningMessage,
     },
     workspace: {
       getConfiguration: () => ({
@@ -92,6 +100,73 @@ const profileDatabase = () => ({
 });
 
 describe("view provider", () => {
+  test("stages the current selection, or creates a Thread first, without sending", async () => {
+    const events: string[] = [];
+    const threads = {
+      newThread: vi.fn<() => Promise<void>>(async () => {
+        await Promise.resolve();
+        events.push("new");
+      }),
+      onChange: vi.fn<() => void>(),
+      snapshot: () => ({ workspace: "/workspace" }),
+      stageDraft: vi.fn<(text: string) => void>((text) => {
+        events.push(`draft:${text}`);
+      }),
+    };
+    const provider = new MischiefView(
+      testValue<never>({}),
+      testValue<never>(threads),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase())
+    );
+    vscode.activeTextEditor = {
+      document: {
+        getText: () => "const answer = 42;\n",
+        languageId: "typescript",
+        uri: { fsPath: "/workspace/src/example.ts", scheme: "file" },
+      },
+      selection: {
+        end: { character: 0, line: 3 },
+        isEmpty: false,
+        start: { line: 1 },
+      },
+    };
+    try {
+      await provider.stageEditorSelection("current");
+      expect(threads.newThread).not.toHaveBeenCalled();
+      expect(threads.stageDraft).toHaveBeenCalledWith(
+        "Discuss this selection in @src/example.ts lines 2-3.\n\n```typescript\nconst answer = 42;\n\n```"
+      );
+      events.length = 0;
+      await provider.stageEditorSelection("new");
+      expect(events[0]).toBe("new");
+      expect(events[1]).toContain("draft:");
+
+      vscode.activeTextEditor = {
+        document: {
+          getText: () => "outside",
+          languageId: "plaintext",
+          uri: { fsPath: "/elsewhere/example.ts", scheme: "file" },
+        },
+        selection: {
+          end: { character: 0, line: 3 },
+          isEmpty: false,
+          start: { line: 1 },
+        },
+      };
+      threads.stageDraft.mockClear();
+      threads.newThread.mockClear();
+      await provider.stageEditorSelection("new");
+      expect([
+        threads.stageDraft.mock.calls,
+        threads.newThread.mock.calls,
+      ]).toStrictEqual([[], []]);
+    } finally {
+      vscode.activeTextEditor = undefined;
+    }
+  });
+
   test("focuses Mischief and starts a Thread in a newly created Workspace", async () => {
     vscode.executeCommand.mockClear();
     const folder = process.cwd();
