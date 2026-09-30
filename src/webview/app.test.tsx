@@ -1598,6 +1598,8 @@ describe("React webview", () => {
     );
 
     expect(composer.value).toBe("Unsent local draft\n\nTry this again");
+    expect(document.activeElement).toBe(composer);
+    expect(composer.selectionStart).toBe(composer.value.length);
     expect(postMessage).toHaveBeenCalledWith({ type: "draftsConsumed" });
     await unmount();
   });

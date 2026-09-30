@@ -490,6 +490,25 @@ describe("threads module", () => {
     });
   });
 
+  test("stages drafts in both an unregistered composer and an existing Thread", async () => {
+    const threads = createThreads(new FakeAgent().factory);
+    await threads.openWorkspace("/workspace");
+    threads.stageDraft("First selection");
+    expect(threads.snapshot().selected?.drafts).toStrictEqual([
+      "First selection",
+    ]);
+    threads.consumeDrafts();
+    expect(threads.snapshot().selected?.drafts).toStrictEqual([]);
+
+    await threads.newThread();
+    threads.stageDraft("Second selection");
+    expect(threads.snapshot().selected?.drafts).toStrictEqual([
+      "Second selection",
+    ]);
+    threads.consumeDrafts();
+    expect(threads.snapshot().selected?.drafts).toStrictEqual([]);
+  });
+
   test("ignores invalid Agent Thread metadata", async () => {
     const agent = new FakeAgent();
     const threads = createThreads(agent.factory);

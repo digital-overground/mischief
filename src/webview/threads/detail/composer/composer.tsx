@@ -172,6 +172,11 @@ const ComposerView = ({
         .join("\n\n");
     }
     consumedDrafts.current = draftKey;
+    box.current?.focus();
+    box.current?.setSelectionRange(
+      box.current.value.length,
+      box.current.value.length
+    );
     postMessage({ type: "draftsConsumed" });
   }, [selected?.drafts, selected?.id]);
 

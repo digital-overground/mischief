@@ -495,6 +495,45 @@ export class MischiefView implements vscode.WebviewViewProvider {
     await this.startThread(preserveFocus, initialPrompt);
   }
 
+  async stageEditorSelection(target: "current" | "new"): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (
+      !editor ||
+      editor.selection.isEmpty ||
+      editor.document.uri.scheme !== "file"
+    ) {
+      return;
+    }
+    const { workspace } = this.threads.snapshot();
+    if (!isNonEmpty(workspace)) {
+      void vscode.window.showWarningMessage("Mischief: No active Workspace.");
+      return;
+    }
+    const relative = path.relative(workspace, editor.document.uri.fsPath);
+    if (
+      !relative ||
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    ) {
+      void vscode.window.showWarningMessage(
+        "Mischief: Selection is outside the current Workspace."
+      );
+      return;
+    }
+    const { selection, document } = editor;
+    const firstLine = selection.start.line + 1;
+    const lastLine =
+      selection.end.line + (selection.end.character === 0 ? 0 : 1);
+    const prompt = `Discuss this selection in @${relative.split(path.sep).join("/")} lines ${firstLine}-${Math.max(firstLine, lastLine)}.\n\n\`\`\`${document.languageId}\n${document.getText(selection)}\n\`\`\``;
+    if (target === "new") {
+      await this.threads.newThread();
+    }
+    this.threads.stageDraft(prompt);
+    await vscode.commands.executeCommand("workbench.view.extension.mischief");
+    this.view?.show(false);
+  }
+
   configurationChanged(): void {
     this.render();
   }

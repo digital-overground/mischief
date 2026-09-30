@@ -105,5 +105,5 @@ The exact split is allowed to shrink if a file does not earn its own behavior. `
 - Automatically or bulk importing all existing Pi sessions.
 - Configuring or selecting additional ACP Agents.
 - Displaying ACP context usage and cost in the Thread header.
-- Filters, selection sending, status-bar decoration, background waiting/error notifications, and other convenience features not required for the first vertical slice.
+- Filters, status-bar decoration, background waiting/error notifications, and other convenience features not required for the first vertical slice.
 - Automatic deletion of ACP/Pi history when a Workspace becomes inactive.
