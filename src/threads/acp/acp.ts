@@ -56,8 +56,8 @@ const MAX_CONTEXT_BYTES = 1_000_000;
 const MAX_CONTEXT_FILES = 20;
 
 export const BRANCH_SUMMARY_CAPABILITY = "magpi-acp/branch-summary";
-export const FORK_MESSAGE_CAPABILITY = "magpi-acp/fork-picker";
-export const TREE_NAVIGATION_CAPABILITY = "magpi-acp/tree-picker";
+export const MESSAGE_TARGET_ACTIONS_CAPABILITY =
+  "magpi-acp/message-target-actions";
 export const NAVIGATE_TREE_METHOD = "_magpi-acp/session/navigate-tree";
 export const FORK_MESSAGE_ID_META = "magpi-acp/fork-message-id";
 
@@ -791,8 +791,8 @@ export const sessionOperations = (
       : undefined;
   return {
     branchSummary: meta?.[BRANCH_SUMMARY_CAPABILITY] === true,
-    forkMessage: meta?.[FORK_MESSAGE_CAPABILITY] === true,
-    treeNavigation: meta?.[TREE_NAVIGATION_CAPABILITY] === true,
+    forkMessage: meta?.[MESSAGE_TARGET_ACTIONS_CAPABILITY] === true,
+    treeNavigation: meta?.[MESSAGE_TARGET_ACTIONS_CAPABILITY] === true,
   };
 };
 
@@ -828,15 +828,18 @@ class AcpConnection implements AgentConnection {
   private readonly launch: AgentLaunch;
   private readonly handlers: AgentHandlers;
   private readonly log: (message: string) => void;
+  private readonly onMissingCapability: (capability: string) => void;
 
   constructor(
     launch: AgentLaunch,
     handlers: AgentHandlers,
-    log: (message: string) => void
+    log: (message: string) => void,
+    onMissingCapability: (capability: string) => void
   ) {
     this.launch = launch;
     this.handlers = handlers;
     this.log = log;
+    this.onMissingCapability = onMissingCapability;
   }
 
   async create(cwd: string) {
@@ -1129,6 +1132,9 @@ class AcpConnection implements AgentConnection {
     };
     const response = await Promise.race([initialized, childError()]);
     this.operations = sessionOperations(response.agentCapabilities);
+    if (!this.operations.forkMessage) {
+      this.onMissingCapability(MESSAGE_TARGET_ACTIONS_CAPABILITY);
+    }
   }
 
   private requireAgent(): ClientContext {
@@ -1142,7 +1148,8 @@ class AcpConnection implements AgentConnection {
 export const acpConnectionFactory =
   (
     launch: AgentLaunch,
-    log: (message: string) => void
+    log: (message: string) => void,
+    onMissingCapability: (capability: string) => void
   ): AgentConnectionFactory =>
   (handlers) =>
-    new AcpConnection(launch, handlers, log);
+    new AcpConnection(launch, handlers, log, onMissingCapability);

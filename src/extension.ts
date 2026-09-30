@@ -185,7 +185,29 @@ export const activate = async (
     await context.globalState.update(THREADS_VERSION_KEY, 1);
   }
   const launch = agentLaunch(context);
-  const threads = new Threads(database, acpConnectionFactory(launch, log));
+  const warnedCapabilities = new Set<string>();
+  const threads = new Threads(
+    database,
+    acpConnectionFactory(launch, log, (capability) => {
+      if (warnedCapabilities.has(capability)) {
+        return;
+      }
+      warnedCapabilities.add(capability);
+      void (async () => {
+        const choice = await vscode.window.showWarningMessage(
+          "Update MagPi ACP to enable Fork and Tree in Message history. Reload this window after updating.",
+          "Update instructions"
+        );
+        if (choice === "Update instructions") {
+          await vscode.env.openExternal(
+            vscode.Uri.parse(
+              "https://github.com/digital-overground/magpi-acp#installation"
+            )
+          );
+        }
+      })();
+    })
+  );
   activeThreads = threads;
   const view = new MischiefView(
     projects,

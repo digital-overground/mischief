@@ -15,18 +15,36 @@ import {
 } from "./acp";
 
 describe("ACP adapter", () => {
-  test("reads only literal transcript action capabilities", () => {
+  test("requires explicit message-target support, not legacy picker capabilities", () => {
     expect(
       sessionOperations({
         _meta: {
           "magpi-acp/branch-summary": true,
           "magpi-acp/fork-picker": true,
-          "magpi-acp/tree-picker": "true",
+          "magpi-acp/tree-picker": true,
         },
       })
     ).toStrictEqual({
       branchSummary: true,
+      forkMessage: false,
+      treeNavigation: false,
+    });
+    expect(
+      sessionOperations({
+        _meta: { "magpi-acp/message-target-actions": true },
+      })
+    ).toStrictEqual({
+      branchSummary: false,
       forkMessage: true,
+      treeNavigation: true,
+    });
+    expect(
+      sessionOperations({
+        _meta: { "magpi-acp/message-target-actions": "true" },
+      })
+    ).toStrictEqual({
+      branchSummary: false,
+      forkMessage: false,
       treeNavigation: false,
     });
     expect(sessionOperations({ _meta: null })).toStrictEqual({
