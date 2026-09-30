@@ -27,6 +27,7 @@ import type {
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
 
+import { version } from "../../../package.json";
 import { isNonEmpty, isRecord } from "../../present";
 import type {
   AgentConnection,
@@ -1123,7 +1124,7 @@ class AcpConnection implements AgentConnection {
         elicitation: { form: {} },
         plan: {},
       },
-      clientInfo: { name: "mischief", title: "Mischief", version: "0.1.0" },
+      clientInfo: { name: "mischief", title: "Mischief", version },
       protocolVersion: 1,
     });
     const childError = async (): Promise<never> => {
