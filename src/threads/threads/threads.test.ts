@@ -431,6 +431,9 @@ describe("threads module", () => {
       },
       { timeout: 2000 }
     );
+    await vi.waitFor(() => expect(ownerAgent.loadCalls).toBe(2), {
+      timeout: 2000,
+    });
 
     expect(sourceAgent.loadCalls).toBe(0);
     expect(sourceAgent.createCalls).toBe(0);
