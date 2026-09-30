@@ -1,11 +1,12 @@
 import { memo, useEffect, useRef, useState } from "react";
 
+import { isNonEmpty } from "../present";
 import type {
   Project,
   ProjectsSnapshot,
   Workspace,
 } from "../projects/projects";
-import type { ThreadIndicator, ThreadSummary } from "../threads/threads";
+import type { ThreadIndicator, ThreadSummary } from "../threads/threads/models";
 import { postMessage } from "./bridge";
 import { SvgIcon } from "./icon";
 import type { RenderedThreadsSnapshot } from "./protocol";
@@ -23,29 +24,6 @@ const IconButton = ({
     {children}
   </button>
 );
-
-const visibleColor = (color: string): string => {
-  let opaque = color;
-  if (color.length === 5) {
-    opaque = color.slice(0, -1);
-  } else if (color.length === 9) {
-    opaque = color.slice(0, -2);
-  }
-  const channels = opaque
-    .match(/[\da-f]{2}/giu)
-    ?.map((channel) => Number.parseInt(channel, 16));
-  const brightest = Math.max(...(channels ?? []));
-  if (!channels || channels.length !== 3 || brightest >= 160) {
-    return opaque;
-  }
-  if (brightest === 0) {
-    return "#a0a0a0";
-  }
-  return `#${channels
-    .map((channel) => Math.round((channel * 160) / brightest))
-    .map((channel) => channel.toString(16).padStart(2, "0"))
-    .join("")}`;
-};
 
 export const indicatorLabel = (kind: ThreadIndicator): string => {
   if (kind === "active") {
@@ -132,19 +110,16 @@ const WorkspaceNode = ({
           aria-label={workspaceAction}
           onClick={onToggle}
         >
-          {workspace.color ? (
+          {isNonEmpty(workspace.color) ? (
             <span
               aria-hidden="true"
               className="workspace-color"
-              style={{
-                backgroundColor: workspace.color,
-                boxShadow: `0 0 0 1px ${visibleColor(workspace.color)}`,
-              }}
+              style={{ backgroundColor: workspace.color }}
             />
           ) : null}
           <span className="workspace-label">
             <span className="name">{workspace.name}</span>
-            {workspace.branch ? (
+            {isNonEmpty(workspace.branch) ? (
               <span className="workspace-branch">
                 <SvgIcon className="workspace-branch-icon" kind="gitBranch" />
                 {workspace.branch}
@@ -160,9 +135,9 @@ const WorkspaceNode = ({
         {workspace.current ? null : (
           <IconButton
             title={`Open ${workspace.name} Window`}
-            onClick={() =>
-              postMessage({ path: workspace.path, type: "openWorkspace" })
-            }
+            onClick={() => {
+              postMessage({ path: workspace.path, type: "openWorkspace" });
+            }}
           >
             <SvgIcon className="thread-action-icon" kind="externalLink" />
           </IconButton>
@@ -171,13 +146,17 @@ const WorkspaceNode = ({
           <>
             <IconButton
               title="Thread History"
-              onClick={() => postMessage({ type: "threadHistory" })}
+              onClick={() => {
+                postMessage({ type: "threadHistory" });
+              }}
             >
               <SvgIcon className="thread-action-icon" kind="history" />
             </IconButton>
             <IconButton
               title="New Thread"
-              onClick={() => postMessage({ type: "newThread" })}
+              onClick={() => {
+                postMessage({ type: "newThread" });
+              }}
             >
               <SvgIcon className="thread-action-icon" kind="chat" />
             </IconButton>
@@ -185,9 +164,9 @@ const WorkspaceNode = ({
         ) : null}
         <IconButton
           title="Close Workspace"
-          onClick={() =>
-            postMessage({ path: workspace.path, type: "deactivateWorkspace" })
-          }
+          onClick={() => {
+            postMessage({ path: workspace.path, type: "deactivateWorkspace" });
+          }}
         >
           <SvgIcon className="thread-action-icon" kind="x" />
         </IconButton>
@@ -202,9 +181,9 @@ const WorkspaceNode = ({
               <button
                 className="row-open"
                 title="Open Thread"
-                onClick={() =>
-                  postMessage({ id: thread.id, type: "selectThread" })
-                }
+                onClick={() => {
+                  postMessage({ id: thread.id, type: "selectThread" });
+                }}
               >
                 <StatusIndicator kind={thread.indicator} />
                 <span className="name">{thread.name}</span>
@@ -216,17 +195,17 @@ const WorkspaceNode = ({
                 <>
                   <IconButton
                     title="Rename Thread"
-                    onClick={() =>
-                      postMessage({ id: thread.id, type: "renameThread" })
-                    }
+                    onClick={() => {
+                      postMessage({ id: thread.id, type: "renameThread" });
+                    }}
                   >
                     <SvgIcon className="thread-action-icon" kind="pencil" />
                   </IconButton>
                   <IconButton
                     title="Remove Thread"
-                    onClick={() =>
-                      postMessage({ id: thread.id, type: "removeThread" })
-                    }
+                    onClick={() => {
+                      postMessage({ id: thread.id, type: "removeThread" });
+                    }}
                   >
                     <SvgIcon className="thread-action-icon" kind="archive" />
                   </IconButton>
@@ -274,15 +253,17 @@ const ProjectGroup = ({
       </button>
       <IconButton
         title="Open GitHub Issues"
-        onClick={() => postMessage({ path: project.root, type: "openIssues" })}
+        onClick={() => {
+          postMessage({ path: project.root, type: "openIssues" });
+        }}
       >
         <SvgIcon className="project-action-icon" kind="folderGit2" />
       </IconButton>
       <IconButton
         title="New Workspace"
-        onClick={() =>
-          postMessage({ path: project.root, type: "newWorkspace" })
-        }
+        onClick={() => {
+          postMessage({ path: project.root, type: "newWorkspace" });
+        }}
       >
         <SvgIcon className="thread-action-icon" kind="plus" />
       </IconButton>
@@ -323,18 +304,23 @@ const NavigatorPaneView = ({
     project.workspaces.some((workspace) => workspace.path === currentPath)
   );
   let currentGroup: string | undefined;
-  if (currentPath) {
+  if (isNonEmpty(currentPath)) {
     currentGroup = currentProject
       ? projectGroup(currentProject.root)
       : UNGROUPED_GROUP;
   }
   const currentSelection =
-    currentGroup && currentPath ? `${currentGroup}\0${currentPath}` : null;
+    isNonEmpty(currentGroup) && isNonEmpty(currentPath)
+      ? `${currentGroup}\0${currentPath}`
+      : null;
   useEffect(() => {
-    if (currentPath && currentSelection !== previousCurrent.current) {
+    if (
+      isNonEmpty(currentPath) &&
+      currentSelection !== previousCurrent.current
+    ) {
       setExpanded((paths) => new Set(paths).add(currentPath));
       setCollapsedGroups((groups) => {
-        if (!currentGroup || !groups.has(currentGroup)) {
+        if (!isNonEmpty(currentGroup) || !groups.has(currentGroup)) {
           return groups;
         }
         const next = new Set(groups);
@@ -371,8 +357,12 @@ const NavigatorPaneView = ({
     );
   }, [expandAllRequest, projects]);
   useEffect(() => {
-    const clock = window.setInterval(() => setNow(Date.now()), 60_000);
-    return () => window.clearInterval(clock);
+    const clock = window.setInterval(() => {
+      setNow(Date.now());
+    }, 60_000);
+    return () => {
+      window.clearInterval(clock);
+    };
   }, []);
   const toggleGroup = (group: string, groupExpanded: boolean): void => {
     if (!groupExpanded) {
@@ -438,7 +428,9 @@ const NavigatorPaneView = ({
             <ProjectGroup
               expanded={groupExpanded}
               key={project.root}
-              onToggle={() => toggleGroup(group, groupExpanded)}
+              onToggle={() => {
+                toggleGroup(group, groupExpanded);
+              }}
               project={project}
               renderWorkspace={renderWorkspace}
             />
@@ -453,7 +445,9 @@ const NavigatorPaneView = ({
                 title={`${ungroupedExpanded ? "Collapse" : "Expand"} Ungrouped`}
                 aria-label={`${ungroupedExpanded ? "Collapse" : "Expand"} Ungrouped`}
                 aria-expanded={ungroupedExpanded}
-                onClick={() => toggleGroup(UNGROUPED_GROUP, ungroupedExpanded)}
+                onClick={() => {
+                  toggleGroup(UNGROUPED_GROUP, ungroupedExpanded);
+                }}
               >
                 {ungroupedExpanded ? "▾" : "▸"}
               </button>

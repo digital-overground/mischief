@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 
-import type { ThreadUsage } from "../../../../../threads/threads";
+import type { ThreadUsage } from "../../../../../threads/model";
 import { postMessage } from "../../../../bridge";
 
 const formatUsage = (value: number): string =>
@@ -21,7 +21,9 @@ export const UsageControl = ({
 }): React.JSX.Element => {
   const [open, setOpen] = useState(false);
   useEffect(() => {
-    const close = (): void => setOpen(false);
+    const close = (): void => {
+      setOpen(false);
+    };
     const escape = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
         close();
@@ -36,6 +38,9 @@ export const UsageControl = ({
   }, []);
   const percent = Math.round((used / size) * 100);
   const danger = usageClass(percent);
+  const style: CSSProperties & Record<"--usage-percent", string> = {
+    "--usage-percent": `${Math.min(100, percent)}%`,
+  };
   return (
     <div id="usage-control">
       <button
@@ -54,9 +59,7 @@ export const UsageControl = ({
           id="usage-fill"
           className={danger}
           aria-hidden="true"
-          style={
-            { "--usage-percent": `${Math.min(100, percent)}%` } as CSSProperties
-          }
+          style={style}
         />
       </button>
       <div

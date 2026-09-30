@@ -1,131 +1,180 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { MouseEvent } from "react";
 
+import { isNonEmpty } from "../../../../../present";
 import { postMessage } from "../../../../bridge";
 import { SvgIcon } from "../../../../icon";
-import type { RenderedThreadDetail } from "../../../../protocol";
+import type { RenderedTranscriptItem } from "../../../../protocol";
+
+const preview = (item: RenderedTranscriptItem): string => {
+  if (isNonEmpty(item.text)) {
+    return item.text;
+  }
+  return item.kind === "user" ? "Image prompt" : "Agent response";
+};
 
 export const HistoryControl = ({
+  items,
+  onJumpMessage,
   selected,
 }: {
-  selected?: RenderedThreadDetail;
+  items: RenderedTranscriptItem[];
+  onJumpMessage?: (id: string) => void;
+  selected?: {
+    id: string | null;
+    status: string;
+    sessionOperation?: string;
+    forkSupported?: boolean;
+    treeNavigationSupported?: boolean;
+  };
 }): React.JSX.Element => {
-  const messages =
-    selected?.items.filter(
-      (item) => item.kind === "user" || item.kind === "assistant"
-    ) ?? [];
+  const [open, setOpen] = useState(false);
+  const [left, setLeft] = useState(8);
+  const button = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<{
-    bottom: number;
-    left: number;
-    width: number;
-  }>();
-
   useLayoutEffect(() => {
-    if (position && list.current) {
+    if (open && list.current) {
       list.current.scrollTop = list.current.scrollHeight;
       list.current.focus();
     }
-  }, [position]);
-
+  }, [open]);
   useEffect(() => {
-    if (!position) {
-      return;
-    }
-    const close = (): void => {
-      setPosition(undefined);
-    };
-    const escape = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        close();
+    const outside = (event: MouseEvent): void => {
+      if (
+        open &&
+        event.target instanceof Node &&
+        button.current?.parentElement?.contains(event.target) !== true
+      ) {
+        setOpen(false);
       }
     };
-    document.addEventListener("click", close);
+    const escape = (event: KeyboardEvent): void => {
+      if (open && event.key === "Escape") {
+        setOpen(false);
+        button.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", outside);
     document.addEventListener("keydown", escape);
     return () => {
-      document.removeEventListener("click", close);
+      document.removeEventListener("pointerdown", outside);
       document.removeEventListener("keydown", escape);
     };
-  }, [position]);
-
-  const toggle = (event: MouseEvent<HTMLButtonElement>): void => {
-    event.stopPropagation();
-    if (position) {
-      setPosition(undefined);
-      return;
-    }
-    const left = Math.min(event.clientX, window.innerWidth - 510);
-    setPosition({
-      bottom:
-        window.innerHeight -
-        event.currentTarget.getBoundingClientRect().top +
-        4,
-      left,
-      width: window.innerWidth - left - 10,
-    });
-  };
-
+  }, [open]);
   return (
     <div id="history-control">
       <button
+        ref={button}
         className="action"
-        id="history"
+        type="button"
         title="Message history"
+        aria-label="Message history"
         aria-controls="history-list"
-        aria-expanded={Boolean(position)}
-        disabled={!messages.length}
-        onClick={toggle}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        disabled={!isNonEmpty(selected?.id) || items.length === 0}
+        onClick={(event) => {
+          if (!open) {
+            const footer = event.currentTarget.closest("footer");
+            const bounds = footer?.getBoundingClientRect();
+            const width =
+              bounds !== undefined && bounds.width > 0
+                ? bounds.width
+                : window.innerWidth;
+            const popupWidth = Math.min(500, width - 16);
+            setLeft(
+              Math.max(
+                8,
+                Math.min(
+                  event.clientX - (bounds?.left ?? 0),
+                  width - popupWidth - 8
+                )
+              )
+            );
+          }
+          setOpen((current) => !current);
+        }}
       >
         <SvgIcon kind="history" />
       </button>
-      {position ? (
+      {open ? (
         <div
           id="history-list"
           ref={list}
           role="dialog"
           aria-label="Message history"
           tabIndex={-1}
-          style={position}
-          onClick={(event) => event.stopPropagation()}
+          style={{ left }}
         >
-          {messages.map((message) => (
-            <div
-              className={`history-entry ${message.kind}`}
-              key={message.id}
-              tabIndex={0}
-            >
-              <span className="history-message" title={message.text}>
-                {message.text}
-              </span>
-              <div className="history-actions">
+          {items.map((item) => {
+            const threadId = selected?.id;
+            const actionable =
+              isNonEmpty(threadId) &&
+              selected?.status === "idle" &&
+              selected.sessionOperation === undefined &&
+              item.id.startsWith(`${item.kind}:`) &&
+              item.id.length > item.kind.length + 1 &&
+              item.queued === undefined &&
+              item.cancelled !== true;
+            return (
+              <div className={`history-entry ${item.kind}`} key={item.id}>
                 <button
-                  className="history-action"
-                  title="Fork from this message"
-                  aria-label="Fork from this message"
+                  className="history-jump"
                   type="button"
-                  disabled={selected?.status !== "idle"}
+                  title={preview(item)}
+                  disabled={
+                    selected?.status === "running" ||
+                    selected?.status === "waiting"
+                  }
                   onClick={() => {
-                    postMessage({ id: message.id, type: "forkThread" });
-                    setPosition(undefined);
+                    setOpen(false);
+                    onJumpMessage?.(item.id);
                   }}
                 >
-                  <SvgIcon kind="fork" />
+                  {preview(item)}
                 </button>
-                <button
-                  className="history-action"
-                  title="Rollback to this message"
-                  aria-label="Rollback to this message"
-                  type="button"
-                  onClick={() => {
-                    postMessage({ id: message.id, type: "rollbackThread" });
-                    setPosition(undefined);
-                  }}
-                >
-                  <SvgIcon kind="rollback" />
-                </button>
+                {actionable &&
+                item.kind === "user" &&
+                selected?.forkSupported === true ? (
+                  <button
+                    type="button"
+                    aria-label={`Fork at ${preview(item)}`}
+                    title="Fork here"
+                    onClick={() => {
+                      setOpen(false);
+                      if (isNonEmpty(threadId)) {
+                        postMessage({
+                          messageId: item.id,
+                          threadId,
+                          type: "forkThread",
+                        });
+                      }
+                    }}
+                  >
+                    <SvgIcon kind="fork" />
+                  </button>
+                ) : null}
+                {actionable && selected?.treeNavigationSupported === true ? (
+                  <button
+                    type="button"
+                    aria-label={`Navigate to ${preview(item)}`}
+                    title="Navigate here"
+                    onClick={() => {
+                      setOpen(false);
+                      if (isNonEmpty(threadId)) {
+                        postMessage({
+                          messageId: item.id,
+                          threadId,
+                          type: "navigateThreadTree",
+                        });
+                      }
+                    }}
+                  >
+                    <SvgIcon kind="gitBranch" />
+                  </button>
+                ) : null}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : null}
     </div>

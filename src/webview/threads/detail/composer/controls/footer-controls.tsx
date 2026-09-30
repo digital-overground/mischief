@@ -1,21 +1,24 @@
 import { SvgIcon } from "../../../../icon";
-import type { RenderedThreadDetail } from "../../../../protocol";
+import type {
+  RenderedThreadDetail,
+  RenderedTranscriptItem,
+} from "../../../../protocol";
 import { ConfigControl } from "./config-control";
 import { HistoryControl } from "./history-control";
 import { UsageControl } from "./usage-control";
 
 export const FooterControls = ({
-  onNewThread,
+  historyItems = [],
+  onJumpMessage,
   onSend,
   selected,
   setup = false,
-  workspace,
 }: {
-  onNewThread: () => void;
+  historyItems?: RenderedTranscriptItem[];
+  onJumpMessage?: (id: string) => void;
   onSend: () => void;
   selected?: RenderedThreadDetail;
   setup?: boolean;
-  workspace?: string;
 }): React.JSX.Element => {
   const running = Boolean(
     selected && ["running", "waiting"].includes(selected.status)
@@ -28,17 +31,9 @@ export const FooterControls = ({
   }
   return (
     <div className="footer-row">
-      <button
-        className="action"
-        id="footer-new-thread"
-        title="New Thread"
-        aria-label="New Thread"
-        disabled={!workspace}
-        onClick={onNewThread}
-      >
-        <SvgIcon kind="chat" />
-      </button>
       <HistoryControl
+        items={historyItems}
+        onJumpMessage={onJumpMessage}
         selected={selected}
         key={`history:${selected?.id ?? "none"}`}
       />
@@ -58,7 +53,9 @@ export const FooterControls = ({
         id="send"
         title={sendLabel}
         aria-label={sendLabel}
-        disabled={!selected && !setup}
+        disabled={
+          (!selected && !setup) || selected?.sessionOperation !== undefined
+        }
         onClick={onSend}
       >
         <SvgIcon className="send-icon" kind="send" />

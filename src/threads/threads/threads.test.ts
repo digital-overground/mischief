@@ -4,8 +4,10 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { ProfileDatabase } from "../profile-database/profile-database";
-import { Threads } from "./threads";
+import { isNonEmpty } from "../../present";
+import { ProfileDatabase } from "../../profile-database/profile-database";
+import { testValue } from "../../test-value";
+import type { AgentTreeNavigationOptions } from "../acp/models";
 import type {
   AgentConnection,
   AgentConnectionFactory,
@@ -13,8 +15,9 @@ import type {
   AgentPromptResult,
   PromptImage,
   ThreadConfigOption,
-  ThreadsChange,
-} from "./threads";
+} from "../model";
+import type { ThreadsChange } from "./models";
+import { Threads } from "./threads";
 
 interface Deferred {
   promise: Promise<void>;
@@ -38,9 +41,16 @@ class FakeAgent {
   loadCalls = 0;
   loadRequests: { sessionId: string; cwd: string }[] = [];
   initialConfigOptions: ThreadConfigOption[] = [];
+  operations = {
+    branchSummary: true,
+    forkMessage: true,
+    treeNavigation: true,
+  };
   failCreate = false;
   createError?: Error;
   replayOnLoad = false;
+  replayBranchSummary = false;
+  failLoad = false;
   askPermission = false;
   askElicitation = false;
   richUpdates = false;
@@ -64,7 +74,15 @@ class FakeAgent {
   }[] = [];
   historyCalls: string[] = [];
   forkCalls: { sessionId: string; cwd: string; messageId: string }[] = [];
-  rollbackCalls: { sessionId: string; messageId: string }[] = [];
+  forkGate?: Deferred;
+  navigateTreeCalls: {
+    sessionId: string;
+    messageId: string;
+    options: AgentTreeNavigationOptions;
+  }[] = [];
+  navigationResult: { draft?: string } = { draft: "Try this again" };
+  navigationError?: Error;
+  navigationGate?: Deferred;
   update?: AgentHandlers["update"];
   private readonly permissionStartedDeferred = deferred();
   private readonly elicitationStartedDeferred = deferred();
@@ -101,13 +119,14 @@ class FakeAgent {
   private connection(handlers: AgentHandlers): AgentConnection {
     this.update = handlers.update;
     return {
-      cancel: () => {
+      cancel: async () => {
+        await Promise.resolve();
         for (const resolve of this.promptResolvers.splice(0)) {
           resolve({ stopReason: "cancelled" });
         }
-        return Promise.resolve();
       },
-      create: () => {
+      create: async () => {
+        await Promise.resolve();
         this.createCalls += 1;
         if (this.createError) {
           throw this.createError;
@@ -115,28 +134,36 @@ class FakeAgent {
         if (this.failCreate) {
           throw new Error("Agent unavailable");
         }
-        return Promise.resolve({
+        return {
           configOptions: this.initialConfigOptions,
+          operations: this.operations,
           sessionId: "session-1",
-        });
+        };
       },
       dispose: () => {
         this.disposed = true;
       },
-      fork: (sessionId, cwd, messageId) => {
+      forkMessage: async (sessionId, cwd, messageId) => {
         this.forkCalls.push({ cwd, messageId, sessionId });
-        return Promise.resolve({
+        await this.forkGate?.promise;
+        return {
           configOptions: [],
+          operations: this.operations,
           sessionId: "forked-session",
-        });
+        };
       },
-      history: (cwd) => {
+      history: async (cwd) => {
+        await Promise.resolve();
         this.historyCalls.push(cwd);
-        return Promise.resolve(this.historyEntries);
+        return this.historyEntries;
       },
-      load: (sessionId, cwd) => {
+      load: async (sessionId, cwd) => {
+        await Promise.resolve();
         this.loadCalls += 1;
         this.loadRequests.push({ cwd, sessionId });
+        if (this.failLoad) {
+          throw new Error("Load failed");
+        }
         if (this.replayOnLoad) {
           handlers.update({
             kind: "user",
@@ -150,10 +177,29 @@ class FakeAgent {
             text: "Restored.",
             type: "message",
           });
+          if (this.replayBranchSummary) {
+            handlers.update({
+              kind: "branchSummary",
+              text: "Preserve the adapter decision.",
+              type: "message",
+            });
+          }
         }
-        return Promise.resolve({ configOptions: [], sessionId });
+        return {
+          configOptions: [],
+          operations: this.operations,
+          sessionId,
+        };
       },
-      prompt: async (_sessionId, _text, _messageId, images) => {
+      navigateTreeMessage: async (sessionId, messageId, options) => {
+        this.navigateTreeCalls.push({ messageId, options, sessionId });
+        if (this.navigationError) {
+          throw this.navigationError;
+        }
+        await this.navigationGate?.promise;
+        return this.navigationResult;
+      },
+      prompt: async (_sessionId, _text, images) => {
         this.promptImages = images;
         if (this.holdPrompts) {
           this.promptCalls += 1;
@@ -170,7 +216,7 @@ class FakeAgent {
             this.promptResolvers.push(resolve);
           });
           this.markPromptStarted(this.promptCalls);
-          return result;
+          return await result;
         }
         if (this.richUpdates) {
           handlers.update({
@@ -262,13 +308,9 @@ class FakeAgent {
         handlers.update({ title: "Fix tests", type: "sessionInfo" });
         return { stopReason: "completed" };
       },
-      rollback: (sessionId, messageId) => {
-        this.rollbackCalls.push({ messageId, sessionId });
-        return Promise.resolve();
-      },
-      setConfig: (sessionId, configId, value) => {
+      setConfig: async (sessionId, configId, value) => {
+        await Promise.resolve();
         this.configChange = { configId, sessionId, value };
-        return Promise.resolve();
       },
     };
   }
@@ -291,7 +333,11 @@ describe("threads module", () => {
   });
 
   afterEach(async () => {
-    await Promise.all(instances.map((threads) => threads.dispose()));
+    await Promise.all(
+      instances.map(async (threads) => {
+        await threads.dispose();
+      })
+    );
     await database.dispose();
     await rm(profileDirectory, { force: true, recursive: true });
   });
@@ -319,12 +365,10 @@ describe("threads module", () => {
 
     expect(threads.snapshot().threads).toStrictEqual([
       {
-        createdAt,
         id: "10000000-0000-4000-8000-000000000001",
         indicator: "waiting",
         name: "Waiting",
         needsAttention: true,
-        status: "waiting",
         updatedAt: createdAt,
         workspace: "/workspace",
       },
@@ -347,8 +391,8 @@ describe("threads module", () => {
           [firstId, "first-session"],
           [secondId, "second-session"],
         ] as const
-      ).map(([id, sessionId]) =>
-        remoteDatabase.apply({
+      ).map(async ([id, sessionId]) => {
+        await remoteDatabase.apply({
           thread: {
             createdAt,
             id,
@@ -359,8 +403,8 @@ describe("threads module", () => {
             workspace: "/remote",
           },
           type: "putThread",
-        })
-      )
+        });
+      })
     );
     await remoteDatabase.apply({
       threadId: firstId,
@@ -368,7 +412,9 @@ describe("threads module", () => {
       workspace: "/remote",
     });
     await vi.waitFor(
-      () => expect(database.snapshot().threads).toHaveLength(2),
+      () => {
+        expect(database.snapshot().threads).toHaveLength(2);
+      },
       { timeout: 2000 }
     );
     const sourceAgent = new FakeAgent();
@@ -395,8 +441,8 @@ describe("threads module", () => {
   test("opening a Workspace clears stale live Thread statuses", async () => {
     const createdAt = "2026-09-11T12:00:00.000Z";
     await Promise.all(
-      (["running", "waiting"] as const).map((status, index) =>
-        database.apply({
+      (["running", "waiting"] as const).map(async (status, index) => {
+        await database.apply({
           thread: {
             createdAt,
             id: `10000000-0000-4000-8000-00000000000${index + 1}`,
@@ -406,8 +452,8 @@ describe("threads module", () => {
             workspace: "/workspace",
           },
           type: "putThread",
-        })
-      )
+        });
+      })
     );
     const threads = createThreads(new FakeAgent().factory);
 
@@ -481,7 +527,7 @@ describe("threads module", () => {
     await prompting;
 
     expect(threads.snapshot()).toMatchObject({
-      threads: [{ status: "idle", workspace: "/workspace" }],
+      threads: [{ indicator: "idle", workspace: "/workspace" }],
     });
   });
 
@@ -569,7 +615,7 @@ describe("threads module", () => {
     expect(agent.createCalls).toBe(1);
     expect(threads.snapshot().selected).toMatchObject({
       configOptions: [{ currentValue: "high", id: "thinking" }],
-      id: expect.any(String),
+      id: testValue<unknown>(expect.any(String)),
       status: "idle",
     });
   });
@@ -597,115 +643,239 @@ describe("threads module", () => {
     expect(restored.snapshot().selected?.id).toBe(secondId);
   });
 
-  test("forks before a user message and restores it as an editable draft", async () => {
+  test("forks the selected transcript user message by ACP ID", async () => {
     const agent = new FakeAgent();
     const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
-    await threads.prompt("Fork from here");
-    const message = threads
-      .snapshot()
-      .selected?.items.find((item) => item.kind === "user");
-    if (!message) {
-      throw new Error("Missing user message");
+    await threads.prompt("Original prompt");
+    const sourceId = threads.snapshot().selected?.id;
+    if (!isNonEmpty(sourceId)) {
+      throw new Error("Missing source Thread");
     }
+    agent.update?.({
+      kind: "user",
+      messageId: "acp-user",
+      text: "Fork me",
+      type: "message",
+    });
+    agent.update?.({
+      kind: "assistant",
+      messageId: "acp-assistant",
+      text: "Answer",
+      type: "message",
+    });
+    await expect(
+      threads.forkMessage(sourceId, "assistant:acp-assistant")
+    ).rejects.toThrow("identity is unavailable");
 
-    await threads.fork(message.id);
+    await threads.forkMessage(sourceId, "user:acp-user");
 
     expect(agent.forkCalls).toStrictEqual([
-      {
-        cwd: "/workspace",
-        messageId: message.id,
-        sessionId: "session-1",
-      },
+      { cwd: "/workspace", messageId: "acp-user", sessionId: "session-1" },
     ]);
     expect(threads.snapshot().selected).toMatchObject({
-      drafts: ["Fork from here"],
-      id: expect.any(String),
-      items: [],
+      drafts: ["Fork me"],
       name: "Fix tests (fork)",
     });
   });
 
-  test("forks at an agent response without restoring a draft", async () => {
+  test("navigates by transcript ACP ID and retains branch summary behavior", async () => {
     const agent = new FakeAgent();
-    const threads = createThreads(agent.factory);
-    await threads.openWorkspace("/workspace");
-    await threads.prompt("Fork after the response");
-    const message = threads
-      .snapshot()
-      .selected?.items.find((item) => item.kind === "assistant");
-    if (!message) {
-      throw new Error("Missing agent response");
-    }
-
-    await threads.fork(message.id);
-
-    expect(agent.forkCalls).toStrictEqual([
-      {
-        cwd: "/workspace",
-        messageId: "pi-assistant-1",
-        sessionId: "session-1",
-      },
-    ]);
-    expect(threads.snapshot().selected).toMatchObject({
-      drafts: [],
-      id: expect.any(String),
-      items: [],
-      name: "Fix tests (fork)",
-    });
-  });
-
-  test("rolls back before the selected user message and restores its draft", async () => {
-    const agent = new FakeAgent();
-    const threads = createThreads(agent.factory);
-    await threads.openWorkspace("/workspace");
-    await threads.prompt("Restore me");
-    await threads.prompt("Later message");
-    const message = threads
-      .snapshot()
-      .selected?.items.find(
-        (item) => item.kind === "user" && item.text === "Restore me"
-      );
-    if (!message) {
-      throw new Error("Missing user message");
-    }
     agent.replayOnLoad = true;
-
-    await threads.rollback(message.id);
-
-    expect(agent.rollbackCalls).toStrictEqual([
-      { messageId: message.id, sessionId: "session-1" },
-    ]);
-    expect(threads.snapshot().selected).toMatchObject({
-      drafts: ["Restore me"],
-      items: [],
-    });
-  });
-
-  test("rolls back through the selected agent response without restoring a draft", async () => {
-    const agent = new FakeAgent();
+    agent.replayBranchSummary = true;
     const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
-    await threads.prompt("Keep this turn");
-    await threads.prompt("Remove this turn");
-    const message = threads
-      .snapshot()
-      .selected?.items.find((item) => item.kind === "assistant");
-    if (!message) {
-      throw new Error("Missing agent response");
+    await threads.prompt("Original prompt");
+    const sourceId = threads.snapshot().selected?.id;
+    if (!isNonEmpty(sourceId)) {
+      throw new Error("Missing source Thread");
     }
+    agent.update?.({
+      kind: "user",
+      messageId: "acp-user",
+      text: "Prompt",
+      type: "message",
+    });
+    agent.update?.({
+      kind: "assistant",
+      messageId: "acp-assistant",
+      text: "Answer",
+      type: "message",
+    });
 
-    await threads.rollback(message.id);
+    await threads.navigateTreeMessage(sourceId, "assistant:acp-assistant", {
+      customInstructions: "Focus on unresolved errors",
+      summarize: true,
+    });
 
-    expect(agent.rollbackCalls).toStrictEqual([
-      { messageId: "pi-assistant-1", sessionId: "session-1" },
+    expect(agent.navigateTreeCalls).toStrictEqual([
+      {
+        messageId: "acp-assistant",
+        options: {
+          customInstructions: "Focus on unresolved errors",
+          summarize: true,
+        },
+        sessionId: "session-1",
+      },
     ]);
     expect(threads.snapshot().selected).toMatchObject({
       drafts: [],
+      id: sourceId,
       items: [
-        { kind: "user", text: "Keep this turn" },
-        { kind: "assistant", text: "Done." },
+        { kind: "user", text: "Restore me" },
+        { kind: "assistant", text: "Restored." },
+        { kind: "branchSummary", text: "Preserve the adapter decision." },
       ],
+    });
+  });
+
+  test("rejects unsupported, stale, and busy transcript actions", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Original prompt");
+    const sourceId = threads.snapshot().selected?.id;
+    if (!isNonEmpty(sourceId)) {
+      throw new Error("Missing source Thread");
+    }
+    agent.update?.({
+      kind: "user",
+      messageId: "acp-user",
+      text: "Prompt",
+      type: "message",
+    });
+    await threads.newThread();
+    await expect(
+      threads.forkMessage(sourceId, "user:acp-user")
+    ).rejects.toThrow("selected Thread changed");
+    await threads.select(sourceId);
+    agent.operations.forkMessage = false;
+    await expect(
+      threads.forkMessage(sourceId, "user:acp-user")
+    ).rejects.toThrow("does not support Fork Thread");
+    agent.operations.forkMessage = true;
+    agent.holdPrompts = true;
+    const running = threads.prompt("Still running");
+    await agent.firstPromptStarted;
+    await expect(
+      threads.navigateTreeMessage(sourceId, "user:acp-user")
+    ).rejects.toThrow("current turn to finish");
+    await threads.cancel();
+    await running;
+  });
+
+  test("failed transcript navigation preserves the old transcript", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Original prompt");
+    const threadId = threads.snapshot().selected?.id;
+    if (!isNonEmpty(threadId)) {
+      throw new Error("Missing Thread");
+    }
+    agent.update?.({
+      kind: "user",
+      messageId: "acp-user",
+      text: "Prompt",
+      type: "message",
+    });
+    const oldItems = threads.snapshot().selected?.items;
+    agent.navigationError = new Error("Navigation failed");
+
+    await expect(
+      threads.navigateTreeMessage(threadId, "user:acp-user", {
+        summarize: true,
+      })
+    ).rejects.toThrow("Navigation failed");
+
+    expect(threads.snapshot().selected).toMatchObject({
+      items: oldItems,
+      status: "idle",
+    });
+    expect(threads.snapshot().selected?.sessionOperation).toBeUndefined();
+  });
+
+  test("reconciles only the active prompt's ACP ID without duplicating echoed content", async () => {
+    const agent = new FakeAgent();
+    agent.holdPrompts = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    const changes: (ThreadsChange | undefined)[] = [];
+    threads.onChange((change) => {
+      changes.push(change);
+    });
+    const image = { data: "abc", mimeType: "image/png" };
+    const first = threads.prompt("Same", [image]);
+    await agent.firstPromptStarted;
+    const second = threads.prompt("Same");
+    const queuedId = threads.snapshot().selected?.items.at(-1)?.id;
+    agent.update?.({
+      kind: "user",
+      messageId: "acp-first",
+      text: "Same",
+      type: "message",
+    });
+    agent.update?.({
+      images: [image],
+      kind: "user",
+      messageId: "acp-first",
+      type: "message",
+    });
+    expect(threads.snapshot().selected?.items[0]).toMatchObject({
+      id: "user:acp-first",
+      images: [image],
+      text: "Same",
+    });
+    expect(threads.snapshot().selected?.items.at(-1)?.id).toBe(queuedId);
+    expect(changes.at(-1)).toBeUndefined();
+    agent.promptResolvers[0]?.({ stopReason: "completed" });
+    await first;
+    await agent.secondPromptStarted;
+    agent.update?.({
+      kind: "user",
+      messageId: "acp-second",
+      text: "Same",
+      type: "message",
+    });
+    expect(
+      threads
+        .snapshot()
+        .selected?.items.filter((item) => item.kind === "user")
+        .map(({ id, text }) => ({ id, text }))
+    ).toStrictEqual([
+      { id: "user:acp-first", text: "Same" },
+      { id: "user:acp-second", text: "Same" },
+    ]);
+    agent.promptResolvers[1]?.({ stopReason: "completed" });
+    await second;
+    await vi.waitFor(() => {
+      expect(threads.snapshot().selected?.status).toBe("idle");
+    });
+  });
+
+  test("cancelling after identity reconciliation removes queued drafts without losing the active message", async () => {
+    const agent = new FakeAgent();
+    agent.holdPrompts = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    const first = threads.prompt("First");
+    await agent.firstPromptStarted;
+    await threads.prompt("Queued");
+    agent.update?.({
+      kind: "user",
+      messageId: "acp-first",
+      text: "First",
+      type: "message",
+    });
+    await threads.cancel();
+    await first;
+    expect(threads.snapshot().selected).toMatchObject({
+      drafts: ["Queued"],
+      items: [
+        { cancelled: true, id: "user:acp-first", kind: "user", text: "First" },
+        { kind: "assistant", text: "Partial" },
+      ],
+      status: "idle",
     });
   });
 
@@ -715,7 +885,9 @@ describe("threads module", () => {
     const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
     const changes: (ThreadsChange | undefined)[] = [];
-    threads.onChange((change) => changes.push(change));
+    threads.onChange((change) => {
+      changes.push(change);
+    });
 
     const first = threads.prompt("First");
     expect(threads.snapshot().selected).toMatchObject({
@@ -726,7 +898,9 @@ describe("threads module", () => {
     expect(threads.snapshot().selected?.streaming).toBeTruthy();
     expect(changes).toContainEqual(
       expect.objectContaining({
-        item: expect.objectContaining({ kind: "assistant", text: "Partial" }),
+        item: testValue<unknown>(
+          expect.objectContaining({ kind: "assistant", text: "Partial" })
+        ),
         streaming: true,
         type: "transcript",
       })
@@ -774,14 +948,16 @@ describe("threads module", () => {
     await agent.secondPromptStarted;
 
     expect(threads.snapshot().selected).toMatchObject({
-      items: expect.arrayContaining([
-        expect.objectContaining({
-          cancelled: true,
-          kind: "user",
-          text: "First",
-        }),
-        expect.objectContaining({ kind: "user", text: "Send me now" }),
-      ]),
+      items: testValue<unknown>(
+        expect.arrayContaining([
+          expect.objectContaining({
+            cancelled: true,
+            kind: "user",
+            text: "First",
+          }),
+          expect.objectContaining({ kind: "user", text: "Send me now" }),
+        ])
+      ),
       steering: [],
     });
     agent.promptResolvers[0]?.({ stopReason: "completed" });
@@ -946,7 +1122,6 @@ describe("threads module", () => {
         {
           indicator: "waiting",
           needsAttention: true,
-          status: "waiting",
         },
       ],
     });
@@ -963,7 +1138,7 @@ describe("threads module", () => {
     expect(database.snapshot().threads[0]?.status).toBe("idle");
     expect(threads.snapshot()).toMatchObject({
       selected: { status: "idle" },
-      threads: [{ indicator: "idle", needsAttention: false, status: "idle" }],
+      threads: [{ indicator: "idle", needsAttention: false }],
     });
   });
 
@@ -1095,24 +1270,6 @@ describe("threads module", () => {
         text: "Restored.",
       },
     ]);
-
-    await restored.rollback("user:pi-user-1");
-    expect(loadingAgent.rollbackCalls).toStrictEqual([
-      { messageId: "pi-user-1", sessionId: "session-1" },
-    ]);
-
-    const forkingAgent = new FakeAgent();
-    forkingAgent.replayOnLoad = true;
-    const forking = createThreads(forkingAgent.factory);
-    await forking.openWorkspace("/workspace");
-    await forking.fork("user:pi-user-1");
-    expect(forkingAgent.forkCalls).toStrictEqual([
-      {
-        cwd: "/workspace",
-        messageId: "pi-user-1",
-        sessionId: "session-1",
-      },
-    ]);
   });
 
   test("a failed first prompt remains durable and can be retried", async () => {
@@ -1125,7 +1282,7 @@ describe("threads module", () => {
 
     expect(threads.snapshot()).toMatchObject({
       selected: { error: "Agent unavailable", status: "error" },
-      threads: [{ status: "error" }],
+      threads: [{ indicator: "error" }],
     });
 
     const recovered = createThreads(new FakeAgent().factory);
@@ -1157,7 +1314,7 @@ describe("threads module", () => {
         name: "Fix tests",
         status: "idle",
       },
-      threads: [{ name: "Fix tests", status: "idle" }],
+      threads: [{ name: "Fix tests" }],
       workspace: "/workspace",
     });
   });

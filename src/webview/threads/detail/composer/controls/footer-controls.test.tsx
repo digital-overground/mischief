@@ -1,17 +1,20 @@
-// @vitest-environment jsdom
-
 import { act } from "react";
+// @vitest-environment jsdom
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import type { RenderedThreadDetail } from "../../../../protocol";
+import { testValue } from "../../../../../test-value";
+import type {
+  RenderedThreadDetail,
+  RenderedTranscriptItem,
+} from "../../../../protocol";
 
 const action = vi.fn<() => void>();
 const postMessage = vi.fn<(message: unknown) => void>();
 vi.stubGlobal("acquireVsCodeApi", () => ({ postMessage }));
-(
-  globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+testValue<{ IS_REACT_ACT_ENVIRONMENT?: boolean }>(
+  globalThis
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { FooterControls } = await import("./footer-controls");
@@ -34,12 +37,7 @@ const selected = (
 let root: Root;
 const renderFooter = (overrides: Partial<RenderedThreadDetail> = {}): void => {
   root.render(
-    <FooterControls
-      onNewThread={action}
-      onSend={action}
-      selected={selected(overrides)}
-      workspace="/workspace"
-    />
+    <FooterControls onSend={action} selected={selected(overrides)} />
   );
 };
 
@@ -48,146 +46,263 @@ describe("Footer controls", () => {
     action.mockClear();
     postMessage.mockClear();
     document.body.innerHTML = '<div id="root"></div>';
-    root = createRoot(
-      document.querySelector<HTMLElement>("#root") as HTMLElement
-    );
+    const container = document.querySelector<HTMLElement>("#root");
+    if (!container) {
+      throw new Error("Missing test root");
+    }
+    root = createRoot(container);
   });
 
   afterEach(async () => {
-    await act(() => root.unmount());
+    await Promise.resolve();
+    act(() => {
+      root.unmount();
+    });
     document.body.innerHTML = "";
   });
 
+  test("shows browse-only message history and closes it on Thread change", () => {
+    const items: RenderedTranscriptItem[] = [
+      { id: "u", kind: "user", text: "Prompt" },
+      { id: "tool", kind: "tool", title: "Read" },
+      { id: "a", kind: "assistant", text: "Response" },
+      {
+        id: "image",
+        images: [{ data: "abc", mimeType: "image/png" }],
+        kind: "user",
+      },
+    ];
+    const jump = vi.fn<(id: string) => void>();
+    act(() => {
+      root.render(
+        <FooterControls
+          historyItems={items.filter(
+            (item) => item.kind === "user" || item.kind === "assistant"
+          )}
+          onJumpMessage={jump}
+          onSend={action}
+          selected={selected()}
+        />
+      );
+    });
+    const button = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Message history"]'
+    );
+    act(() => button?.click());
+    expect(
+      [...document.querySelectorAll("#history-list .history-entry")].map(
+        (row) => row.textContent
+      )
+    ).toStrictEqual(["Prompt", "Response", "Image prompt"]);
+    act(() => {
+      document
+        .querySelector<HTMLButtonElement>(
+          "#history-list .history-entry:last-child .history-jump"
+        )
+        ?.click();
+    });
+    expect(jump).toHaveBeenCalledWith("image");
+    expect(document.querySelector("#history-list")).toBeNull();
+    act(() => button?.click());
+    act(() => {
+      root.render(
+        <FooterControls
+          historyItems={items}
+          onJumpMessage={jump}
+          onSend={action}
+          selected={selected({ id: "other" })}
+        />
+      );
+    });
+    expect(document.querySelector("#history-list")).toBeNull();
+  });
+
+  test("sends transcript IDs for idle row actions, not for busy rows", () => {
+    const items: RenderedTranscriptItem[] = [
+      { id: "user:one", kind: "user", text: "Same" },
+      { id: "assistant:two", kind: "assistant", text: "Answer" },
+      { id: "user:three", kind: "user", text: "Same" },
+      { id: "local", kind: "user", text: "Old" },
+    ];
+    act(() => {
+      root.render(
+        <FooterControls
+          historyItems={items}
+          onSend={action}
+          selected={selected({
+            forkSupported: true,
+            treeNavigationSupported: true,
+          })}
+        />
+      );
+    });
+    act(() =>
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="Message history"]')
+        ?.click()
+    );
+    act(() =>
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="Fork at Same"]')
+        ?.click()
+    );
+    expect(postMessage).toHaveBeenCalledWith({
+      messageId: "user:one",
+      threadId: "thread",
+      type: "forkThread",
+    });
+    act(() =>
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="Message history"]')
+        ?.click()
+    );
+    act(() =>
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="Navigate to Answer"]')
+        ?.click()
+    );
+    expect(postMessage).toHaveBeenCalledWith({
+      messageId: "assistant:two",
+      threadId: "thread",
+      type: "navigateThreadTree",
+    });
+    act(() => {
+      root.render(
+        <FooterControls
+          historyItems={items}
+          onSend={action}
+          selected={selected({
+            forkSupported: true,
+            status: "running",
+            treeNavigationSupported: true,
+          })}
+        />
+      );
+    });
+    expect(document.querySelector('[aria-label="Fork at Same"]')).toBeNull();
+    expect(
+      document.querySelector('[aria-label="Navigate to Answer"]')
+    ).toBeNull();
+  });
+
+  test("keeps history on-screen in a narrow footer and focuses newest entries", () => {
+    act(() => {
+      root.render(
+        <FooterControls
+          historyItems={[{ id: "u", kind: "user", text: "Prompt" }]}
+          onSend={action}
+          selected={selected()}
+        />
+      );
+    });
+    const footer = document.querySelector<HTMLElement>("#root");
+    const button = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Message history"]'
+    );
+    if (!footer || !button) {
+      throw new Error("Missing history control");
+    }
+    vi.spyOn(button, "closest").mockReturnValue(footer);
+    vi.spyOn(footer, "getBoundingClientRect").mockReturnValue({
+      bottom: 500,
+      height: 30,
+      left: 0,
+      right: 180,
+      toJSON: () => ({}),
+      top: 470,
+      width: 180,
+      x: 0,
+      y: 470,
+    });
+    act(() => {
+      button.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, clientX: 179 })
+      );
+    });
+    const list = document.querySelector<HTMLElement>("#history-list");
+    expect(list?.style.left).toBe("8px");
+    expect(document.activeElement).toBe(list);
+    expect(button?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  test("closes message history on Escape and outside pointerdown", () => {
+    act(() => {
+      root.render(
+        <FooterControls
+          historyItems={[{ id: "u", kind: "user", text: "Prompt" }]}
+          onSend={action}
+          selected={selected()}
+        />
+      );
+    });
+    const button = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Message history"]'
+    );
+    act(() => button?.click());
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })
+      );
+    });
+    expect(document.querySelector("#history-list")).toBeNull();
+    expect(document.activeElement).toBe(button);
+    act(() => button?.click());
+    act(() => {
+      document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    expect(document.querySelector("#history-list")).toBeNull();
+  });
+
   test("closes context usage when usage disappears", async () => {
-    await act(() => renderFooter({ usage: { size: 100, used: 50 } }));
+    await Promise.resolve();
+    act(() => {
+      renderFooter({ usage: { size: 100, used: 50 } });
+    });
     const usageButton = document.querySelector<HTMLButtonElement>("#usage");
     if (!usageButton) {
       throw new Error("Missing usage control");
     }
-    await act(() => usageButton.click());
+    act(() => {
+      usageButton.click();
+    });
     expect(
       document.querySelector<HTMLElement>("#usage-menu")?.hidden
     ).toBeFalsy();
 
-    await act(() => renderFooter());
-    await act(() => renderFooter({ usage: { size: 100, used: 60 } }));
+    act(() => {
+      renderFooter();
+    });
+    act(() => {
+      renderFooter({ usage: { size: 100, used: 60 } });
+    });
 
     expect(
       document.querySelector<HTMLElement>("#usage-menu")?.hidden
     ).toBeTruthy();
   });
 
-  test("opens user and agent messages in order at the pointer and closes with Escape", async () => {
-    await act(() =>
-      renderFooter({
-        items: [
-          { id: "user-1", kind: "user", text: "First request" },
-          { id: "assistant", kind: "assistant", text: "Response" },
-          { id: "user-2", kind: "user", text: "Most recent request" },
-        ],
-      })
-    );
-    const history = document.querySelector<HTMLButtonElement>("#history");
-    if (!history) {
-      throw new Error("Missing history button");
-    }
-
-    await act(() =>
-      history.dispatchEvent(
-        new MouseEvent("click", { bubbles: true, clientX: 200 })
-      )
-    );
-
-    const list = document.querySelector<HTMLElement>("#history-list");
-    const entries = [
-      ...document.querySelectorAll<HTMLElement>(".history-entry"),
-    ];
+  test("keeps Fork and Tree actions in history rather than the footer", () => {
+    act(() => {
+      renderFooter({ forkSupported: true, treeNavigationSupported: true });
+    });
     expect({
-      actionText: list?.textContent?.includes("Fork") ?? true,
-      active: document.activeElement === list,
-      kinds: entries.map((entry) => entry.className),
-      left: list?.style.left,
-      messages: [...document.querySelectorAll(".history-message")].map(
-        (message) => message.textContent
-      ),
-      rowTabIndexes: entries.map((entry) => entry.tabIndex),
-      width: list?.style.width,
-    }).toStrictEqual({
-      actionText: false,
-      active: true,
-      kinds: [
-        "history-entry user",
-        "history-entry assistant",
-        "history-entry user",
-      ],
-      left: "200px",
-      messages: ["First request", "Response", "Most recent request"],
-      rowTabIndexes: [0, 0, 0],
-      width: "814px",
-    });
-
-    const fork = entries[0]?.querySelector<HTMLButtonElement>(
-      'button[aria-label="Fork from this message"]'
-    );
-    await act(() => fork?.click());
-    expect(postMessage).toHaveBeenCalledWith({
-      id: "user-1",
-      type: "forkThread",
-    });
-
-    await act(() =>
-      history.dispatchEvent(
-        new MouseEvent("click", { bubbles: true, clientX: 200 })
-      )
-    );
-    const rollback = document
-      .querySelectorAll<HTMLElement>(".history-entry")[1]
-      ?.querySelector<HTMLButtonElement>(
-        'button[aria-label="Rollback to this message"]'
-      );
-    await act(() => rollback?.click());
-    expect(postMessage).toHaveBeenCalledWith({
-      id: "assistant",
-      type: "rollbackThread",
-    });
-
-    await act(() =>
-      history.dispatchEvent(
-        new MouseEvent("click", { bubbles: true, clientX: 200 })
-      )
-    );
-    await act(() =>
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))
-    );
-    expect(document.querySelector("#history-list")).toBeNull();
+      fork: document.querySelector("#footer-fork-thread"),
+      tree: document.querySelector("#footer-navigate-tree"),
+    }).toStrictEqual({ fork: null, tree: null });
   });
 
-  test("moves a minimum-width history list left near the right edge", async () => {
-    await act(() =>
-      renderFooter({
-        items: [{ id: "user", kind: "user", text: "Request" }],
-      })
-    );
-    const history = document.querySelector<HTMLButtonElement>("#history");
-    if (!history) {
-      throw new Error("Missing history button");
-    }
-
-    await act(() =>
-      history.dispatchEvent(
-        new MouseEvent("click", { bubbles: true, clientX: 900 })
-      )
-    );
-
-    const list = document.querySelector<HTMLElement>("#history-list");
-    expect({ left: list?.style.left, width: list?.style.width }).toStrictEqual({
-      left: "514px",
-      width: "500px",
+  test("disables Send during a Thread operation", () => {
+    act(() => {
+      renderFooter({ sessionOperation: "navigateTree" });
     });
+    expect(
+      document.querySelector<HTMLButtonElement>("#send")?.disabled
+    ).toBeTruthy();
   });
 
   test("preserves the Agent's model option order", async () => {
-    await act(() =>
+    await Promise.resolve();
+    act(() => {
       renderFooter({
         configOptions: [
           {
@@ -206,8 +321,8 @@ describe("Footer controls", () => {
             type: "select",
           },
         ],
-      })
-    );
+      });
+    });
     const model = document.querySelector<HTMLSelectElement>(
       'select[aria-label="Model"]'
     );

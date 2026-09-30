@@ -31,7 +31,7 @@ When using Remote SSH, Dev Containers, or WSL, install Node.js, Pi, MagPi ACP, a
 
 Before creating a Thread, Mischief checks for Node.js, Git, Pi, and MagPi ACP in the transcript. Press Enter to open the Node.js or Git installation page, or to install Pi and MagPi ACP in a visible terminal. After each step finishes, return to the transcript and press Enter to check again.
 
-Mischief then offers four recommended Pi add-ons: Todo, Ask User, Ponytail, and Matt Pocock Skills. All are selected by default; deselect anything you do not want, then press Enter to install the selection.
+Mischief then offers three recommended Pi add-ons: Todo, Ponytail, and Matt Pocock Skills. All are selected by default; deselect anything you do not want, then press Enter to install the selection. Structured Ask User support is bundled with MagPi ACP.
 
 ## GitHub issue Workspaces
 

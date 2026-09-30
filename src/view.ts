@@ -1,9 +1,11 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import MarkdownIt from "markdown-it";
 import * as vscode from "vscode";
 
+import { isDefined, isNonEmpty, isNonZero, isRecord } from "./present";
 import type { ProfileDatabase } from "./profile-database/profile-database";
 import {
   issueWorkspaceName,
@@ -18,14 +20,15 @@ import type {
   ProjectsSnapshot,
   Workspace,
 } from "./projects/projects";
+import type { AgentTreeNavigationOptions } from "./threads/acp/models";
+import type { PromptImage } from "./threads/model";
 import type {
-  PromptImage,
   ThreadHistoryEntry,
   ThreadInteractionResponse,
-  Threads,
   ThreadsChange,
   TranscriptItem,
-} from "./threads/threads";
+} from "./threads/threads/models";
+import type { Threads } from "./threads/threads/threads";
 import { webviewHtml } from "./webview";
 import type { HostToWebviewMessage, SetupStep } from "./webview/protocol";
 import {
@@ -51,13 +54,16 @@ const workspaceColorsEnabled = (): boolean =>
     .getConfiguration("mischief")
     .get<boolean>("assignWorkspaceColors", true);
 const markdown = new MarkdownIt({ breaks: true, html: false, linkify: true });
+const validateMarkdownLink = markdown.validateLink.bind(markdown);
+markdown.validateLink = (href) =>
+  /^file:/iu.test(href) || validateMarkdownLink(href);
 
 const renderTranscriptItem = (
   item: TranscriptItem
 ): TranscriptItem & {
   html?: string;
 } =>
-  item.text && item.kind !== "plan" && item.kind !== "tool"
+  isNonEmpty(item.text) && item.kind !== "plan" && item.kind !== "tool"
     ? { ...item, html: markdown.render(item.text) }
     : item;
 
@@ -70,10 +76,10 @@ const promptImages = (value: unknown): PromptImage[] => {
   }
   let size = 0;
   return value.map((candidate) => {
-    if (!candidate || typeof candidate !== "object") {
+    if (!isRecord(candidate)) {
       throw new Error("Invalid pasted image");
     }
-    const image = candidate as Record<string, unknown>;
+    const image = candidate;
     if (
       typeof image.data !== "string" ||
       typeof image.mimeType !== "string" ||
@@ -104,6 +110,11 @@ interface ThreadHistoryQuickPickItem extends vscode.QuickPickItem {
   entry: ThreadHistoryEntry;
 }
 
+interface BranchSummaryQuickPickItem extends vscode.QuickPickItem {
+  custom?: true;
+  summarize: boolean;
+}
+
 const historyTime = (value: string, now = Date.now()): string => {
   const elapsed = Math.max(0, now - Date.parse(value));
   const minutes = Math.floor(elapsed / 60_000);
@@ -121,28 +132,47 @@ const historyTime = (value: string, now = Date.now()): string => {
   return days <= 5 ? `${days}d` : new Date(value).toLocaleDateString();
 };
 
+const loadWithQuickPick = async <Value>(
+  title: string,
+  placeholder: string,
+  load: () => Promise<Value>
+): Promise<Value | undefined> => {
+  const picker = vscode.window.createQuickPick();
+  picker.busy = true;
+  picker.placeholder = placeholder;
+  picker.title = title;
+  let cancelled = false;
+  const hidden = picker.onDidHide(() => {
+    cancelled = true;
+  });
+  picker.show();
+  try {
+    const value = await load();
+    return cancelled ? undefined : value;
+  } finally {
+    hidden.dispose();
+    picker.hide();
+    picker.dispose();
+  }
+};
+
 const interactionResponse = (
   value: unknown
 ): ThreadInteractionResponse | undefined => {
-  if (!value || typeof value !== "object") {
+  if (!isRecord(value)) {
     return undefined;
   }
-  const response = value as Record<string, unknown>;
+  const response = value;
   if (response.action === "cancel") {
     return { action: "cancel" };
   }
   if (response.action === "select" && typeof response.optionId === "string") {
     return { action: "select", optionId: response.optionId };
   }
-  if (
-    response.action === "accept" &&
-    response.values &&
-    typeof response.values === "object" &&
-    !Array.isArray(response.values)
-  ) {
+  if (response.action === "accept" && isRecord(response.values)) {
     return {
       action: "accept",
-      values: response.values as Record<string, unknown>,
+      values: response.values,
     };
   }
   return undefined;
@@ -181,11 +211,15 @@ export class MischiefView implements vscode.WebviewViewProvider {
     this.storage = storage;
     this.database = database;
     this.databaseWorkspaces = JSON.stringify(database.snapshot().workspaces);
-    database.onChange(() => this.databaseChanged());
+    database.onChange(() => {
+      this.databaseChanged();
+    });
     this.setup = setup;
     threads.onChange((change) => {
       if (change?.type === "transcript") {
         this.renderTranscript(change);
+      } else if (change?.type === "sessionOperation") {
+        this.renderSessionOperation(change);
       } else {
         this.render();
       }
@@ -194,7 +228,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
 
   async initialize(folder?: string): Promise<void> {
     await this.setProjects(
-      folder ? this.projects.open(folder) : this.projects.refresh()
+      isNonEmpty(folder) ? this.projects.open(folder) : this.projects.refresh()
     );
     await this.syncThreads();
     this.render();
@@ -262,7 +296,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
           prompt: "Enter the GitHub issue repository as owner/repo",
           title: `Issue Repository for ${project.name}`,
           validateInput: (value) =>
-            normalizeGitHubRepository(value)
+            isNonEmpty(normalizeGitHubRepository(value))
               ? undefined
               : "Enter a GitHub repository as owner/repo",
           value: defaultRepository,
@@ -296,7 +330,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     const disposables = [
       picker.onDidAccept(() => {
         const [selected] = picker.selectedItems;
-        if (selected) {
+        if (isDefined(selected)) {
           picker.hide();
           void MischiefView.run(
             this.newIssueWorkspace(project, selected.issue)
@@ -363,7 +397,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     const picker = vscode.window.createQuickPick<SourceBranchQuickPickItem>();
     picker.items = items;
     picker.title = `Source Branch for #${issue.number}`;
-    const current = items.find((item) => item.branch?.current);
+    const current = items.find((item) => item.branch?.current === true);
     if (current) {
       picker.activeItems = [current];
     }
@@ -443,7 +477,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     );
     await this.storage.update(START_WORKSPACES_KEY, [
       ...pending.filter((candidate) => candidate.path !== workspace),
-      { path: workspace, ...(prompt ? { prompt } : {}) },
+      { path: workspace, ...(isNonEmpty(prompt) ? { prompt } : {}) },
     ]);
     this.render();
     await this.openWorkspace(workspace);
@@ -544,7 +578,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     const active = this.threads.snapshot().workspace;
     if (current && active !== current.path) {
       await this.threads.openWorkspace(current.path);
-    } else if (!current && active) {
+    } else if (!current && isNonEmpty(active)) {
       await this.threads.closeWorkspace();
     }
   }
@@ -568,10 +602,10 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   private async handleMessage(message: unknown): Promise<void> {
-    if (!message || typeof message !== "object") {
+    if (!isRecord(message)) {
       return;
     }
-    const data = message as Record<string, unknown>;
+    const data = message;
     try {
       if (await this.handleWorkspaceMessage(data)) {
         return;
@@ -666,7 +700,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     if (data.type === "selectThread" && typeof data.id === "string") {
       const workspace = await this.threads.select(data.id);
       const current = this.workspaces().find((candidate) => candidate.current);
-      if (workspace && workspace !== current?.path) {
+      if (isNonEmpty(workspace) && workspace !== current?.path) {
         await this.openWorkspace(workspace);
       }
       return true;
@@ -675,18 +709,32 @@ export class MischiefView implements vscode.WebviewViewProvider {
       await this.threads.remove(data.id);
       return true;
     }
-    if (data.type === "forkThread" && typeof data.id === "string") {
-      await this.threads.fork(data.id);
-      return true;
-    }
-    if (data.type === "rollbackThread" && typeof data.id === "string") {
-      const confirmed = await vscode.window.showWarningMessage(
-        "Rollback this Thread? The Thread will return to the selected point and later messages will leave the active branch.",
-        { modal: true },
-        "Rollback"
-      );
-      if (confirmed === "Rollback") {
-        await this.threads.rollback(data.id);
+    if (data.type === "forkThread" || data.type === "navigateThreadTree") {
+      if (
+        typeof data.threadId !== "string" ||
+        !isNonEmpty(data.threadId) ||
+        data.threadId.length > 200 ||
+        typeof data.messageId !== "string" ||
+        !isNonEmpty(data.messageId) ||
+        data.messageId.length > 1000
+      ) {
+        throw new Error("Invalid transcript message target");
+      }
+      if (data.type === "forkThread") {
+        await this.threads.forkMessage(data.threadId, data.messageId);
+      } else {
+        const options = await MischiefView.chooseBranchSummary(
+          this.threads.branchSummarySupported(data.threadId),
+          false
+        );
+        if (options) {
+          await this.threads.navigateTreeMessage(
+            data.threadId,
+            data.messageId,
+            options
+          );
+          await this.render();
+        }
       }
       return true;
     }
@@ -743,7 +791,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     if (data.type === "respond" && typeof data.id === "string") {
       const response = interactionResponse(data.response);
       if (response) {
-        await this.threads.respond(data.id, response);
+        this.threads.respond(data.id, response);
       }
       return;
     }
@@ -762,26 +810,65 @@ export class MischiefView implements vscode.WebviewViewProvider {
       );
       return;
     }
+    if (data.type === "openTranscriptLink" && typeof data.href === "string") {
+      await this.openTranscriptLink(data.href);
+      return;
+    }
     if (data.type === "openDiff" && typeof data.path === "string") {
       await this.openDiff(data.path);
     }
   }
 
+  private static async chooseBranchSummary(
+    supported: boolean,
+    current: boolean
+  ): Promise<AgentTreeNavigationOptions | undefined> {
+    let options: AgentTreeNavigationOptions = { summarize: false };
+    if (supported && !current) {
+      const summary =
+        await vscode.window.showQuickPick<BranchSummaryQuickPickItem>(
+          [
+            { label: "No summary", summarize: false },
+            { label: "Pi's default branch summary", summarize: true },
+            {
+              custom: true,
+              label: "Pi's branch summary with custom focus…",
+              summarize: true,
+            },
+          ],
+          {
+            placeHolder: "Choose how to handle the abandoned branch",
+            title: "Branch Summary",
+          }
+        );
+      if (!summary) {
+        return undefined;
+      }
+      options = { summarize: summary.summarize };
+      if (summary.custom) {
+        const customInstructions = await vscode.window.showInputBox({
+          placeHolder: "Focus on decisions, errors, or another topic",
+          prompt: "Enter custom instructions for Pi's branch summary",
+          title: "Branch Summary Focus",
+          validateInput: (value) =>
+            value.trim() ? undefined : "Enter summary instructions",
+        });
+        if (customInstructions === undefined) {
+          return undefined;
+        }
+        options.customInstructions = customInstructions;
+      }
+    }
+    return options;
+  }
+
   private async showThreadHistory(): Promise<void> {
-    const loading = vscode.window.createQuickPick();
-    loading.busy = true;
-    loading.placeholder = "Loading previous Threads…";
-    loading.title = "Thread History";
-    let cancelled = false;
-    const hidden = loading.onDidHide(() => {
-      cancelled = true;
-    });
-    loading.show();
-    const entries = await this.threads.history();
-    hidden.dispose();
-    loading.hide();
-    loading.dispose();
-    if (cancelled) {
+    const entries = await loadWithQuickPick(
+      "Thread History",
+      "Loading previous Threads…",
+      async () => await this.threads.history()
+    );
+    if (!entries) {
       return;
     }
     if (!entries.length) {
@@ -795,10 +882,10 @@ export class MischiefView implements vscode.WebviewViewProvider {
         entries.map((entry) => ({
           entry,
           label: entry.title,
-          ...(entry.updatedAt
+          ...(isNonEmpty(entry.updatedAt)
             ? { description: historyTime(entry.updatedAt) }
             : {}),
-          ...(entry.preview && entry.previewRole
+          ...(isNonEmpty(entry.preview) && entry.previewRole
             ? {
                 detail: `${entry.previewRole === "user" ? "You" : "Agent"}: ${entry.preview}`,
               }
@@ -836,7 +923,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     const creating = this.threads.newThread();
     this.view?.show(preserveFocus);
     await creating;
-    if (initialPrompt) {
+    if (isNonEmpty(initialPrompt)) {
       void MischiefView.run(this.threads.prompt(initialPrompt));
     }
   }
@@ -871,7 +958,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     );
     const index = canonical.indexOf(true);
     const start = pending[index];
-    if (!start) {
+    if (!isDefined(start)) {
       return;
     }
     await this.storage.update(
@@ -937,6 +1024,15 @@ export class MischiefView implements vscode.WebviewViewProvider {
       shellPath: authentication.command,
       ...(authentication.env ? { env: authentication.env } : {}),
     });
+    const closed = vscode.window.onDidCloseTerminal((candidate) => {
+      if (candidate !== terminal) {
+        return;
+      }
+      closed.dispose();
+      if (candidate.exitStatus?.code === 0) {
+        void MischiefView.run(this.threads.retry());
+      }
+    });
     terminal.show();
   }
 
@@ -945,14 +1041,61 @@ export class MischiefView implements vscode.WebviewViewProvider {
       .snapshot()
       .selected?.items.find(
         (entry) =>
-          entry.locations?.some((location) => location.path === candidate) ||
-          entry.diffs?.some((diff) => diff.path === candidate)
+          entry.locations?.some((location) => location.path === candidate) ===
+            true ||
+          entry.diffs?.some((diff) => diff.path === candidate) === true
       );
     if (!item) {
       return;
     }
     const selection =
-      line && line > 0 ? new vscode.Range(line - 1, 0, line - 1, 0) : undefined;
+      isNonZero(line) && line > 0
+        ? new vscode.Range(line - 1, 0, line - 1, 0)
+        : undefined;
+    await vscode.window.showTextDocument(vscode.Uri.file(candidate), {
+      preview: true,
+      ...(selection ? { selection } : {}),
+    });
+  }
+
+  private async openTranscriptLink(href: string): Promise<void> {
+    const { workspace } = this.threads.snapshot();
+    if (workspace === undefined) {
+      return;
+    }
+    let target: URL;
+    try {
+      target = new URL(href, pathToFileURL(`${workspace}${path.sep}`));
+    } catch {
+      return;
+    }
+    const { hash, protocol } = target;
+    if (protocol !== "file:") {
+      return;
+    }
+    let root: string;
+    let candidate: string;
+    try {
+      [root, candidate] = await Promise.all([
+        realpath(workspace),
+        realpath(fileURLToPath(target)),
+      ]);
+    } catch {
+      return;
+    }
+    const relative = path.relative(root, candidate);
+    if (
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    ) {
+      return;
+    }
+    const line = /^#L(?<line>[1-9]\d*)$/iu.exec(hash)?.groups?.line;
+    const selection =
+      line === undefined
+        ? undefined
+        : new vscode.Range(Number(line) - 1, 0, Number(line) - 1, 0);
     await vscode.window.showTextDocument(vscode.Uri.file(candidate), {
       preview: true,
       ...(selection ? { selection } : {}),
@@ -1014,7 +1157,19 @@ export class MischiefView implements vscode.WebviewViewProvider {
     } satisfies HostToWebviewMessage);
   }
 
-  private renderTranscript(change: ThreadsChange): void {
+  private renderSessionOperation(
+    change: Extract<ThreadsChange, { type: "sessionOperation" }>
+  ): void {
+    if (!this.view) {
+      return;
+    }
+    const postMessage = this.view.webview.postMessage.bind(this.view.webview);
+    void postMessage(change satisfies HostToWebviewMessage);
+  }
+
+  private renderTranscript(
+    change: Extract<ThreadsChange, { type: "transcript" }>
+  ): void {
     if (!this.view) {
       return;
     }
@@ -1025,9 +1180,9 @@ export class MischiefView implements vscode.WebviewViewProvider {
     } satisfies HostToWebviewMessage);
   }
 
-  private render(): void {
+  private render(): PromiseLike<boolean> | undefined {
     if (!this.view) {
-      return;
+      return undefined;
     }
     const font = vscode.workspace
       .getConfiguration("mischief")
@@ -1053,8 +1208,9 @@ export class MischiefView implements vscode.WebviewViewProvider {
       };
     }
     const postMessage = this.view.webview.postMessage.bind(this.view.webview);
-    void postMessage({
-      font: font || DEFAULT_MONO_FONT_FAMILY,
+    return postMessage({
+      font:
+        font !== undefined && font.length > 0 ? font : DEFAULT_MONO_FONT_FAMILY,
       projects: this.projectsSnapshot,
       ...(this.setupStep
         ? {

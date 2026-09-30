@@ -4,6 +4,7 @@ import path from "node:path";
 
 import * as vscode from "vscode";
 
+import { isNonEmpty } from "./present";
 import { ProfileDatabase } from "./profile-database/profile-database";
 import { locateWorkspace, Projects } from "./projects/projects";
 import {
@@ -12,9 +13,9 @@ import {
   nextSoftwareRequirement,
 } from "./setup";
 import type { SoftwareRequirement } from "./setup";
-import { acpConnectionFactory } from "./threads/acp";
-import type { AgentLaunch } from "./threads/acp";
-import { Threads } from "./threads/threads";
+import { acpConnectionFactory } from "./threads/acp/acp";
+import type { AgentLaunch } from "./threads/acp/models";
+import { Threads } from "./threads/threads/threads";
 import { MischiefView, registerMischiefView } from "./view";
 import type { ThreadSetup } from "./view";
 import type { SetupStep } from "./webview/protocol";
@@ -36,7 +37,7 @@ const agentLaunch = (context: vscode.ExtensionContext): AgentLaunch => {
     .getConfiguration("mischief")
     .get<string>("magpiAcpPath")
     ?.trim();
-  if (configured) {
+  if (isNonEmpty(configured)) {
     return configured.endsWith(".js")
       ? { args: [configured], command: "node", env }
       : { args: [], command: configured, env };
@@ -135,13 +136,13 @@ const softwareSetup = (
       }
       if (installingAddons) {
         installingAddons = false;
-        return;
+        return prompt();
       }
 
       await storage.update(ADDONS_OFFERED_KEY, true);
       const command = addOnInstallCommand(selected);
-      if (!command) {
-        return;
+      if (!isNonEmpty(command)) {
+        return prompt();
       }
       installingAddons = true;
       const terminal = vscode.window.createTerminal("Mischief Setup");
@@ -158,8 +159,12 @@ export const activate = async (
 ): Promise<void> => {
   const output = vscode.window.createOutputChannel("Mischief");
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  const workspace = folder ? await locateWorkspace(folder) : undefined;
-  const log = (message: string): void => output.appendLine(message);
+  const workspace = isNonEmpty(folder)
+    ? await locateWorkspace(folder)
+    : undefined;
+  const log = (message: string): void => {
+    output.appendLine(message);
+  };
   database = await ProfileDatabase.open({
     currentWorkspace: workspace?.path,
     instanceId: randomUUID(),
@@ -180,7 +185,29 @@ export const activate = async (
     await context.globalState.update(THREADS_VERSION_KEY, 1);
   }
   const launch = agentLaunch(context);
-  const threads = new Threads(database, acpConnectionFactory(launch, log));
+  const warnedCapabilities = new Set<string>();
+  const threads = new Threads(
+    database,
+    acpConnectionFactory(launch, log, (capability) => {
+      if (warnedCapabilities.has(capability)) {
+        return;
+      }
+      warnedCapabilities.add(capability);
+      void (async () => {
+        const choice = await vscode.window.showWarningMessage(
+          "Update MagPi ACP to enable Fork and Tree in Message history. Reload this window after updating.",
+          "Update instructions"
+        );
+        if (choice === "Update instructions") {
+          await vscode.env.openExternal(
+            vscode.Uri.parse(
+              "https://github.com/digital-overground/magpi-acp#installation"
+            )
+          );
+        }
+      })();
+    })
+  );
   activeThreads = threads;
   const view = new MischiefView(
     projects,
@@ -194,22 +221,24 @@ export const activate = async (
   registerMischiefView(context, view);
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("mischief.addWorkspace", () =>
-      view.addWorkspace()
-    ),
-    vscode.commands.registerCommand("mischief.refresh", () => view.refresh()),
-    vscode.commands.registerCommand("mischief.expandAll", () =>
-      view.setAllExpanded(true)
-    ),
-    vscode.commands.registerCommand("mischief.collapseAll", () =>
-      view.setAllExpanded(false)
-    ),
-    vscode.commands.registerCommand("mischief.newThread", () =>
-      view.newThread()
-    ),
-    vscode.commands.registerCommand("mischief.settings", () =>
-      view.showSettings()
-    ),
+    vscode.commands.registerCommand("mischief.addWorkspace", async () => {
+      await view.addWorkspace();
+    }),
+    vscode.commands.registerCommand("mischief.refresh", async () => {
+      await view.refresh();
+    }),
+    vscode.commands.registerCommand("mischief.expandAll", () => {
+      view.setAllExpanded(true);
+    }),
+    vscode.commands.registerCommand("mischief.collapseAll", () => {
+      view.setAllExpanded(false);
+    }),
+    vscode.commands.registerCommand("mischief.newThread", async () => {
+      await view.newThread();
+    }),
+    vscode.commands.registerCommand("mischief.settings", () => {
+      view.showSettings();
+    }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration("mischief.fontFamily")) {
         view.configurationChanged();

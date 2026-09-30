@@ -8,10 +8,13 @@ import {
 } from "react";
 import type { ClipboardEvent, KeyboardEvent } from "react";
 
-import type { PromptImage, ThreadCommand } from "../../../../threads/threads";
+import { isDefined, isNonEmpty } from "../../../../present";
+import type { PromptImage, ThreadCommand } from "../../../../threads/model";
 import { postMessage } from "../../../bridge";
-import type { RenderedThreadDetail } from "../../../protocol";
-import { Toast } from "../../../toast";
+import type {
+  RenderedThreadDetail,
+  RenderedTranscriptItem,
+} from "../../../protocol";
 import { FooterControls } from "./controls/footer-controls";
 
 interface ComposerMatch {
@@ -24,7 +27,7 @@ const composerContext = (
   cursor: number
 ): ComposerMatch | undefined => {
   const before = value.slice(0, cursor);
-  const match = before.match(/(?:^|\s)@(?<query>[^\s]*)$/u);
+  const match = /(?:^|\s)@(?<query>[^\s]*)$/u.exec(before);
   const query = match?.groups?.query;
   return query === undefined
     ? undefined
@@ -38,7 +41,7 @@ const slashCommand = (
   value: string,
   cursor: number
 ): ComposerMatch | undefined => {
-  const match = value.slice(0, cursor).match(/^\/(?<query>[^\s]*)$/u);
+  const match = /^\/(?<query>[^\s]*)$/u.exec(value.slice(0, cursor));
   return match?.groups?.query === undefined
     ? undefined
     : { query: match.groups.query.toLowerCase(), start: 0 };
@@ -73,17 +76,19 @@ const matchingContextItems = (
 const ComposerView = ({
   contextItems,
   copyNotice,
+  historyItems,
+  onJumpMessage,
   selected,
   setup,
   setupSelected,
-  workspace,
 }: {
   contextItems: string[];
   copyNotice: number;
+  historyItems: RenderedTranscriptItem[];
+  onJumpMessage: (id: string) => void;
   selected?: RenderedThreadDetail;
   setup: boolean;
   setupSelected: string[];
-  workspace?: string;
 }): React.JSX.Element => {
   const box = useRef<HTMLTextAreaElement>(null);
   const suggestionsBox = useRef<HTMLDivElement>(null);
@@ -133,14 +138,16 @@ const ComposerView = ({
     if (activeThread.current === threadId) {
       return;
     }
-    if (activeThread.current) {
+    if (isNonEmpty(activeThread.current)) {
       draftsByThread.current.set(activeThread.current, {
         images,
         text: box.current?.value ?? "",
       });
     }
     activeThread.current = threadId;
-    const draft = threadId ? draftsByThread.current.get(threadId) : undefined;
+    const draft = isNonEmpty(threadId)
+      ? draftsByThread.current.get(threadId)
+      : undefined;
     if (box.current) {
       box.current.value = draft?.text ?? "";
     }
@@ -174,25 +181,21 @@ const ComposerView = ({
     }
   }, [selected?.id, setup]);
 
-  const newThread = (): void => {
-    if (!workspace) {
-      return;
-    }
-    postMessage({ type: "newThread" });
-    box.current?.focus();
-  };
-
   const send = (): void => {
     if (setup) {
       postMessage({ selected: setupSelected, type: "setupContinue" });
       return;
     }
     const text = box.current?.value ?? "";
-    if ((!text.trim() && !images.length) || !selected) {
+    if (
+      (!text.trim() && !images.length) ||
+      !selected ||
+      selected.sessionOperation !== undefined
+    ) {
       return;
     }
     postMessage({ images, text, type: "prompt" });
-    if (selected.id) {
+    if (isNonEmpty(selected.id)) {
       draftsByThread.current.delete(selected.id);
     }
     if (box.current) {
@@ -253,7 +256,7 @@ const ComposerView = ({
         const match = suggestions[contextIndex];
         if (typeof match === "string") {
           selectContext(match);
-        } else if (match) {
+        } else if (isDefined(match)) {
           selectCommand(match);
         }
       }
@@ -268,7 +271,10 @@ const ComposerView = ({
   const readImage = (file: File): void => {
     const reader = new FileReader();
     reader.addEventListener("load", () => {
-      const result = String(reader.result);
+      if (typeof reader.result !== "string") {
+        return;
+      }
+      const { result } = reader;
       setImages((current) => [
         ...current,
         {
@@ -300,7 +306,9 @@ const ComposerView = ({
   return (
     <footer>
       {copyNotice ? (
-        <Toast key={copyNotice} message="copied to clipboard" />
+        <div className="toast" role="status" key={copyNotice}>
+          copied to clipboard
+        </div>
       ) : null}
       <textarea
         id="composer"
@@ -372,11 +380,11 @@ const ComposerView = ({
               className="icon"
               title="Remove pasted image"
               aria-label="Remove pasted image"
-              onClick={() =>
+              onClick={() => {
                 setImages((current) =>
                   current.filter((candidate) => candidate !== image)
-                )
-              }
+                );
+              }}
             >
               ×
             </button>
@@ -384,11 +392,17 @@ const ComposerView = ({
         ))}
       </div>
       <FooterControls
-        onNewThread={newThread}
-        onSend={() => (running ? postMessage({ type: "cancel" }) : send())}
+        historyItems={historyItems}
+        onJumpMessage={onJumpMessage}
+        onSend={() => {
+          if (running) {
+            postMessage({ type: "cancel" });
+          } else {
+            send();
+          }
+        }}
         selected={selected}
         setup={setup}
-        workspace={workspace}
       />
     </footer>
   );

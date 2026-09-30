@@ -1,7 +1,6 @@
-import type {
-  ElicitationField,
-  ThreadInteraction,
-} from "../../../threads/threads";
+import { isNonEmpty } from "../../../present";
+import type { ElicitationField } from "../../../threads/model";
+import type { ThreadInteraction } from "../../../threads/threads/models";
 import { postMessage } from "../../bridge";
 import { SvgIcon } from "../../icon";
 
@@ -31,7 +30,7 @@ const FieldDescription = ({
 }: {
   children?: string;
 }): React.JSX.Element | null =>
-  children ? (
+  isNonEmpty(children) ? (
     <span className="interaction-field-description">{children}</span>
   ) : null;
 
@@ -180,18 +179,22 @@ export const Interaction = ({
             <ActionButton
               primary={item.kind.startsWith("allow")}
               key={item.id}
-              onClick={() =>
+              onClick={() => {
                 postMessage({
                   id: interaction.id,
                   response: { action: "select", optionId: item.id },
                   type: "respond",
-                })
-              }
+                });
+              }}
             >
               {item.name}
             </ActionButton>
           ))}
-          <ActionButton onClick={() => cancel(interaction.id)}>
+          <ActionButton
+            onClick={() => {
+              cancel(interaction.id);
+            }}
+          >
             Cancel
           </ActionButton>
         </div>
@@ -201,7 +204,9 @@ export const Interaction = ({
   return (
     <div id="interaction">
       <Question>{interaction.message}</Question>
-      {interaction.context ? <Context>{interaction.context}</Context> : null}
+      {isNonEmpty(interaction.context) ? (
+        <Context>{interaction.context}</Context>
+      ) : null}
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -222,7 +227,11 @@ export const Interaction = ({
           <ActionButton primary type="submit">
             Submit
           </ActionButton>
-          <ActionButton onClick={() => cancel(interaction.id)}>
+          <ActionButton
+            onClick={() => {
+              cancel(interaction.id);
+            }}
+          >
             Cancel
           </ActionButton>
         </div>

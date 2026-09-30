@@ -1,9 +1,9 @@
-import { execFile } from "node:child_process";
 import { mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 
-const exec = promisify(execFile);
+import { exec } from "../exec";
+import { isNonEmpty } from "../present";
+
 const ISSUE_REPOSITORY_KEY = "mischief.githubIssueRepo";
 
 export interface GitProject {
@@ -29,9 +29,7 @@ export interface GitSourceBranch {
 }
 
 const run = async (cwd: string, ...args: string[]): Promise<string> => {
-  const { stdout } = await exec("git", ["-C", cwd, ...args], {
-    encoding: "utf-8",
-  });
+  const { stdout } = await exec("git", ["-C", cwd, ...args]);
   return stdout.trim();
 };
 
@@ -54,7 +52,7 @@ export const getGitHubIssueRepository = async (
   ).catch(() => "");
   if (configured) {
     const repository = normalizeGitHubRepository(configured);
-    if (!repository) {
+    if (!isNonEmpty(repository)) {
       throw new Error(
         `Git config ${ISSUE_REPOSITORY_KEY} must be an owner/repo`
       );
@@ -75,7 +73,7 @@ export const getGitHubIssueRepository = async (
     /[/:](?<repository>[^/:\s]+\/[^/\s]+?)(?:\.git)?\/?$/u.exec(remote)?.groups
       ?.repository ?? ""
   );
-  if (!repository) {
+  if (!isNonEmpty(repository)) {
     throw new Error(
       "Could not determine the Project's main GitHub repository from origin"
     );
@@ -168,9 +166,9 @@ export const createGitWorkspace = async (
     "-b",
     branch,
     workspace,
-    ...(sourceRef ? [sourceRef] : [])
+    ...(isNonEmpty(sourceRef) ? [sourceRef] : [])
   );
-  return realpath(workspace);
+  return await realpath(workspace);
 };
 
 const parseWorktrees = (output: string): { path: string; branch?: string }[] =>
@@ -183,8 +181,8 @@ const parseWorktrees = (output: string): { path: string; branch?: string }[] =>
       .find((line) => line.startsWith("branch "))
       ?.slice(7)
       .replace(/^refs\/heads\//u, "");
-    return workspacePath
-      ? [{ path: workspacePath, ...(branch ? { branch } : {}) }]
+    return isNonEmpty(workspacePath)
+      ? [{ path: workspacePath, ...(isNonEmpty(branch) ? { branch } : {}) }]
       : [];
   });
 

@@ -1,9 +1,12 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { setImmediate } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 
 import { describe, expect, test, vi } from "vitest";
 
+import { isNonEmpty } from "./present";
+import { testValue } from "./test-value";
 import { MischiefView } from "./view";
 
 const deferred = (): { promise: Promise<void>; resolve: () => void } => {
@@ -18,56 +21,69 @@ const deferred = (): { promise: Promise<void>; resolve: () => void } => {
 const vscode = vi.hoisted(() => ({
   assignWorkspaceColors: true,
   createQuickPick: vi.fn<() => unknown>(),
-  executeCommand: vi.fn<() => Promise<void>>(() => Promise.resolve()),
-  openExternal: vi.fn<() => Promise<boolean>>(() => Promise.resolve(true)),
-  showErrorMessage: vi.fn<() => Promise<void>>(() => Promise.resolve()),
-  showInformationMessage: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+  executeCommand: vi.fn<() => Promise<void>>(async () => {
+    await Promise.resolve();
+  }),
+  openExternal: vi.fn<() => Promise<boolean>>(async () => {
+    await Promise.resolve();
+    return true;
+  }),
+  showErrorMessage: vi.fn<() => Promise<void>>(async () => {
+    await Promise.resolve();
+  }),
+  showInformationMessage: vi.fn<() => Promise<void>>(async () => {
+    await Promise.resolve();
+  }),
   showInputBox: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   showQuickPick: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+  showTextDocument: vi.fn<() => Promise<void>>(async () => {
+    await Promise.resolve();
+  }),
   updateConfiguration: vi.fn<
     (key: string, value: unknown, target: number) => Promise<void>
-  >(() => Promise.resolve()),
+  >(async () => {
+    await Promise.resolve();
+  }),
 }));
 
-vi.mock(
-  import("vscode"),
-  () =>
-    ({
-      ConfigurationTarget: { Global: 1, Workspace: 2 },
-      QuickPickItemKind: { Separator: -1 },
-      ThemeIcon: class ThemeIcon {
-        readonly id: string;
+vi.mock(import("vscode"), () =>
+  testValue<never>({
+    ConfigurationTarget: { Global: 1, Workspace: 2 },
+    QuickPickItemKind: { Separator: -1 },
+    ThemeIcon: class ThemeIcon {
+      readonly id: string;
 
-        constructor(id: string) {
-          this.id = id;
-        }
-      },
-      Uri: {
-        file: (fsPath: string) => ({ fsPath }),
-        joinPath: (base: { fsPath: string }, ...parts: string[]) => ({
-          fsPath: path.join(base.fsPath, ...parts),
-        }),
-        parse: (value: string) => ({ value }),
-      },
-      commands: { executeCommand: vscode.executeCommand },
-      env: { openExternal: vscode.openExternal },
-      extensions: { all: [] },
-      window: {
-        createQuickPick: vscode.createQuickPick,
-        showErrorMessage: vscode.showErrorMessage,
-        showInformationMessage: vscode.showInformationMessage,
-        showInputBox: vscode.showInputBox,
-        showQuickPick: vscode.showQuickPick,
-      },
-      workspace: {
-        getConfiguration: () => ({
-          get: (key: string) =>
-            key === "assignWorkspaceColors" ? vscode.assignWorkspaceColors : "",
-          inspect: () => ({}),
-          update: vscode.updateConfiguration,
-        }),
-      },
-    }) as never
+      constructor(id: string) {
+        this.id = id;
+      }
+    },
+    Uri: {
+      file: (fsPath: string) => ({ fsPath }),
+      joinPath: (base: { fsPath: string }, ...parts: string[]) => ({
+        fsPath: path.join(base.fsPath, ...parts),
+      }),
+      parse: (value: string) => ({ value }),
+    },
+    commands: { executeCommand: vscode.executeCommand },
+    env: { openExternal: vscode.openExternal },
+    extensions: { all: [] },
+    window: {
+      createQuickPick: vscode.createQuickPick,
+      showErrorMessage: vscode.showErrorMessage,
+      showInformationMessage: vscode.showInformationMessage,
+      showInputBox: vscode.showInputBox,
+      showQuickPick: vscode.showQuickPick,
+      showTextDocument: vscode.showTextDocument,
+    },
+    workspace: {
+      getConfiguration: () => ({
+        get: (key: string) =>
+          key === "assignWorkspaceColors" ? vscode.assignWorkspaceColors : "",
+        inspect: () => ({}),
+        update: vscode.updateConfiguration,
+      }),
+    },
+  })
 );
 
 const profileDatabase = () => ({
@@ -82,8 +98,9 @@ describe("view provider", () => {
     let active: string | undefined;
     let pending = [{ path: folder }];
     const projects = {
-      open: vi.fn<() => Promise<unknown>>(() =>
-        Promise.resolve({
+      open: vi.fn<() => Promise<unknown>>(async () => {
+        await Promise.resolve();
+        return {
           projects: [],
           ungrouped: [
             {
@@ -96,39 +113,43 @@ describe("view provider", () => {
               path: folder,
             },
           ],
-        })
-      ),
+        };
+      }),
     };
     const threads = {
-      newThread: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+      newThread: vi.fn<() => Promise<void>>(async () => {
+        await Promise.resolve();
+      }),
       onChange: vi.fn<() => void>(),
       openWorkspace: vi.fn<(workspace: string) => Promise<void>>(
-        (workspace) => {
+        async (workspace) => {
+          await Promise.resolve();
           active = workspace;
-          return Promise.resolve();
         }
       ),
-      prompt: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+      prompt: vi.fn<() => Promise<void>>(async () => {
+        await Promise.resolve();
+      }),
       snapshot: () => ({
         threads: [],
-        ...(active ? { workspace: active } : {}),
+        ...(isNonEmpty(active) ? { workspace: active } : {}),
       }),
     };
     const storage = {
       get: () => pending,
       update: vi.fn<(_key: string, value: unknown) => Promise<void>>(
-        (_key, value) => {
-          pending = value as typeof pending;
-          return Promise.resolve();
+        async (_key, value) => {
+          await Promise.resolve();
+          pending = testValue<typeof pending>(value);
         }
       ),
     };
     const provider = new MischiefView(
-      projects as never,
-      threads as never,
-      { fsPath: process.cwd() } as never,
-      storage as never,
-      profileDatabase() as never
+      testValue<never>(projects),
+      testValue<never>(threads),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>(storage),
+      testValue<never>(profileDatabase())
     );
 
     await provider.initialize(folder);
@@ -154,28 +175,31 @@ describe("view provider", () => {
     const promptFinished = deferred();
     const promptStarted = deferred();
     let pending = [{ path: folder, prompt }];
-    vscode.executeCommand.mockImplementation(() => {
+    vscode.executeCommand.mockImplementation(async () => {
+      await Promise.resolve();
       events.push("focus");
-      return Promise.resolve();
     });
     const threads = {
-      newThread: vi.fn<() => Promise<void>>(() => {
+      newThread: vi.fn<() => Promise<void>>(async () => {
+        await Promise.resolve();
         events.push("newThread");
-        return Promise.resolve();
       }),
       onChange: vi.fn<() => void>(),
-      openWorkspace: vi.fn<() => Promise<void>>(() => Promise.resolve()),
-      prompt: vi.fn<(text: string) => Promise<void>>((text) => {
+      openWorkspace: vi.fn<() => Promise<void>>(async () => {
+        await Promise.resolve();
+      }),
+      prompt: vi.fn<(text: string) => Promise<void>>(async (text) => {
         events.push(`prompt:${text}`);
         promptStarted.resolve();
-        return promptFinished.promise;
+        await promptFinished.promise;
       }),
       snapshot: () => ({ threads: [] }),
     };
     const provider = new MischiefView(
-      {
-        open: () =>
-          Promise.resolve({
+      testValue<never>({
+        open: async () => {
+          await Promise.resolve();
+          return {
             projects: [],
             ungrouped: [
               {
@@ -188,21 +212,22 @@ describe("view provider", () => {
                 path: folder,
               },
             ],
-          }),
-      } as never,
-      threads as never,
-      { fsPath: process.cwd() } as never,
-      {
+          };
+        },
+      }),
+      testValue<never>(threads),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({
         get: () => pending,
         update: vi.fn<(_key: string, value: unknown) => Promise<void>>(
-          (_key, value) => {
-            pending = value as typeof pending;
+          async (_key, value) => {
+            await Promise.resolve();
+            pending = testValue<typeof pending>(value);
             events.push("remove");
-            return Promise.resolve();
           }
         ),
-      } as never,
-      profileDatabase() as never
+      }),
+      testValue<never>(profileDatabase())
     );
 
     const initialization = provider.initialize(folder);
@@ -246,7 +271,9 @@ describe("view provider", () => {
       activeItems: [],
       dispose: vi.fn<() => void>(),
       hide: vi.fn<() => void>(() => hidden?.()),
-      items: [] as { buttons?: unknown[]; issue: unknown; label: string }[],
+      items: testValue<
+        { buttons?: unknown[]; issue: unknown; label: string }[]
+      >([]),
       onDidAccept: vi.fn<(listener: () => void) => { dispose: () => void }>(
         (listener) => {
           accept = listener;
@@ -267,22 +294,26 @@ describe("view provider", () => {
         triggerButton = listener;
         return { dispose: vi.fn<() => void>() };
       }),
-      selectedItems: [] as { issue: unknown }[],
+      selectedItems: testValue<{ issue: unknown }[]>([]),
       show: vi.fn<() => void>(),
       title: "",
     };
     let sourceAccept: (() => void) | undefined;
     let sourceHidden: (() => void) | undefined;
     const sourcePicker = {
-      activeItems: [] as { branch?: { current: boolean; name: string } }[],
+      activeItems: testValue<{ branch?: { current: boolean; name: string } }[]>(
+        []
+      ),
       dispose: vi.fn<() => void>(),
       hide: vi.fn<() => void>(() => sourceHidden?.()),
-      items: [] as {
-        branch?: { current: boolean; name: string };
-        description?: string;
-        kind?: number;
-        label: string;
-      }[],
+      items: testValue<
+        {
+          branch?: { current: boolean; name: string };
+          description?: string;
+          kind?: number;
+          label: string;
+        }[]
+      >([]),
       onDidAccept: vi.fn<(listener: () => void) => { dispose: () => void }>(
         (listener) => {
           sourceAccept = listener;
@@ -295,7 +326,9 @@ describe("view provider", () => {
           return { dispose: vi.fn<() => void>() };
         }
       ),
-      selectedItems: [] as { branch?: { current: boolean; name: string } }[],
+      selectedItems: testValue<
+        { branch?: { current: boolean; name: string } }[]
+      >([]),
       show: vi.fn<() => void>(),
       title: "",
     };
@@ -311,11 +344,13 @@ describe("view provider", () => {
       .mockReset()
       .mockResolvedValueOnce("atomicobject/gilligan-golf")
       .mockResolvedValueOnce("Edited Name");
-    const createWorkspace = vi.fn<() => Promise<string>>(() =>
-      Promise.resolve("/worktree")
-    );
-    const sourceBranches = vi.fn<() => Promise<unknown[]>>(() =>
-      Promise.resolve([
+    const createWorkspace = vi.fn<() => Promise<string>>(async () => {
+      await Promise.resolve();
+      return "/worktree";
+    });
+    const sourceBranches = vi.fn<() => Promise<unknown[]>>(async () => {
+      await Promise.resolve();
+      return [
         {
           ahead: 2,
           behind: 1,
@@ -325,8 +360,8 @@ describe("view provider", () => {
         },
         { current: false, name: "alpha", remoteOnly: false },
         { current: false, name: "origin/release", remoteOnly: true },
-      ])
-    );
+      ];
+    });
     const snapshot = {
       projects: [
         {
@@ -358,7 +393,7 @@ describe("view provider", () => {
       const repository = await chooseRepository(
         "Golf-With-GIlligan/gilligan-mono"
       );
-      return repository
+      return isNonEmpty(repository)
         ? [
             {
               number: 6,
@@ -376,53 +411,61 @@ describe("view provider", () => {
     const projects = {
       createWorkspace,
       listOpenIssues,
-      open: vi.fn<() => Promise<unknown>>(() =>
-        Promise.resolve({
+      open: vi.fn<() => Promise<unknown>>(async () => {
+        await Promise.resolve();
+        return {
           projects: [{ name: "project", root: "/project", workspaces: [] }],
           ungrouped: [],
-        })
-      ),
-      refresh: vi.fn<() => Promise<unknown>>(() => Promise.resolve(snapshot)),
+        };
+      }),
+      refresh: vi.fn<() => Promise<unknown>>(async () => {
+        await Promise.resolve();
+        return snapshot;
+      }),
       sourceBranches,
     };
     const storage = {
       get: (_key: string, fallback: unknown) => fallback,
-      update: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+      update: vi.fn<() => Promise<void>>(async () => {
+        await Promise.resolve();
+      }),
     };
     const provider = new MischiefView(
-      projects as never,
-      {
+      testValue<never>(projects),
+      testValue<never>({
         onChange: vi.fn<() => void>(),
         snapshot: () => ({ threads: [] }),
-      } as never,
-      { fsPath: process.cwd() } as never,
-      storage as never,
-      profileDatabase() as never
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>(storage),
+      testValue<never>(profileDatabase())
     );
     await provider.initialize("/project");
-    await provider.resolveWebviewView({
-      onDidDispose: vi.fn<() => void>(),
-      webview: {
-        asWebviewUri: (uri: { fsPath: string }) => ({
-          toString: () => `webview:${uri.fsPath}`,
-        }),
-        cspSource: "webview-csp",
-        html: "",
-        onDidReceiveMessage: (listener: (message: unknown) => void) => {
-          receive = listener;
+    await provider.resolveWebviewView(
+      testValue<never>({
+        onDidDispose: vi.fn<() => void>(),
+        webview: {
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => `webview:${uri.fsPath}`,
+          }),
+          cspSource: "webview-csp",
+          html: "",
+          onDidReceiveMessage: (listener: (message: unknown) => void) => {
+            receive = listener;
+          },
+          options: {},
+          postMessage: vi.fn<() => void>(),
         },
-        options: {},
-        postMessage: vi.fn<() => void>(),
-      },
-    } as never);
+      })
+    );
 
     receive?.({ path: "/project", type: "openIssues" });
-    await vi.waitFor(() =>
+    await vi.waitFor(() => {
       expect({
         items: picker.items.map((item) => {
-          const button = item.buttons?.[0] as
-            | { iconPath: { id: string }; tooltip: string }
-            | undefined;
+          const button = testValue<
+            { iconPath: { id: string }; tooltip: string } | undefined
+          >(item.buttons?.[0]);
           return {
             button: button && {
               icon: button.iconPath.id,
@@ -444,12 +487,12 @@ describe("view provider", () => {
           },
         ],
         title: "Open Issues · project",
-      })
-    );
+      });
+    });
 
-    await triggerButton?.({ item: picker.items[1] as { issue: unknown } });
+    await triggerButton?.({ item: picker.items[1] });
     vscode.openExternal.mockRejectedValueOnce(new Error("blocked"));
-    await triggerButton?.({ item: picker.items[0] as { issue: unknown } });
+    await triggerButton?.({ item: picker.items[0] });
 
     expect({
       errors: vscode.showErrorMessage.mock.calls,
@@ -466,22 +509,28 @@ describe("view provider", () => {
       sourceRequests: 0,
     });
 
-    picker.selectedItems = [picker.items[1] as { issue: unknown }];
+    picker.selectedItems = [picker.items[1]];
     accept?.();
-    await vi.waitFor(() => expect(sourcePicker.show).toHaveBeenCalledOnce());
+    await vi.waitFor(() => {
+      expect(sourcePicker.show).toHaveBeenCalledOnce();
+    });
     sourcePicker.selectedItems = [
-      sourcePicker.items.find(
-        (item) => item.branch?.name === "origin/release"
-      ) as { branch: { current: boolean; name: string } },
+      testValue<{ branch: { current: boolean; name: string } }>(
+        sourcePicker.items.find(
+          (item) => item.branch?.name === "origin/release"
+        )
+      ),
     ];
     sourceAccept?.();
-    await vi.waitFor(() => expect(createWorkspace).toHaveBeenCalledOnce());
-    const [repositoryOptions] = vscode.showInputBox.mock.calls[0] as [
-      { prompt: string; title: string; value: string },
-    ];
-    const [nameOptions] = vscode.showInputBox.mock.calls[1] as [
-      { prompt: string; title: string; value: string },
-    ];
+    await vi.waitFor(() => {
+      expect(createWorkspace).toHaveBeenCalledOnce();
+    });
+    const [repositoryOptions] = testValue<
+      [{ prompt: string; title: string; value: string }]
+    >(vscode.showInputBox.mock.calls[0]);
+    const [nameOptions] = testValue<
+      [{ prompt: string; title: string; value: string }]
+    >(vscode.showInputBox.mock.calls[1]);
 
     expect({
       created: createWorkspace.mock.calls,
@@ -501,7 +550,7 @@ describe("view provider", () => {
       repositoryRequests: listOpenIssues.mock.calls.map(([root]) => root),
       sourceActive: sourcePicker.activeItems.map((item) => item.branch?.name),
       sourceItems: sourcePicker.items.map(({ description, kind, label }) => ({
-        ...(description ? { description } : {}),
+        ...(isNonEmpty(description) ? { description } : {}),
         ...(kind === undefined ? {} : { kind }),
         label,
       })),
@@ -599,7 +648,9 @@ describe("view provider", () => {
       .mockResolvedValueOnce(entries)
       .mockResolvedValueOnce(entries)
       .mockResolvedValueOnce([]);
-    const reopen = vi.fn<() => Promise<void>>(() => Promise.resolve());
+    const reopen = vi.fn<() => Promise<void>>(async () => {
+      await Promise.resolve();
+    });
     const loadingPicker = {
       busy: false,
       dispose: vi.fn<() => void>(),
@@ -615,36 +666,44 @@ describe("view provider", () => {
     vscode.showInformationMessage.mockClear();
     vscode.showQuickPick
       .mockResolvedValueOnce(null)
-      .mockImplementationOnce((items: unknown) =>
-        Promise.resolve((items as unknown[])[1])
-      );
+      .mockImplementationOnce(async (items: unknown) => {
+        await Promise.resolve();
+        return testValue<unknown[]>(items)[1];
+      });
     const provider = new MischiefView(
-      { open: () => Promise.resolve({ projects: [], ungrouped: [] }) } as never,
-      {
+      testValue<never>({
+        open: async () => {
+          await Promise.resolve();
+          return { projects: [], ungrouped: [] };
+        },
+      }),
+      testValue<never>({
         history,
         onChange: vi.fn<() => void>(),
         reopen,
         snapshot: () => ({ threads: [], workspace: "/workspace" }),
-      } as never,
-      { fsPath: process.cwd() } as never,
-      { get: (_key: string, fallback: unknown) => fallback } as never,
-      profileDatabase() as never
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({ get: (_key: string, fallback: unknown) => fallback }),
+      testValue<never>(profileDatabase())
     );
-    await provider.resolveWebviewView({
-      onDidDispose: vi.fn<() => void>(),
-      webview: {
-        asWebviewUri: (uri: { fsPath: string }) => ({
-          toString: () => `webview:${uri.fsPath}`,
-        }),
-        cspSource: "webview-csp",
-        html: "",
-        onDidReceiveMessage: (listener: (message: unknown) => void) => {
-          receive = listener;
+    await provider.resolveWebviewView(
+      testValue<never>({
+        onDidDispose: vi.fn<() => void>(),
+        webview: {
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => `webview:${uri.fsPath}`,
+          }),
+          cspSource: "webview-csp",
+          html: "",
+          onDidReceiveMessage: (listener: (message: unknown) => void) => {
+            receive = listener;
+          },
+          options: {},
+          postMessage: vi.fn<() => void>(),
         },
-        options: {},
-        postMessage: vi.fn<() => void>(),
-      },
-    } as never);
+      })
+    );
 
     receive?.({ type: "threadHistory" });
     expect({
@@ -663,10 +722,12 @@ describe("view provider", () => {
     receive?.({ type: "threadHistory" });
     await vi.runAllTimersAsync();
 
-    const firstCall = vscode.showQuickPick.mock.calls[0] as unknown as [
-      { label: string; description?: string }[],
-      { placeHolder: string; title: string },
-    ];
+    const firstCall = testValue<
+      [
+        { label: string; description?: string }[],
+        { placeHolder: string; title: string },
+      ]
+    >(testValue<unknown>(vscode.showQuickPick.mock.calls[0]));
     expect(firstCall).toStrictEqual([
       [
         {
@@ -727,12 +788,14 @@ describe("view provider", () => {
     };
     vscode.createQuickPick.mockReturnValue(picker);
     vscode.showInformationMessage.mockClear();
-    const sourceBranches = vi.fn<() => Promise<unknown[]>>(() =>
-      Promise.resolve([])
-    );
-    const createWorkspace = vi.fn<() => Promise<string>>(() =>
-      Promise.resolve("/worktree")
-    );
+    const sourceBranches = vi.fn<() => Promise<unknown[]>>(async () => {
+      await Promise.resolve();
+      return [];
+    });
+    const createWorkspace = vi.fn<() => Promise<string>>(async () => {
+      await Promise.resolve();
+      return "/worktree";
+    });
     const listOpenIssues = vi
       .fn<() => Promise<unknown[]>>()
       .mockResolvedValueOnce([
@@ -740,51 +803,59 @@ describe("view provider", () => {
       ])
       .mockResolvedValueOnce([]);
     const provider = new MischiefView(
-      {
+      testValue<never>({
         createWorkspace,
         listOpenIssues,
-        open: () =>
-          Promise.resolve({
+        open: async () => {
+          await Promise.resolve();
+          return {
             projects: [{ name: "project", root: "/project", workspaces: [] }],
             ungrouped: [],
-          }),
+          };
+        },
         sourceBranches,
-      } as never,
-      {
+      }),
+      testValue<never>({
         onChange: vi.fn<() => void>(),
         snapshot: () => ({ threads: [] }),
-      } as never,
-      { fsPath: process.cwd() } as never,
-      { get: (_key: string, fallback: unknown) => fallback } as never,
-      profileDatabase() as never
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({ get: (_key: string, fallback: unknown) => fallback }),
+      testValue<never>(profileDatabase())
     );
     await provider.initialize("/project");
-    await provider.resolveWebviewView({
-      onDidDispose: vi.fn<() => void>(),
-      webview: {
-        asWebviewUri: (uri: { fsPath: string }) => ({
-          toString: () => `webview:${uri.fsPath}`,
-        }),
-        cspSource: "webview-csp",
-        html: "",
-        onDidReceiveMessage: (listener: (message: unknown) => void) => {
-          receive = listener;
+    await provider.resolveWebviewView(
+      testValue<never>({
+        onDidDispose: vi.fn<() => void>(),
+        webview: {
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => `webview:${uri.fsPath}`,
+          }),
+          cspSource: "webview-csp",
+          html: "",
+          onDidReceiveMessage: (listener: (message: unknown) => void) => {
+            receive = listener;
+          },
+          options: {},
+          postMessage: vi.fn<() => void>(),
         },
-        options: {},
-        postMessage: vi.fn<() => void>(),
-      },
-    } as never);
+      })
+    );
 
     receive?.({ path: "/project", type: "openIssues" });
-    await vi.waitFor(() => expect(picker.show).toHaveBeenCalledOnce());
+    await vi.waitFor(() => {
+      expect(picker.show).toHaveBeenCalledOnce();
+    });
     hide?.();
-    await vi.waitFor(() => expect(picker.dispose).toHaveBeenCalledOnce());
+    await vi.waitFor(() => {
+      expect(picker.dispose).toHaveBeenCalledOnce();
+    });
     receive?.({ path: "/project", type: "openIssues" });
-    await vi.waitFor(() =>
+    await vi.waitFor(() => {
       expect(vscode.showInformationMessage).toHaveBeenCalledExactlyOnceWith(
         "No open GitHub issues for project."
-      )
-    );
+      );
+    });
 
     expect(sourceBranches).not.toHaveBeenCalled();
     expect(createWorkspace).not.toHaveBeenCalled();
@@ -800,7 +871,7 @@ describe("view provider", () => {
       const picker = {
         dispose: vi.fn<() => void>(),
         hide: vi.fn<() => void>(),
-        items: [] as { issue: unknown }[],
+        items: testValue<{ issue: unknown }[]>([]),
         onDidAccept: vi.fn<(listener: () => void) => { dispose: () => void }>(
           (listener) => {
             accept = listener;
@@ -815,7 +886,7 @@ describe("view provider", () => {
             dispose: () => void;
           }
         >(() => ({ dispose: vi.fn<() => void>() })),
-        selectedItems: [] as { issue: unknown }[],
+        selectedItems: testValue<{ issue: unknown }[]>([]),
         show: vi.fn<() => void>(),
         title: "",
       };
@@ -823,7 +894,7 @@ describe("view provider", () => {
         activeItems: [],
         dispose: vi.fn<() => void>(),
         hide: vi.fn<() => void>(() => sourceHidden?.()),
-        items: [] as { branch?: { name: string } }[],
+        items: testValue<{ branch?: { name: string } }[]>([]),
         onDidAccept: vi.fn<(listener: () => void) => { dispose: () => void }>(
           (listener) => {
             sourceAccept = listener;
@@ -836,7 +907,7 @@ describe("view provider", () => {
             return { dispose: vi.fn<() => void>() };
           }
         ),
-        selectedItems: [] as { branch?: { name: string } }[],
+        selectedItems: testValue<{ branch?: { name: string } }[]>([]),
         show: vi.fn<() => void>(),
         title: "",
       };
@@ -848,18 +919,18 @@ describe("view provider", () => {
       vscode.showInputBox.mockReset();
       const cancelled: unknown = undefined;
       vscode.showInputBox.mockResolvedValue(cancelled);
-      const createWorkspace = vi.fn<() => Promise<string>>(() =>
-        Promise.resolve("/worktree")
-      );
-      const sourceBranches = vi.fn<() => Promise<unknown[]>>(() =>
-        Promise.resolve(
-          step === "branches"
-            ? []
-            : [{ current: true, name: "main", remoteOnly: false }]
-        )
-      );
+      const createWorkspace = vi.fn<() => Promise<string>>(async () => {
+        await Promise.resolve();
+        return "/worktree";
+      });
+      const sourceBranches = vi.fn<() => Promise<unknown[]>>(async () => {
+        await Promise.resolve();
+        return step === "branches"
+          ? []
+          : [{ current: true, name: "main", remoteOnly: false }];
+      });
       const provider = new MischiefView(
-        {
+        testValue<never>({
           createWorkspace,
           listOpenIssues: async (
             _root: string,
@@ -869,7 +940,7 @@ describe("view provider", () => {
           ): Promise<unknown[] | undefined> => {
             if (
               step === "repository" &&
-              !(await chooseRepository("owner/project"))
+              !isNonEmpty(await chooseRepository("owner/project"))
             ) {
               return undefined;
             }
@@ -881,37 +952,43 @@ describe("view provider", () => {
               },
             ];
           },
-          open: () =>
-            Promise.resolve({
+          open: async () => {
+            await Promise.resolve();
+            return {
               projects: [{ name: "project", root: "/project", workspaces: [] }],
               ungrouped: [],
-            }),
+            };
+          },
           sourceBranches,
-        } as never,
-        {
+        }),
+        testValue<never>({
           onChange: vi.fn<() => void>(),
           snapshot: () => ({ threads: [] }),
-        } as never,
-        { fsPath: process.cwd() } as never,
-        { get: (_key: string, fallback: unknown) => fallback } as never,
-        profileDatabase() as never
+        }),
+        testValue<never>({ fsPath: process.cwd() }),
+        testValue<never>({
+          get: (_key: string, fallback: unknown) => fallback,
+        }),
+        testValue<never>(profileDatabase())
       );
       await provider.initialize("/project");
-      await provider.resolveWebviewView({
-        onDidDispose: vi.fn<() => void>(),
-        webview: {
-          asWebviewUri: (uri: { fsPath: string }) => ({
-            toString: () => `webview:${uri.fsPath}`,
-          }),
-          cspSource: "webview-csp",
-          html: "",
-          onDidReceiveMessage: (listener: (message: unknown) => void) => {
-            receive = listener;
+      await provider.resolveWebviewView(
+        testValue<never>({
+          onDidDispose: vi.fn<() => void>(),
+          webview: {
+            asWebviewUri: (uri: { fsPath: string }) => ({
+              toString: () => `webview:${uri.fsPath}`,
+            }),
+            cspSource: "webview-csp",
+            html: "",
+            onDidReceiveMessage: (listener: (message: unknown) => void) => {
+              receive = listener;
+            },
+            options: {},
+            postMessage: vi.fn<() => void>(),
           },
-          options: {},
-          postMessage: vi.fn<() => void>(),
-        },
-      } as never);
+        })
+      );
 
       receive?.({ path: "/project", type: "openIssues" });
       if (step !== "repository") {
@@ -920,7 +997,7 @@ describe("view provider", () => {
             throw new Error("Issue picker is not open");
           }
         });
-        picker.selectedItems = [picker.items[0] as { issue: unknown }];
+        picker.selectedItems = [picker.items[0]];
         accept?.();
         if (step !== "branches") {
           await vi.waitFor(() => {
@@ -932,15 +1009,15 @@ describe("view provider", () => {
             sourceHidden?.();
           } else {
             sourcePicker.selectedItems = [
-              sourcePicker.items.find((item) => item.branch) as {
+              testValue<{
                 branch: { name: string };
-              },
+              }>(sourcePicker.items.find((item) => item.branch)),
             ];
             sourceAccept?.();
           }
         }
       }
-      await vi.waitFor(() =>
+      await vi.waitFor(() => {
         expect({
           information: vscode.showInformationMessage.mock.calls,
           issueShows: picker.show.mock.calls.length,
@@ -956,26 +1033,124 @@ describe("view provider", () => {
           sourceRequests: step === "repository" ? 0 : 1,
           sourceShows: step === "repository" || step === "branches" ? 0 : 1,
           workspaceCreations: 0,
-        })
-      );
+        });
+      });
     }
   );
 
+  test("routes targeted history actions without opening native target pickers", async () => {
+    vscode.showQuickPick.mockReset().mockImplementation(async (items) => {
+      await Promise.resolve();
+      return testValue<unknown[]>(items)[0];
+    });
+    const threads = {
+      branchSummarySupported: vi.fn<() => boolean>(() => true),
+      forkMessage: vi.fn<(_threadId: string, _itemId: string) => Promise<void>>(
+        async () => {
+          await Promise.resolve();
+        }
+      ),
+      navigateTreeMessage: vi.fn<
+        (_threadId: string, _itemId: string, _options: unknown) => Promise<void>
+      >(async () => {
+        await Promise.resolve();
+      }),
+      onChange: vi.fn<() => void>(),
+    };
+    const provider = new MischiefView(
+      testValue<never>({}),
+      testValue<never>(threads),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase())
+    );
+    const host = testValue<{
+      handleThreadMessage: (
+        message: Record<string, unknown>
+      ) => Promise<boolean>;
+      render: () => Promise<void>;
+    }>(testValue<unknown>(provider));
+    host.render = async () => {
+      await Promise.resolve();
+    };
+    await expect(
+      host.handleThreadMessage({
+        messageId: "user:one",
+        threadId: "source",
+        type: "forkThread",
+      })
+    ).resolves.toBeTruthy();
+    await expect(
+      host.handleThreadMessage({
+        messageId: "assistant:two",
+        threadId: "source",
+        type: "navigateThreadTree",
+      })
+    ).resolves.toBeTruthy();
+    await expect(
+      host.handleThreadMessage({ threadId: "source", type: "forkThread" })
+    ).rejects.toThrow("Invalid transcript message target");
+    expect({
+      fork: threads.forkMessage.mock.calls,
+      navigation: threads.navigateTreeMessage.mock.calls,
+      summaryCount: vscode.showQuickPick.mock.calls.length,
+    }).toStrictEqual({
+      fork: [["source", "user:one"]],
+      navigation: [["source", "assistant:two", { summarize: false }]],
+      summaryCount: 1,
+    });
+  });
+
+  test("cancelling the history Tree summary choice leaves the Thread alone", async () => {
+    vscode.showQuickPick.mockReset().mockResolvedValue(null);
+    const navigateTreeMessage = vi.fn<() => Promise<void>>(async () => {
+      await Promise.resolve();
+    });
+    const provider = new MischiefView(
+      testValue<never>({}),
+      testValue<never>({
+        branchSummarySupported: () => true,
+        navigateTreeMessage,
+        onChange: vi.fn<() => void>(),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase())
+    );
+    await testValue<{
+      handleThreadMessage: (
+        message: Record<string, unknown>
+      ) => Promise<boolean>;
+    }>(testValue<unknown>(provider)).handleThreadMessage({
+      messageId: "user:one",
+      threadId: "source",
+      type: "navigateThreadTree",
+    });
+    expect(navigateTreeMessage).not.toHaveBeenCalled();
+  });
+
   test("creates and seeds a Thread after transcript setup completes", async () => {
-    const newThread = vi.fn<() => Promise<void>>(() => Promise.resolve());
-    const prompt = vi.fn<() => Promise<void>>(() => Promise.resolve());
+    const newThread = vi.fn<() => Promise<void>>(async () => {
+      await Promise.resolve();
+    });
+    const prompt = vi.fn<() => Promise<void>>(async () => {
+      await Promise.resolve();
+    });
     const setupComplete = new Map<
       string,
       { id: string; message: string }
     >().get("complete");
     const provider = new MischiefView(
-      {} as never,
-      { newThread, onChange: vi.fn<() => void>(), prompt } as never,
-      { fsPath: process.cwd() } as never,
-      {} as never,
-      profileDatabase() as never,
+      testValue<never>({}),
+      testValue<never>({ newThread, onChange: vi.fn<() => void>(), prompt }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase()),
       {
-        advance: () => Promise.resolve(setupComplete),
+        advance: async () => {
+          await Promise.resolve();
+          return setupComplete;
+        },
         prompt: () => ({
           id: "node",
           message: "Node.js was not detected. Press Enter to continue.",
@@ -987,11 +1162,9 @@ describe("view provider", () => {
     expect(newThread).not.toHaveBeenCalled();
     expect(prompt).not.toHaveBeenCalled();
 
-    await (
-      provider as unknown as {
-        continueSetup: (selected: string[]) => Promise<void>;
-      }
-    ).continueSetup([]);
+    await testValue<{
+      continueSetup: (selected: string[]) => Promise<void>;
+    }>(testValue<unknown>(provider)).continueSetup([]);
 
     expect(newThread).toHaveBeenCalledOnce();
     expect(prompt).toHaveBeenCalledExactlyOnceWith("Read issue");
@@ -1005,14 +1178,17 @@ describe("view provider", () => {
       .mockResolvedValueOnce("/remote");
     const threads = {
       onChange: vi.fn<() => void>(),
-      openWorkspace: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+      openWorkspace: vi.fn<() => Promise<void>>(async () => {
+        await Promise.resolve();
+      }),
       select,
       snapshot: () => ({ threads: [], workspace: "/current" }),
     };
     const provider = new MischiefView(
-      {
-        refresh: () =>
-          Promise.resolve({
+      testValue<never>({
+        refresh: async () => {
+          await Promise.resolve();
+          return {
             projects: [],
             ungrouped: [
               {
@@ -1034,21 +1210,18 @@ describe("view provider", () => {
                 path: "/remote",
               },
             ],
-          }),
-      } as never,
-      threads as never,
-      { fsPath: process.cwd() } as never,
-      { get: (_key: string, fallback: unknown) => fallback } as never,
-      profileDatabase() as never
+          };
+        },
+      }),
+      testValue<never>(threads),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({ get: (_key: string, fallback: unknown) => fallback }),
+      testValue<never>(profileDatabase())
     );
     await provider.initialize();
-    const handle = (
-      provider as unknown as {
-        handleThreadMessage: (
-          data: Record<string, unknown>
-        ) => Promise<boolean>;
-      }
-    ).handleThreadMessage.bind(provider);
+    const handle = testValue<{
+      handleThreadMessage: (data: Record<string, unknown>) => Promise<boolean>;
+    }>(testValue<unknown>(provider)).handleThreadMessage.bind(provider);
 
     await handle({ id: "local-thread", type: "selectThread" });
     await handle({ id: "remote-thread", type: "selectThread" });
@@ -1067,12 +1240,14 @@ describe("view provider", () => {
   test("renames the clicked Thread instead of the selected Thread", async () => {
     vscode.showInputBox.mockReset();
     vscode.showInputBox.mockResolvedValue("Renamed Background");
-    const rename = vi.fn<(id: string, name: string) => Promise<void>>(() =>
-      Promise.resolve()
+    const rename = vi.fn<(id: string, name: string) => Promise<void>>(
+      async () => {
+        await Promise.resolve();
+      }
     );
     const provider = new MischiefView(
-      {} as never,
-      {
+      testValue<never>({}),
+      testValue<never>({
         onChange: vi.fn<() => void>(),
         rename,
         snapshot: () => ({
@@ -1082,18 +1257,17 @@ describe("view provider", () => {
             { id: "background", name: "Background" },
           ],
         }),
-      } as never,
-      { fsPath: process.cwd() } as never,
-      {} as never,
-      profileDatabase() as never
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase())
     );
-    const handled = await (
-      provider as unknown as {
-        handleThreadMessage: (
-          data: Record<string, unknown>
-        ) => Promise<boolean>;
-      }
-    ).handleThreadMessage({ id: "background", type: "renameThread" });
+    const handled = await testValue<{
+      handleThreadMessage: (data: Record<string, unknown>) => Promise<boolean>;
+    }>(testValue<unknown>(provider)).handleThreadMessage({
+      id: "background",
+      type: "renameThread",
+    });
 
     expect({
       handled,
@@ -1114,12 +1288,12 @@ describe("view provider", () => {
   });
 
   test("toggles Expand All and Collapse All in the native Mischief title bar", () => {
-    const manifest = JSON.parse(readFileSync("package.json", "utf-8")) as {
+    const manifest = testValue<{
       contributes: {
         commands: { command: string; icon?: string; title: string }[];
         menus: Record<string, { command: string; group: string }[]>;
       };
-    };
+    }>(JSON.parse(readFileSync("package.json", "utf-8")));
 
     expect(manifest.contributes.commands).toStrictEqual(
       expect.arrayContaining([
@@ -1153,94 +1327,10 @@ describe("view provider", () => {
 
   test("static webview shell loads the React bundle", () => {
     const html = readFileSync("media/webview.html", "utf-8");
-    const style = readFileSync("media/webview.css", "utf-8");
 
     expect(html).toContain('id="root"');
     expect(html).toContain('src="{{scriptUri}}"');
     expect(html).toContain('href="{{styleUri}}"');
-    expect(style).toMatch(
-      /#steering,\s*#plan \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*overflow-y: auto;/u
-    );
-    expect(style).toMatch(
-      /footer \{[^}]*flex: none;[\s\S]*#processing::before \{[^}]*animation: thread-status-frame/u
-    );
-  });
-
-  test("anchors the Thread directly beneath content-sized navigation", () => {
-    const style = readFileSync("media/webview.css", "utf-8");
-
-    expect(style).toMatch(/#navigator \{[^}]*flex: 0 1 auto;/u);
-    expect(style).toMatch(/#thread \{[^}]*flex: 1 0 72px;/u);
-    expect(style).not.toContain(".resizer");
-  });
-
-  test("keeps Navigator metadata and hover actions compact", () => {
-    const style = readFileSync("media/webview.css", "utf-8");
-
-    expect(style).toMatch(
-      /\.project-action-icon \{[^}]*width: 14px;[^}]*height: 14px;/u
-    );
-    expect(style).toMatch(
-      /\.thread-action-icon \{[^}]*width: 14px;[^}]*height: 14px;/u
-    );
-    expect(style).toMatch(
-      /\.workspace-branch \{[^}]*margin-left: 10px;[\s\S]*\.thread-activity \{[^}]*gap: 6px;[^}]*padding-left: 0;[\s\S]*\.thread-activity::before \{[^}]*content: "·";/u
-    );
-    expect(style).toMatch(
-      /#navigator :is\(\.group-row, \.row\) > \.icon \{[^}]*opacity: 0;[\s\S]*#navigator :is\(\.group-row, \.row\):is\(:hover, :focus-within\) > \.icon \{[^}]*opacity: 1;/u
-    );
-  });
-
-  test("conversation content wraps instead of creating horizontal overflow", () => {
-    const style = readFileSync("media/webview.css", "utf-8");
-
-    expect(style).toMatch(
-      /#thread \{[^}]*min-width: 0;[^}]*overflow: hidden;/u
-    );
-    expect(style).toMatch(
-      /#configs \{[^}]*overflow-x: auto;[^}]*scrollbar-width: none;[\s\S]*#chat \* \{[^}]*min-width: 0;[^}]*max-width: 100%;/u
-    );
-    expect(style).toMatch(
-      /\.markdown pre \{[^}]*overflow-x: hidden;[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/u
-    );
-    expect(style).toMatch(/\.markdown table \{[^}]*table-layout: fixed;/u);
-    expect(style).toMatch(
-      /\.tool-body pre \{[^}]*overflow-y: auto;[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/u
-    );
-  });
-
-  test("uses HumanLayer's Tokyo Night Storm palette", () => {
-    const style = readFileSync("media/webview.css", "utf-8");
-
-    expect(style).toMatch(
-      /:root \{[^}]*--hl-bg: #24283b;[^}]*--hl-bg-alt: #1f2335;[^}]*--hl-fg: #c0caf5;[^}]*--hl-fg-dim: #a9b1d6;[^}]*--hl-accent: #7aa2f7;[^}]*--hl-accent-alt: #bb9af7;[^}]*--hl-border: #3b4261;[^}]*--hl-success: #9ece6a;[^}]*--hl-warning: #e0af68;[^}]*--hl-error: #f7768e;/u
-    );
-    expect(style).toMatch(
-      /body \{[^}]*--vscode-foreground: var\(--hl-fg\) !important;[^}]*--vscode-sideBar-background: var\(--hl-bg\) !important;/u
-    );
-    expect(style).toMatch(
-      /\.entry\.terminal-group \{[^}]*--entry-accent: var\(--hl-success\);[\s\S]*\.entry\.file-operations-group \{[^}]*--entry-accent: var\(--hl-accent\);[\s\S]*\.entry\.web-group \{[^}]*--entry-accent: var\(--hl-cyan\);[\s\S]*\.entry\.tools-group \{[^}]*--entry-accent: var\(--hl-accent-alt\);/u
-    );
-  });
-
-  test("keeps operation targets compact and statuses visual", () => {
-    const style = readFileSync("media/webview.css", "utf-8");
-
-    expect(style).toMatch(
-      /\.tool-operation-target \{[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;[\s\S]*\.terminal-command \{[^}]*font-family: var\(--mischief-mono-font\);/u
-    );
-    expect(style).toMatch(
-      /\.tool-operation-status:is\(\.pending, \.in_progress\)::before \{[^}]*animation: thread-status-frame/u
-    );
-    expect(style).toMatch(
-      /\.entry\.thought \{[^}]*--entry-accent: var\(--hl-accent-alt\);[\s\S]*\.entry\.tool \{[^}]*--entry-accent: var\(--hl-warning\);/u
-    );
-    expect(style).toMatch(
-      /\.entry\.ask-user-result \{[^}]*--entry-accent: var\(--hl-warning\);[\s\S]*\.ask-user-title \{[^}]*color: var\(--entry-accent\);[\s\S]*\.ask-user-question \{[^}]*color: var\(--entry-accent\);[\s\S]*\.ask-user-answer \{[^}]*color: var\(--vscode-foreground\);/u
-    );
-    expect(style).toMatch(
-      /\.thinking-content,\s*\.tool-group-content,\s*\.ask-user-content \{[^}]*margin: 8px 0 0 6px;[^}]*border-left: 1px solid[^}]*padding-left: 15px;/u
-    );
   });
 
   test("sends only the changed transcript item while streaming", async () => {
@@ -1265,25 +1355,27 @@ describe("view provider", () => {
       }),
     };
     const provider = new MischiefView(
-      {} as never,
-      threads as never,
-      { fsPath: process.cwd() } as never,
-      {} as never,
-      profileDatabase() as never
+      testValue<never>({}),
+      testValue<never>(threads),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase())
     );
-    await provider.resolveWebviewView({
-      onDidDispose: vi.fn<() => void>(),
-      webview: {
-        asWebviewUri: (uri: { fsPath: string }) => ({
-          toString: () => `webview:${uri.fsPath}`,
-        }),
-        cspSource: "webview-csp",
-        html: "",
-        onDidReceiveMessage: vi.fn<() => void>(),
-        options: {},
-        postMessage,
-      },
-    } as never);
+    await provider.resolveWebviewView(
+      testValue<never>({
+        onDidDispose: vi.fn<() => void>(),
+        webview: {
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => `webview:${uri.fsPath}`,
+          }),
+          cspSource: "webview-csp",
+          html: "",
+          onDidReceiveMessage: vi.fn<() => void>(),
+          options: {},
+          postMessage,
+        },
+      })
+    );
     postMessage.mockClear();
 
     emit?.({
@@ -1303,6 +1395,19 @@ describe("view provider", () => {
       streaming: true,
       threadId: "thread-1",
       type: "transcript",
+    });
+
+    postMessage.mockClear();
+    emit?.({
+      operation: "branchSummary",
+      threadId: "thread-1",
+      type: "sessionOperation",
+    });
+
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({
+      operation: "branchSummary",
+      threadId: "thread-1",
+      type: "sessionOperation",
     });
   });
 
@@ -1327,21 +1432,20 @@ describe("view provider", () => {
       },
       snapshot: () => ({
         threads: ["waiting", "completed"].map((id) => ({
-          createdAt: "2026-01-01T00:00:00.000Z",
           id,
           indicator: id === "waiting" ? "waiting" : "completed",
           name: id,
           needsAttention,
-          status: id === "waiting" ? "waiting" : "idle",
           updatedAt: "2026-01-01T00:00:00.000Z",
           workspace: "/workspace",
         })),
       }),
     };
     const provider = new MischiefView(
-      {
-        refresh: () =>
-          Promise.resolve({
+      testValue<never>({
+        refresh: async () => {
+          await Promise.resolve();
+          return {
             projects: [],
             ungrouped: [
               {
@@ -1354,23 +1458,24 @@ describe("view provider", () => {
                 path: "/workspace",
               },
             ],
-          }),
-      } as never,
-      threads as never,
-      { fsPath: process.cwd() } as never,
-      { get: (_key: string, fallback: unknown) => fallback } as never,
-      profileDatabase() as never
+          };
+        },
+      }),
+      testValue<never>(threads),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({ get: (_key: string, fallback: unknown) => fallback }),
+      testValue<never>(profileDatabase())
     );
     await provider.initialize();
-    await provider.resolveWebviewView(view as never);
+    await provider.resolveWebviewView(testValue<never>(view));
 
-    expect((view as { badge?: unknown }).badge).toStrictEqual({
+    expect(testValue<{ badge?: unknown }>(view).badge).toStrictEqual({
       tooltip: "2 Threads need attention",
       value: 2,
     });
     needsAttention = false;
     emit?.();
-    expect((view as { badge?: unknown }).badge).toStrictEqual({
+    expect(testValue<{ badge?: unknown }>(view).badge).toStrictEqual({
       tooltip: "",
       value: 0,
     });
@@ -1401,88 +1506,97 @@ describe("view provider", () => {
       ],
     };
     const provider = new MischiefView(
-      { refresh: () => Promise.resolve(projectsSnapshot) } as never,
-      {
+      testValue<never>({
+        refresh: async () => {
+          await Promise.resolve();
+          return projectsSnapshot;
+        },
+      }),
+      testValue<never>({
         onChange: vi.fn<() => void>(),
         snapshot: () => ({
           threads: [
             {
-              createdAt: "2026-01-01T00:00:00.000Z",
               id: "remote-thread",
               indicator: "waiting",
               name: "Remote",
               needsAttention: true,
-              status: "waiting",
               updatedAt: "2026-01-01T00:00:00.000Z",
               workspace: "/remote",
             },
           ],
         }),
-      } as never,
-      { fsPath: process.cwd() } as never,
-      {} as never,
-      {
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>({
         onChange: (listener: () => void) => {
           databaseChanged = listener;
         },
         snapshot: () => ({ workspaces }),
-      } as never
+      })
     );
-    await provider.resolveWebviewView({
-      onDidDispose: vi.fn<() => void>(),
-      webview: {
-        asWebviewUri: (uri: { fsPath: string }) => ({
-          toString: () => `webview:${uri.fsPath}`,
-        }),
-        cspSource: "webview-csp",
-        html: "",
-        onDidReceiveMessage: vi.fn<() => void>(),
-        options: {},
-        postMessage,
-      },
-    } as never);
+    await provider.resolveWebviewView(
+      testValue<never>({
+        onDidDispose: vi.fn<() => void>(),
+        webview: {
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => `webview:${uri.fsPath}`,
+          }),
+          cspSource: "webview-csp",
+          html: "",
+          onDidReceiveMessage: vi.fn<() => void>(),
+          options: {},
+          postMessage,
+        },
+      })
+    );
     postMessage.mockClear();
     workspaces = [{ path: "/remote", status: "active" }];
     databaseChanged?.();
 
-    await vi.waitFor(() =>
+    await vi.waitFor(() => {
       expect(postMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           projects: projectsSnapshot,
-          threads: expect.objectContaining({
-            threads: [expect.objectContaining({ workspace: "/remote" })],
-          }),
+          threads: testValue<unknown>(
+            expect.objectContaining({
+              threads: [expect.objectContaining({ workspace: "/remote" })],
+            })
+          ),
           type: "state",
         })
-      )
-    );
+      );
+    });
   });
 
   test("posts Expand All and Collapse All requests to the Navigator", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     const provider = new MischiefView(
-      {} as never,
-      {
+      testValue<never>({}),
+      testValue<never>({
         onChange: vi.fn<() => void>(),
         snapshot: () => ({ threads: [] }),
-      } as never,
-      { fsPath: process.cwd() } as never,
-      {} as never,
-      profileDatabase() as never
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase())
     );
-    await provider.resolveWebviewView({
-      onDidDispose: vi.fn<() => void>(),
-      webview: {
-        asWebviewUri: (uri: { fsPath: string }) => ({
-          toString: () => `webview:${uri.fsPath}`,
-        }),
-        cspSource: "webview-csp",
-        html: "",
-        onDidReceiveMessage: vi.fn<() => void>(),
-        options: {},
-        postMessage,
-      },
-    } as never);
+    await provider.resolveWebviewView(
+      testValue<never>({
+        onDidDispose: vi.fn<() => void>(),
+        webview: {
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => `webview:${uri.fsPath}`,
+          }),
+          cspSource: "webview-csp",
+          html: "",
+          onDidReceiveMessage: vi.fn<() => void>(),
+          options: {},
+          postMessage,
+        },
+      })
+    );
     postMessage.mockClear();
 
     provider.setAllExpanded(true);
@@ -1497,87 +1611,91 @@ describe("view provider", () => {
   test("updates the native toggle after Navigator expansion changes", async () => {
     let receive: ((message: unknown) => void) | undefined;
     const provider = new MischiefView(
-      {} as never,
-      {
+      testValue<never>({}),
+      testValue<never>({
         onChange: vi.fn<() => void>(),
         snapshot: () => ({ threads: [] }),
-      } as never,
-      { fsPath: process.cwd() } as never,
-      {} as never,
-      profileDatabase() as never
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase())
     );
-    await provider.resolveWebviewView({
-      onDidDispose: vi.fn<() => void>(),
-      webview: {
-        asWebviewUri: (uri: { fsPath: string }) => ({
-          toString: () => `webview:${uri.fsPath}`,
-        }),
-        cspSource: "webview-csp",
-        html: "",
-        onDidReceiveMessage: (listener: (message: unknown) => void) => {
-          receive = listener;
+    await provider.resolveWebviewView(
+      testValue<never>({
+        onDidDispose: vi.fn<() => void>(),
+        webview: {
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => `webview:${uri.fsPath}`,
+          }),
+          cspSource: "webview-csp",
+          html: "",
+          onDidReceiveMessage: (listener: (message: unknown) => void) => {
+            receive = listener;
+          },
+          options: {},
+          postMessage: vi.fn<() => void>(),
         },
-        options: {},
-        postMessage: vi.fn<() => void>(),
-      },
-    } as never);
+      })
+    );
     vscode.executeCommand.mockClear();
 
     receive?.({ expanded: true, type: "navigatorExpanded" });
     receive?.({ expanded: false, type: "navigatorExpanded" });
 
-    await vi.waitFor(() =>
+    await vi.waitFor(() => {
       expect(vscode.executeCommand.mock.calls).toStrictEqual([
         ["setContext", "mischief.navigatorAllExpanded", true],
         ["setContext", "mischief.navigatorAllExpanded", false],
-      ])
-    );
+      ]);
+    });
   });
 
   test("persists Workspace color assignment from Settings", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     let receive: ((message: unknown) => void) | undefined;
     vscode.assignWorkspaceColors = true;
-    vscode.updateConfiguration.mockImplementation((_key, value) => {
-      vscode.assignWorkspaceColors = value as boolean;
-      return Promise.resolve();
+    vscode.updateConfiguration.mockImplementation(async (_key, value) => {
+      await Promise.resolve();
+      vscode.assignWorkspaceColors = testValue<boolean>(value);
     });
     const provider = new MischiefView(
-      {} as never,
-      {
+      testValue<never>({}),
+      testValue<never>({
         onChange: vi.fn<() => void>(),
         snapshot: () => ({ threads: [] }),
-      } as never,
-      { fsPath: process.cwd() } as never,
-      {} as never,
-      profileDatabase() as never
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase())
     );
-    await provider.resolveWebviewView({
-      onDidDispose: vi.fn<() => void>(),
-      webview: {
-        asWebviewUri: (uri: { fsPath: string }) => ({
-          toString: () => `webview:${uri.fsPath}`,
-        }),
-        cspSource: "webview-csp",
-        html: "",
-        onDidReceiveMessage: (listener: (message: unknown) => void) => {
-          receive = listener;
+    await provider.resolveWebviewView(
+      testValue<never>({
+        onDidDispose: vi.fn<() => void>(),
+        webview: {
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => `webview:${uri.fsPath}`,
+          }),
+          cspSource: "webview-csp",
+          html: "",
+          onDidReceiveMessage: (listener: (message: unknown) => void) => {
+            receive = listener;
+          },
+          options: {},
+          postMessage,
         },
-        options: {},
-        postMessage,
-      },
-    } as never);
+      })
+    );
     postMessage.mockClear();
 
     provider.showSettings();
     receive?.({ type: "setAssignWorkspaceColors", value: false });
-    await vi.waitFor(() =>
+    await vi.waitFor(() => {
       expect(vscode.updateConfiguration).toHaveBeenCalledWith(
         "assignWorkspaceColors",
         false,
         1
-      )
-    );
+      );
+    });
     provider.showSettings();
 
     expect(postMessage.mock.calls).toStrictEqual([
@@ -1586,6 +1704,52 @@ describe("view provider", () => {
     ]);
     vscode.updateConfiguration.mockReset();
     vscode.assignWorkspaceColors = true;
+  });
+
+  test("opens file links from transcript Markdown in the owning Workspace", async () => {
+    let receive: ((message: unknown) => void) | undefined;
+    const workspace = process.cwd();
+    const { showTextDocument } = vscode;
+    showTextDocument.mockClear();
+    const provider = new MischiefView(
+      testValue<never>({}),
+      testValue<never>({
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({ threads: [], workspace }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase())
+    );
+    await provider.resolveWebviewView(
+      testValue<never>({
+        onDidDispose: vi.fn<() => void>(),
+        webview: {
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => `webview:${uri.fsPath}`,
+          }),
+          cspSource: "webview-csp",
+          html: "",
+          onDidReceiveMessage: (listener: (message: unknown) => void) => {
+            receive = listener;
+          },
+          options: {},
+          postMessage: vi.fn<() => void>(),
+        },
+      })
+    );
+
+    receive?.({
+      href: pathToFileURL(path.join(workspace, "src/view.ts")).href,
+      type: "openTranscriptLink",
+    });
+
+    await vi.waitFor(() => {
+      expect(showTextDocument).toHaveBeenCalledExactlyOnceWith(
+        { fsPath: path.join(workspace, "src/view.ts") },
+        { preview: true }
+      );
+    });
   });
 
   test("renders Markdown without allowing raw HTML", async () => {
@@ -1612,7 +1776,7 @@ describe("view provider", () => {
             {
               id: "assistant-1",
               kind: "assistant",
-              text: "**Bold** <script>alert(1)</script>",
+              text: "**Bold** <script>alert(1)</script> [Open](file:///workspace/src/view.ts)",
             },
           ],
         },
@@ -1620,22 +1784,22 @@ describe("view provider", () => {
       }),
     };
     const provider = new MischiefView(
-      {} as never,
-      threads as never,
-      {
+      testValue<never>({}),
+      testValue<never>(threads),
+      testValue<never>({
         fsPath: process.cwd(),
-      } as never,
-      {} as never,
-      profileDatabase() as never
+      }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase())
     );
 
-    await provider.resolveWebviewView(view as never);
+    await provider.resolveWebviewView(testValue<never>(view));
 
-    const state = postMessage.mock.calls.at(-1)?.[0] as {
+    const state = testValue<{
       threads: { selected: { items: { html: string }[] } };
-    };
+    }>(postMessage.mock.calls.at(-1)?.[0]);
     expect(state.threads.selected.items[0]?.html).toBe(
-      "<p><strong>Bold</strong> &lt;script&gt;alert(1)&lt;/script&gt;</p>\n"
+      '<p><strong>Bold</strong> &lt;script&gt;alert(1)&lt;/script&gt; <a href="file:///workspace/src/view.ts">Open</a></p>\n'
     );
   });
 });

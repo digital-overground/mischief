@@ -1,6 +1,7 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 
+import { isNonEmpty, isRecord } from "../present";
 import type {
   ProfileDatabase,
   WorkspaceLocation,
@@ -92,23 +93,23 @@ export class Projects {
     const workspace = await locateWorkspace(folder);
     this.currentWorkspace = workspace.path;
     await this.activate(workspace);
-    return this.snapshot();
+    return await this.snapshot();
   }
 
   async add(folder: string): Promise<ProjectsSnapshot> {
     await this.activate(await locateWorkspace(folder));
-    return this.snapshot();
+    return await this.snapshot();
   }
 
-  refresh(): Promise<ProjectsSnapshot> {
-    return this.snapshot();
+  async refresh(): Promise<ProjectsSnapshot> {
+    return await this.snapshot();
   }
 
   async importPreviousWorkspaces(value: unknown): Promise<void> {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
+    if (!isRecord(value)) {
       return;
     }
-    const previous = value as Record<string, unknown>;
+    const previous = value;
     const roots = Array.isArray(previous.roots)
       ? previous.roots.filter(
           (item): item is string => typeof item === "string"
@@ -148,7 +149,9 @@ export class Projects {
         ).values(),
       ]
         .filter((workspace) => !existing.has(workspace.path))
-        .map((workspace) => this.activate(workspace))
+        .map(async (workspace) => {
+          await this.activate(workspace);
+        })
     );
   }
 
@@ -175,7 +178,7 @@ export class Projects {
       return undefined;
     }
     const repository = normalizeGitHubRepository(selected);
-    if (!repository) {
+    if (!isNonEmpty(repository)) {
       throw new Error("Enter a GitHub repository as owner/repo");
     }
     const issues = await listOpenGitHubIssues(root, repository);
@@ -197,7 +200,7 @@ export class Projects {
     ) {
       throw new Error("Project is not in Mischief");
     }
-    return listGitSourceBranches(root);
+    return await listGitSourceBranches(root);
   }
 
   async createWorkspace(
@@ -230,11 +233,11 @@ export class Projects {
       path: workspace.path,
       type: "deactivateWorkspace",
     });
-    return this.snapshot();
+    return await this.snapshot();
   }
 
-  private activate(workspace: WorkspaceLocation): Promise<void> {
-    return this.database.apply({ type: "activateWorkspace", workspace });
+  private async activate(workspace: WorkspaceLocation): Promise<void> {
+    await this.database.apply({ type: "activateWorkspace", workspace });
   }
 
   private async snapshot(): Promise<ProjectsSnapshot> {
@@ -244,7 +247,7 @@ export class Projects {
     const inspected = await Promise.all(
       active.map(async (record) => {
         const { projectRoot } = record;
-        if (!projectRoot) {
+        if (!isNonEmpty(projectRoot)) {
           try {
             return { path: await realpath(record.path) };
           } catch {
@@ -270,7 +273,7 @@ export class Projects {
         const workspaces = grouped.get(result.projectRoot) ?? [];
         workspaces.push(result.workspace);
         grouped.set(result.projectRoot, workspaces);
-      } else if (result.path) {
+      } else if (isNonEmpty(result.path)) {
         untracked.push(result.path);
       }
     }

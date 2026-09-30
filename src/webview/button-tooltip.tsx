@@ -49,7 +49,9 @@ export const ButtonTooltip = (): React.JSX.Element | null => {
       }
       pending = button;
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => setTooltip(next), TOOLTIP_DELAY);
+      timer = window.setTimeout(() => {
+        setTooltip(next);
+      }, TOOLTIP_DELAY);
     };
     const hide = (): void => {
       pending = undefined;

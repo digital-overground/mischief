@@ -31,8 +31,16 @@ const contexts = await Promise.all([
 ]);
 
 if (watch) {
-  await Promise.all(contexts.map((context) => context.watch()));
+  await Promise.all(
+    contexts.map(async (context) => {
+      await context.watch();
+    })
+  );
 } else {
-  await Promise.all(contexts.map((context) => context.rebuild()));
-  await Promise.all(contexts.map((context) => context.dispose()));
+  await Promise.all(contexts.map(async (context) => await context.rebuild()));
+  await Promise.all(
+    contexts.map(async (context) => {
+      await context.dispose();
+    })
+  );
 }
