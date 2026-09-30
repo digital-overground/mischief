@@ -1,7 +1,7 @@
 {
   "name": "mischief",
   "displayName": "Mischief",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "A VS Code project, workspace, and agent-thread browser for MagPi.",
   "categories": [
     "Chat",
