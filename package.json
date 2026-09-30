@@ -31,6 +31,7 @@
     "build:watch": "node esbuild.mjs --watch",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
+    "install:local": "pnpm check && pnpm exec vsce package --no-dependencies && code --install-extension \"mischief-$(node -p 'require(\"./package.json\").version').vsix\" --force",
     "lint": "ultracite check",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
