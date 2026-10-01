@@ -1297,6 +1297,7 @@ footer {
   background: var(--vscode-editor-background, var(--vscode-sideBar-background));
 }
 #processing {
+  height: 30px;
   padding: 2px 10px 10px 12px;
   color: var(--vscode-textLink-foreground);
   font-family: var(--mischief-mono-font);
@@ -1308,7 +1309,8 @@ footer {
   animation: thread-status-frame 600ms step-end infinite;
 }
 #processing[hidden] {
-  display: none;
+  display: block;
+  visibility: hidden;
 }
 .toast {
   position: absolute;

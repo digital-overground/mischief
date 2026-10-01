@@ -1347,6 +1347,158 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("sticks through streamed thinking and tool-call layout growth", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "ResizeObserver"
+    );
+    let resizeCallback: ResizeObserverCallback | undefined;
+    let observed: Element | undefined;
+    const observer: ResizeObserver = {
+      disconnect: () => {},
+      observe: () => {},
+      unobserve: () => {},
+    };
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      configurable: true,
+      value: class implements ResizeObserver {
+        private target: Element | undefined;
+        // oxlint-disable-next-line promise/prefer-await-to-callbacks -- ResizeObserver is callback-based
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallback = callback;
+        }
+        observe(target: Element): void {
+          this.target = target;
+          observed = this.target;
+        }
+        unobserve(target: Element): void {
+          this.target = target;
+        }
+        disconnect(): void {
+          this.target = undefined;
+        }
+      },
+    });
+    let unmount: (() => Promise<void>) | undefined;
+    try {
+      unmount = await renderApp();
+      const threadId = "selected";
+      const initial = threadState(threadId, []);
+      if (initial.type !== "state" || !initial.threads.selected) {
+        throw new Error("Missing selected Thread");
+      }
+      initial.threads.selected.status = "running";
+      act(() => {
+        window.dispatchEvent(new MessageEvent("message", { data: initial }));
+      });
+      const chat = document.querySelector<HTMLDivElement>("#chat");
+      if (!chat || !resizeCallback) {
+        throw new Error("Missing scroll observer");
+      }
+      let scrollHeight = 1000;
+      let scrollTop = 900;
+      const setScrollTop = vi.fn<(value: number) => void>((value) => {
+        scrollTop = value;
+      });
+      Object.defineProperties(chat, {
+        clientHeight: { configurable: true, value: 100 },
+        scrollHeight: { configurable: true, get: () => scrollHeight },
+        scrollTop: {
+          configurable: true,
+          get: () => scrollTop,
+          set: setScrollTop,
+        },
+      });
+      chat.dispatchEvent(new Event("scroll"));
+      if (observed?.id !== "chat-content") {
+        throw new Error("Resize observer is not watching transcript content");
+      }
+      const send = (
+        item: Extract<HostToWebviewMessage, { type: "transcript" }>["item"]
+      ): void => {
+        act(() => {
+          window.dispatchEvent(
+            new MessageEvent("message", {
+              data: {
+                item,
+                streaming: true,
+                threadId,
+                type: "transcript",
+              } satisfies HostToWebviewMessage,
+            })
+          );
+        });
+      };
+      send({
+        id: "thought",
+        kind: "thought",
+        text: "Thinking through the change",
+      });
+      expect(document.querySelector(".thinking-group")?.textContent).toContain(
+        "Thinking through the change"
+      );
+      scrollHeight += 250;
+      act(() => resizeCallback?.([], observer));
+      expect(setScrollTop).toHaveBeenLastCalledWith(scrollHeight);
+
+      send({ id: "tool", kind: "tool", title: "Read source" });
+      expect(document.querySelector("#transcript")?.textContent).toContain(
+        "Read source"
+      );
+      scrollHeight += 120;
+      act(() => resizeCallback?.([], observer));
+      expect(setScrollTop).toHaveBeenLastCalledWith(scrollHeight);
+
+      scrollTop = 300;
+      chat.dispatchEvent(new Event("scroll"));
+      setScrollTop.mockClear();
+      scrollHeight += 80;
+      act(() => resizeCallback?.([], observer));
+      expect(setScrollTop).not.toHaveBeenCalled();
+    } finally {
+      await unmount?.();
+      if (descriptor) {
+        Object.defineProperty(globalThis, "ResizeObserver", descriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, "ResizeObserver");
+      }
+    }
+  });
+
+  test("keeps the working-indicator slot while its spinner toggles", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("selected", []) })
+      );
+    });
+    const spinner = document.querySelector<HTMLDivElement>("#processing");
+    if (!spinner) {
+      throw new Error("Missing reserved working-indicator slot");
+    }
+    expect(spinner.hidden).toBeTruthy();
+
+    const running = threadState("selected", []);
+    if (running.type !== "state" || !running.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    running.threads.selected.status = "running";
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: running }));
+    });
+    expect(document.querySelector("#processing")).toBe(spinner);
+    expect(spinner.hidden).toBeFalsy();
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("selected", []) })
+      );
+    });
+    expect(document.querySelector("#processing")).toBe(spinner);
+    expect(spinner.hidden).toBeTruthy();
+    await unmount();
+  });
+
   test("history follows streamed messages and a jump stays put during later updates", async () => {
     const unmount = await renderApp();
     const state = threadState("selected", []);
