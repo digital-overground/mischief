@@ -1,7 +1,8 @@
 import type { ThreadCommand } from "../../../../../threads/model";
 
 export interface SkillPickerGroup {
-  name: string | undefined;
+  name: string;
+  source: string | undefined;
   entries: { command: ThreadCommand; label: string }[];
 }
 
@@ -9,45 +10,50 @@ const compare = (left: string, right: string): number =>
   left.localeCompare(right, undefined, { sensitivity: "base" }) ||
   left.localeCompare(right);
 
+const sourceName = (source: string | undefined): string => {
+  if (source === undefined) {
+    return "Other skills";
+  }
+  const withoutVersion = source.replace(/@[^/@]*$/u, "").replace(/\.git$/u, "");
+  const gitPath = /^git:[^/]+\/(?<path>.+)$/u.exec(withoutVersion)?.groups
+    ?.path;
+  if (gitPath !== undefined && gitPath.length > 0) {
+    return gitPath;
+  }
+  const separator = Math.max(
+    withoutVersion.lastIndexOf("/"),
+    withoutVersion.lastIndexOf(":")
+  );
+  return withoutVersion.slice(separator + 1) || source;
+};
+
 export const skillPickerGroups = (
   commands: ThreadCommand[],
   query = ""
 ): SkillPickerGroup[] => {
-  const skills = commands
-    .filter(({ name }) => name.startsWith("skill:"))
-    .map((command) => ({
-      command,
-      name: command.name.slice("skill:".length),
-    }))
-    .filter(({ name }) => name.length > 0);
-  const prefixes = new Set(
-    skills.flatMap(({ name }) => {
-      const separator = name.indexOf("-");
-      return separator > 0 ? [name.slice(0, separator)] : [];
-    })
-  );
   const search = query.trim().toLowerCase();
-  const groups = new Map<string | undefined, SkillPickerGroup>();
+  const groups = new Map<string, SkillPickerGroup>();
 
-  for (const skill of skills) {
+  for (const command of commands) {
+    if (!command.name.startsWith("skill:")) {
+      continue;
+    }
+    const label = command.name.slice("skill:".length);
     if (
-      search &&
-      !`${skill.name}\n${skill.command.description}`
-        .toLowerCase()
-        .includes(search)
+      !label ||
+      (search &&
+        !`${label}\n${command.description}`.toLowerCase().includes(search))
     ) {
       continue;
     }
-    const separator = skill.name.indexOf("-");
-    const prefix = separator > 0 ? skill.name.slice(0, separator) : undefined;
-    const name = prefix ?? (prefixes.has(skill.name) ? skill.name : undefined);
-    const label =
-      name !== undefined && skill.name !== name
-        ? skill.name.slice(name.length + 1)
-        : skill.name;
-    const group = groups.get(name) ?? { entries: [], name };
-    group.entries.push({ command: skill.command, label });
-    groups.set(name, group);
+    const key = command.source ?? "";
+    const group = groups.get(key) ?? {
+      entries: [],
+      name: sourceName(command.source),
+      source: command.source,
+    };
+    group.entries.push({ command, label });
+    groups.set(key, group);
   }
 
   return [...groups.values()]
@@ -55,10 +61,5 @@ export const skillPickerGroups = (
       ...group,
       entries: group.entries.toSorted((a, b) => compare(a.label, b.label)),
     }))
-    .toSorted((a, b) =>
-      compare(
-        a.name ?? a.entries[0]?.label ?? "",
-        b.name ?? b.entries[0]?.label ?? ""
-      )
-    );
+    .toSorted((a, b) => compare(a.name, b.name));
 };

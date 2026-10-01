@@ -242,6 +242,19 @@ const ComposerView = ({
     });
   };
 
+  const selectSkill = (item: ThreadCommand): void => {
+    const value = `/${item.name} `;
+    if (box.current) {
+      box.current.value = `${value}${box.current.value}`;
+    }
+    setContext(undefined);
+    setCommand(undefined);
+    window.requestAnimationFrame(() => {
+      box.current?.setSelectionRange(value.length, value.length);
+      box.current?.focus();
+    });
+  };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (
       suggestions.length &&
@@ -399,6 +412,7 @@ const ComposerView = ({
       <FooterControls
         historyItems={historyItems}
         onJumpMessage={onJumpMessage}
+        onSelectSkill={selectSkill}
         onSend={() => {
           if (running) {
             postMessage({ type: "cancel" });

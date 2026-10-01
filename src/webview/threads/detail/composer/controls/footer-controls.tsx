@@ -5,17 +5,20 @@ import type {
 } from "../../../../protocol";
 import { ConfigControl } from "./config-control";
 import { HistoryControl } from "./history-control";
+import { SkillPickerControl } from "./skill-picker-control";
 import { UsageControl } from "./usage-control";
 
 export const FooterControls = ({
   historyItems = [],
   onJumpMessage,
+  onSelectSkill,
   onSend,
   selected,
   setup = false,
 }: {
   historyItems?: RenderedTranscriptItem[];
   onJumpMessage?: (id: string) => void;
+  onSelectSkill?: (command: RenderedThreadDetail["commands"][number]) => void;
   onSend: () => void;
   selected?: RenderedThreadDetail;
   setup?: boolean;
@@ -36,6 +39,11 @@ export const FooterControls = ({
         onJumpMessage={onJumpMessage}
         selected={selected}
         key={`history:${selected?.id ?? "none"}`}
+      />
+      <SkillPickerControl
+        commands={selected?.commands ?? []}
+        onSelect={(command) => onSelectSkill?.(command)}
+        key={`skills:${selected?.id ?? "none"}`}
       />
       {selected?.usage && selected.usage.size > 0 ? (
         <UsageControl usage={selected.usage} key={selected.id} />

@@ -102,6 +102,7 @@ export interface ThreadCommand {
   name: string;
   description: string;
   inputHint?: string;
+  source?: string;
 }
 
 export interface PlanEntry {

@@ -1604,6 +1604,63 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("prepends a selected skill to the existing draft", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            font: "Test Mono",
+            projects: { projects: [], ungrouped: [] },
+            threads: {
+              selected: {
+                commands: [
+                  {
+                    description: "Review changes",
+                    name: "skill:ponytail-review",
+                  },
+                ],
+                configOptions: [],
+                drafts: [],
+                id: "selected",
+                items: [],
+                name: "Selected Thread",
+                status: "idle",
+                steering: [],
+                streaming: false,
+              },
+              threads: [],
+              workspace: "/workspace",
+            },
+            type: "state",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+    const value = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value"
+    );
+    if (!composer || !value?.set) {
+      throw new Error("Missing composer");
+    }
+    act(() => {
+      value.set?.call(composer, "Review my current branch");
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
+      document
+        .querySelector<HTMLButtonElement>("#skill-picker-button")
+        ?.click();
+    });
+    act(() => {
+      document.querySelector<HTMLButtonElement>(".skill-picker-entry")?.click();
+    });
+    expect(composer.value).toBe(
+      "/skill:ponytail-review Review my current branch"
+    );
+    await unmount();
+  });
+
   test("autocompletes advertised slash commands and sends unknown slash text", async () => {
     const unmount = await renderApp();
     act(() => {
