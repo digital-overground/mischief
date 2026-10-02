@@ -1343,8 +1343,9 @@ footer {
   display: block;
   width: 100%;
   min-height: 86px;
-  max-height: 220px;
-  resize: vertical;
+  max-height: min(400px, 45vh);
+  overflow-y: auto;
+  resize: none;
   border: 0;
   background: transparent;
   color: var(--vscode-input-foreground);

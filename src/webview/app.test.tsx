@@ -145,6 +145,39 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("auto-grows and shrinks the composer as its text changes", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("selected", []) })
+      );
+    });
+    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+    const valueDescriptor = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value"
+    );
+    if (!composer || !valueDescriptor?.set) {
+      throw new Error("Missing composer");
+    }
+    Object.defineProperty(composer, "scrollHeight", {
+      configurable: true,
+      get: () => (composer.value ? 160 : 86),
+    });
+    act(() => {
+      valueDescriptor.set?.call(composer, "A longer draft");
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(composer.style.height).toBe("160px");
+
+    act(() => {
+      valueDescriptor.set?.call(composer, "");
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(composer.style.height).toBe("86px");
+    await unmount();
+  });
+
   test("keeps the Project list visible while maximizing the current Thread", async () => {
     const unmount = await renderApp();
     act(() => {

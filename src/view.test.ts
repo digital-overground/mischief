@@ -1408,6 +1408,13 @@ describe("view provider", () => {
     expect(html).toContain('href="{{styleUri}}"');
   });
 
+  test("caps composer height relative to a short webview", () => {
+    const css = readFileSync("media/webview.css", "utf-8");
+    const composerRule = /#composer \{[\s\S]*?\n\}/u.exec(css)?.[0];
+
+    expect(composerRule).toContain("max-height: min(400px, 45vh);");
+  });
+
   test("sends only the changed transcript item while streaming", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     let emit: ((change: unknown) => void) | undefined;
