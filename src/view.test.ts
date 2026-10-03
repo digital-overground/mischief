@@ -124,7 +124,7 @@ describe("view provider", () => {
       document: {
         getText: () => "const answer = 42;\n",
         languageId: "typescript",
-        uri: { fsPath: "/workspace/src/example.ts", scheme: "file" },
+        uri: { fsPath: "/workspace/src/example.ts", scheme: "git" },
       },
       selection: {
         end: { character: 0, line: 3 },
@@ -1362,11 +1362,14 @@ describe("view provider", () => {
     });
   });
 
-  test("toggles Expand All and Collapse All in the native Mischief title bar", () => {
+  test("contributes editor and Mischief title-bar menu actions", () => {
     const manifest = testValue<{
       contributes: {
         commands: { command: string; icon?: string; title: string }[];
-        menus: Record<string, { command: string; group: string }[]>;
+        menus: Record<
+          string,
+          { command: string; group: string; when?: string }[]
+        >;
       };
     }>(JSON.parse(readFileSync("package.json", "utf-8")));
 
@@ -1395,6 +1398,20 @@ describe("view provider", () => {
           command: "mischief.collapseAll",
           group: "navigation@3",
           when: "view == mischief.view && mischief.navigatorAllExpanded",
+        },
+      ])
+    );
+    expect(manifest.contributes.menus["editor/context"]).toStrictEqual(
+      expect.arrayContaining([
+        {
+          command: "mischief.addSelectionToCurrentThread",
+          group: "1_chat@-2",
+          when: "editorHasSelection && (resourceScheme == file || resourceScheme == git)",
+        },
+        {
+          command: "mischief.addSelectionToNewThread",
+          group: "1_chat@-1",
+          when: "editorHasSelection && (resourceScheme == file || resourceScheme == git)",
         },
       ])
     );

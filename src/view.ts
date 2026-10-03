@@ -500,7 +500,8 @@ export class MischiefView implements vscode.WebviewViewProvider {
     if (
       !editor ||
       editor.selection.isEmpty ||
-      editor.document.uri.scheme !== "file"
+      (editor.document.uri.scheme !== "file" &&
+        editor.document.uri.scheme !== "git")
     ) {
       return;
     }

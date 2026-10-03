@@ -1556,23 +1556,29 @@ describe("React webview", () => {
         })
       );
     });
-    const scrollIntoView = vi.fn<(options: ScrollIntoViewOptions) => void>();
+    const chat = document.querySelector<HTMLElement>("#chat");
     const target = document.querySelector<HTMLElement>(
       '[data-message-id="prompt"]'
     );
-    if (!target) {
-      throw new Error("Missing prompt");
+    if (!chat || !target) {
+      throw new Error("Missing transcript scroll target");
     }
+    const scrollIntoView = vi.fn<(options: ScrollIntoViewOptions) => void>(
+      () => {
+        chat.scrollLeft = 48;
+      }
+    );
     target.scrollIntoView = scrollIntoView;
-    const chat = document.querySelector<HTMLElement>("#chat");
-    if (!chat) {
-      throw new Error("Missing chat");
-    }
+    chat.scrollLeft = 12;
+    chat.getBoundingClientRect = () => testValue<DOMRect>({ top: 20 });
+    target.getBoundingClientRect = () => testValue<DOMRect>({ top: 220 });
+    let scrollTop = 40;
     const scroll = vi.fn<(value: number) => void>();
     Object.defineProperty(chat, "scrollTop", {
       configurable: true,
-      get: () => 0,
+      get: () => scrollTop,
       set: (value: number) => {
+        scrollTop = value;
         scroll(value);
       },
     });
@@ -1591,7 +1597,11 @@ describe("React webview", () => {
         .querySelector<HTMLButtonElement>("#history-list .history-jump")
         ?.click();
     });
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+    expect({
+      scrollIntoView: scrollIntoView.mock.calls,
+      scrollLeft: chat.scrollLeft,
+      scrollTop,
+    }).toStrictEqual({ scrollIntoView: [], scrollLeft: 12, scrollTop: 240 });
     scroll.mockClear();
     act(() => {
       window.dispatchEvent(

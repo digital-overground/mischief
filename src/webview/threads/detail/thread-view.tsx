@@ -221,14 +221,18 @@ export const ThreadView = ({
         <Composer
           historyItems={visibleMessages}
           onJumpMessage={(id) => {
+            const container = chat.current;
             const target = [
-              ...(chat.current?.querySelectorAll<HTMLElement>(
+              ...(container?.querySelectorAll<HTMLElement>(
                 "[data-message-id]"
               ) ?? []),
             ].find((element) => element.dataset.messageId === id);
-            if (target) {
+            if (container && target) {
               shouldStick.current = false;
-              target.scrollIntoView({ block: "start" });
+              // scrollIntoView can also shift the transcript horizontally.
+              container.scrollTop +=
+                target.getBoundingClientRect().top -
+                container.getBoundingClientRect().top;
             }
           }}
           contextItems={contextItems}
