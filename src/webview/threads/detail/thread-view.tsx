@@ -127,7 +127,10 @@ export const ThreadView = ({
   const blocked = selected?.sessionOperation !== undefined;
   return (
     <section id="thread" aria-busy={blocked}>
-      <div id="thread-content" inert={blocked}>
+      <div
+        id="thread-content"
+        inert={blocked || Boolean(selected?.interaction)}
+      >
         <header id="thread-header">
           <span className="heading" id="thread-title">
             {setup ? "Setup" : (selected?.name ?? "Thread")}
@@ -212,7 +215,6 @@ export const ThreadView = ({
                 </button>
               ) : null}
             </div>
-            <Interaction interaction={selected?.interaction} />
             <Processing hidden={!processing} />
           </div>
         </div>
@@ -242,6 +244,7 @@ export const ThreadView = ({
           setupSelected={selectedSetupOptions}
         />
       </div>
+      <Interaction interaction={selected?.interaction} />
       {isNonEmpty(processingLabel) ? (
         <div
           aria-live="polite"

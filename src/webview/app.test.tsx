@@ -2178,7 +2178,7 @@ describe("React webview", () => {
     await unmount();
   });
 
-  test("renders elicitation choices as radios and submits custom context with the selection", async () => {
+  test("renders themed elicitation choices and submits a multi-select with custom context", async () => {
     const unmount = await renderApp();
     const state: HostToWebviewMessage = {
       font: "Test Mono",
@@ -2211,6 +2211,16 @@ describe("React webview", () => {
                 ],
                 required: false,
                 type: "select",
+              },
+              {
+                label: "Allowed tools",
+                name: "tools",
+                options: [
+                  { name: "Read", value: "read" },
+                  { name: "Search", value: "search" },
+                ],
+                required: false,
+                type: "multiselect",
               },
               {
                 description: "Add context for the selected suggestion.",
@@ -2250,25 +2260,50 @@ describe("React webview", () => {
     const submit = document.querySelector<HTMLButtonElement>(
       '#interaction button[type="submit"]'
     );
-    if (!custom || !submit || choices.length !== 2) {
+    const multipleChoices = [
+      ...document.querySelectorAll<HTMLInputElement>(
+        '#interaction input[type="checkbox"][name="tools"]'
+      ),
+    ];
+    if (
+      !custom ||
+      !submit ||
+      choices.length !== 2 ||
+      multipleChoices.length !== 2
+    ) {
       throw new Error("Missing elicitation controls");
     }
 
     expect({
+      actionIcons: document.querySelectorAll(
+        ".interaction-actions .interaction-action-icon"
+      ).length,
+      blocked: document.querySelector("#thread-content")?.hasAttribute("inert"),
+      cancelIsDanger:
+        document.querySelector(".interaction-actions .action.danger") !== null,
       context: document.querySelector(".interaction-context")?.textContent,
+      customDescription: document.querySelector(
+        ".interaction-custom-response .interaction-field-description"
+      )?.textContent,
       descriptions: [...document.querySelectorAll(".interaction-choice")].map(
         (choice) => choice.textContent
       ),
-      icon: document.querySelector(".interaction-question .lucide"),
+      icon: document.querySelector(".interaction-heading .lucide"),
       question: document.querySelector(".interaction-question")?.textContent,
       tooltips: [
         ...document.querySelectorAll<HTMLButtonElement>("#interaction button"),
       ].map((button) => button.title),
     }).toStrictEqual({
-      context: "Context:Test prompt context.",
+      actionIcons: 2,
+      blocked: true,
+      cancelIsDanger: true,
+      context: "ContextTest prompt context.",
+      customDescription: "Optional additional info or options",
       descriptions: [
         "Immutable once round startsGames can trust the roster for the whole round.",
         "Editable until first scoreChanges remain possible until scoring begins.",
+        "Read",
+        "Search",
       ],
       icon: testValue<unknown>(expect.any(SVGElement)),
       question: "Can Team membership change after a round starts?",
@@ -2278,6 +2313,10 @@ describe("React webview", () => {
     postMessage.mockClear();
     act(() => {
       choices[0]?.click();
+      multipleChoices[0]?.click();
+      multipleChoices[1]?.click();
+    });
+    act(() => {
       custom.value = "Allow admins to correct mistakes.";
       submit.click();
     });
@@ -2289,7 +2328,101 @@ describe("React webview", () => {
         values: {
           choice: "immutable",
           other: "Allow admins to correct mistakes.",
+          tools: ["read", "search"],
         },
+      },
+      type: "respond",
+    });
+    await unmount();
+  });
+
+  test("turns numbered ask-user options into selectable choices", async () => {
+    const unmount = await renderApp();
+    const state: HostToWebviewMessage = {
+      font: "Test Mono",
+      projects: { projects: [], ungrouped: [] },
+      threads: {
+        selected: {
+          commands: [],
+          configOptions: [],
+          drafts: [],
+          id: "thread-1",
+          interaction: {
+            fields: [
+              {
+                description: "Type your selection(s)...",
+                label: "Answer",
+                name: "answer",
+                required: true,
+                type: "text",
+              },
+            ],
+            id: "ask-2",
+            kind: "elicitation",
+            message: [
+              "Which detail should I polish next? Select any that apply.",
+              "",
+              "Options (select one or more):",
+              "1. Typography — Theme the text.",
+              "2. Spacing — Fit more choices.",
+              "3. Buttons — Move actions right.",
+            ].join("\n"),
+          },
+          items: [],
+          name: "Elicitation",
+          status: "waiting",
+          steering: [],
+          streaming: false,
+        },
+        threads: [],
+        workspace: "/workspace",
+      },
+      type: "state",
+    };
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+
+    const choices = [
+      ...document.querySelectorAll<HTMLInputElement>(
+        '#interaction input[type="checkbox"][name="__mischief_options"]'
+      ),
+    ];
+    const custom = document.querySelector<HTMLTextAreaElement>(
+      '#interaction textarea[name="answer"]'
+    );
+    const submit = document.querySelector<HTMLButtonElement>(
+      '#interaction button[type="submit"]'
+    );
+    if (choices.length !== 3 || !custom || !submit) {
+      throw new Error("Missing selectable ask-user options");
+    }
+    expect({
+      choices: [...document.querySelectorAll(".interaction-choice-title")].map(
+        (choice) => choice.textContent
+      ),
+      customDescription: document.querySelector(
+        ".interaction-custom-response .interaction-field-description"
+      )?.textContent,
+      question: document.querySelector(".interaction-question")?.textContent,
+    }).toStrictEqual({
+      choices: ["Typography", "Spacing", "Buttons"],
+      customDescription: "Optional additional info or options",
+      question: "Which detail should I polish next? Select any that apply.",
+    });
+
+    postMessage.mockClear();
+    act(() => {
+      choices[0]?.click();
+      choices[2]?.click();
+      custom.value = "More contrast";
+      submit.click();
+    });
+    expect(postMessage).toHaveBeenCalledWith({
+      id: "ask-2",
+      response: {
+        action: "accept",
+        values: { answer: "Typography, Buttons, More contrast" },
       },
       type: "respond",
     });
