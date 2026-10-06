@@ -1,4 +1,5 @@
-import { mkdir, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { copyFile, lstat, mkdir, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 
 import { exec } from "../exec";
@@ -141,6 +142,100 @@ export const sourceBranches = async (
       .toSorted((a, b) => a.localeCompare(b))
       .map((name) => ({ current: false, name, remoteOnly: true as const })),
   ];
+};
+
+const systemFile = (name: string): boolean =>
+  [".DS_Store", "Thumbs.db", "desktop.ini", ".vscode"].includes(name) ||
+  name.startsWith("._");
+
+export const ignoredWorkspaceFiles = async (
+  root: string
+): Promise<string[]> => {
+  const { stdout } = await exec("git", [
+    "-C",
+    root,
+    "ls-files",
+    "--others",
+    "--ignored",
+    "--exclude-standard",
+    "--directory",
+    "-z",
+  ]);
+  const entries = await Promise.all(
+    stdout
+      .split("\0")
+      .filter(Boolean)
+      .map(async (name) => {
+        if (name.split("/").some(systemFile)) {
+          return null;
+        }
+        try {
+          const entry = await lstat(path.join(root, name));
+          if (name.endsWith("/")) {
+            if (!entry.isDirectory()) {
+              return null;
+            }
+            await exec("git", ["-C", root, "check-ignore", "-q", "--", name]);
+            return name;
+          }
+          return entry.isFile() ? name : null;
+        } catch {
+          return null;
+        }
+      })
+  );
+  return entries
+    .filter((name) => name !== null)
+    .toSorted(
+      (a, b) =>
+        Number(a.endsWith("/")) - Number(b.endsWith("/")) || a.localeCompare(b)
+    );
+};
+
+export const copyIgnoredWorkspaceFiles = async (
+  root: string,
+  workspace: string,
+  files: string[]
+): Promise<void> => {
+  const targetRoot = await realpath(workspace);
+  const copy = async (name: string): Promise<void> => {
+    const source = path.resolve(root, name);
+    const destination = path.resolve(targetRoot, name);
+    if (
+      !source.startsWith(`${root}${path.sep}`) ||
+      !destination.startsWith(`${targetRoot}${path.sep}`) ||
+      name.split(/[\\/]/u).some(systemFile)
+    ) {
+      throw new Error(`Invalid ignored file: ${name}`);
+    }
+    const entry = await lstat(source);
+    // Never follow source symlinks.
+    if (!entry.isFile() && !entry.isDirectory()) {
+      return;
+    }
+    await mkdir(path.dirname(destination), { recursive: true });
+    const parent = await realpath(path.dirname(destination));
+    if (
+      parent !== targetRoot &&
+      !parent.startsWith(`${targetRoot}${path.sep}`)
+    ) {
+      throw new Error(`Invalid destination: ${name}`);
+    }
+    if (entry.isDirectory()) {
+      await mkdir(destination, { recursive: true });
+      const children = await readdir(source);
+      await Promise.all(
+        children
+          .filter((child) => !systemFile(child))
+          .map(async (child) => {
+            await copy(path.join(name, child));
+          })
+      );
+    } else {
+      await copyFile(source, destination, constants.COPYFILE_EXCL);
+    }
+  };
+  await Promise.all(files.map(copy));
 };
 
 export const createGitWorkspace = async (

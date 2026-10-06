@@ -3,6 +3,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  readFile,
   realpath,
   rm,
   symlink,
@@ -15,6 +16,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { exec } from "../exec";
 import { isNonEmpty } from "../present";
 import { ProfileDatabase } from "../profile-database/profile-database";
+import { copyIgnoredWorkspaceFiles, ignoredWorkspaceFiles } from "./git";
 import { issueWorkspaceName, locateWorkspace, Projects } from "./projects";
 
 const log = vi.fn<(message: string) => void>();
@@ -397,6 +399,73 @@ describe("projects module", () => {
     await expect(projects.sourceBranches(root)).resolves.toStrictEqual([
       { current: true, name: "main", remoteOnly: false },
     ]);
+  });
+
+  test("lists ignored files before ignored folders and copies selected folders safely", async () => {
+    const parent = await temporaryFolder();
+    const root = path.join(parent, "mischief");
+    await git(parent, "init", "--initial-branch=main", root);
+    await writeFile(
+      path.join(root, ".gitignore"),
+      ".env*\n*.env\nconfig/\nnode_modules/\ndist/\n.venv/\n__pycache__/\nvendor/\n.vscode/\n.DS_Store\n"
+    );
+    await mkdir(path.join(root, "config"));
+    await writeFile(path.join(root, ".env.local"), "SECRET=one");
+    await writeFile(path.join(root, "config", "settings.json"), "{}");
+    await writeFile(path.join(root, "config", ".DS_Store"), "skip");
+    await writeFile(path.join(root, ".DS_Store"), "skip");
+    await Promise.all(
+      ["node_modules", "dist", ".venv", "__pycache__", "vendor", ".vscode"].map(
+        async (directory) => {
+          await mkdir(path.join(root, directory));
+          await writeFile(path.join(root, directory, "config.json"), "{}");
+        }
+      )
+    );
+    await mkdir(path.join(root, "nested"));
+    await writeFile(path.join(root, "nested", "settings.env"), "nested");
+    await writeFile(path.join(root, "nested", "other.txt"), "untracked");
+    await writeFile(path.join(root, "other.txt"), "skip");
+    await git(root, "add", ".gitignore");
+    await git(
+      root,
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "user.name=Test",
+      "commit",
+      "-m",
+      "initial"
+    );
+    const workspace = path.join(parent, "new-workspace");
+    await mkdir(workspace);
+
+    await expect(ignoredWorkspaceFiles(root)).resolves.toStrictEqual([
+      ".env.local",
+      "nested/settings.env",
+      "__pycache__/",
+      ".venv/",
+      "config/",
+      "dist/",
+      "node_modules/",
+      "vendor/",
+    ]);
+    await copyIgnoredWorkspaceFiles(root, workspace, [".env.local", "config/"]);
+    await expect(
+      Promise.all([
+        readFile(path.join(workspace, ".env.local"), "utf-8"),
+        readFile(path.join(workspace, "config", "settings.json"), "utf-8"),
+      ])
+    ).resolves.toStrictEqual(["SECRET=one", "{}"]);
+    await expect(
+      readFile(path.join(workspace, "config", ".DS_Store"), "utf-8")
+    ).rejects.toThrow(/ENOENT/u);
+    await expect(
+      copyIgnoredWorkspaceFiles(root, workspace, [".env.local"])
+    ).rejects.toThrow(/exist/u);
+    await expect(
+      copyIgnoredWorkspaceFiles(root, workspace, ["../other.txt"])
+    ).rejects.toThrow("Invalid ignored file");
   });
 
   test("creates a normalized branch in the sibling worktrees directory", async () => {

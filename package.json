@@ -167,6 +167,14 @@
           "default": true,
           "description": "Automatically assign Workspace window colors from the active theme."
         },
+        "mischief.copyIgnoredItems": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Ignored Project files and folders selected for copying to new Workspaces. Stored in the Project root's .vscode/settings.json."
+        },
         "mischief.fontFamily": {
           "type": "string",
           "default": "",

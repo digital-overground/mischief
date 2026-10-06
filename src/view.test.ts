@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, test, vi } from "vitest";
 
+import { exec } from "./exec";
 import { isNonEmpty } from "./present";
 import { testValue } from "./test-value";
 import { MischiefView } from "./view";
@@ -100,6 +103,80 @@ const profileDatabase = () => ({
 });
 
 describe("view provider", () => {
+  test("remembers checked ignored items for the same Project", async () => {
+    const parent = await mkdtemp(path.join(os.tmpdir(), "mischief-picker-"));
+    const root = path.join(parent, "project");
+    try {
+      await mkdir(root);
+      await exec("git", ["-C", root, "init"]);
+      await writeFile(path.join(root, ".gitignore"), ".env\ncache/\n");
+      await writeFile(path.join(root, ".env"), "secret");
+      await mkdir(path.join(root, "cache"));
+      await writeFile(path.join(root, "cache", "data"), "cache");
+      const workspaces = [
+        path.join(parent, "first"),
+        path.join(parent, "second"),
+      ];
+      const snapshot = {
+        projects: [{ name: "project", root, workspaces: [] }],
+        ungrouped: [],
+      };
+      vscode.assignWorkspaceColors = false;
+      vscode.showInputBox.mockReset().mockResolvedValue("new");
+      vscode.showQuickPick.mockReset().mockImplementation(async (items) => {
+        const choices = testValue<{ label: string; picked: boolean }[]>(items);
+        await Promise.resolve();
+        return vscode.showQuickPick.mock.calls.length === 1
+          ? choices.filter((item) => item.label === "cache/")
+          : undefined;
+      });
+      const provider = new MischiefView(
+        testValue<never>({
+          createWorkspace: async () => {
+            const next = workspaces.shift();
+            if (next === undefined) {
+              throw new Error("No worktree path");
+            }
+            await mkdir(next);
+            return next;
+          },
+          open: async () => await Promise.resolve(snapshot),
+          refresh: async () => await Promise.resolve(snapshot),
+        }),
+        testValue<never>({
+          onChange: vi.fn<() => void>(),
+          snapshot: () => ({ threads: [] }),
+        }),
+        testValue<never>({ fsPath: process.cwd() }),
+        testValue<never>({
+          get: (_key: string, fallback: unknown) => fallback,
+          update: async () => {
+            await Promise.resolve();
+          },
+        }),
+        testValue<never>(profileDatabase())
+      );
+      await provider.initialize(root);
+      await provider.newWorkspace(root);
+      await provider.newWorkspace(root);
+      expect(
+        vscode.showQuickPick.mock.calls.map(([items]) => items)
+      ).toStrictEqual([
+        [
+          { label: ".env", picked: true },
+          { label: "cache/", picked: false },
+        ],
+        [
+          { label: ".env", picked: false },
+          { label: "cache/", picked: true },
+        ],
+      ]);
+    } finally {
+      vscode.showQuickPick.mockReset();
+      await rm(parent, { force: true, recursive: true });
+    }
+  });
+
   test("stages the current selection, or creates a Thread first, without sending", async () => {
     const events: string[] = [];
     const threads = {

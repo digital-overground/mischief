@@ -6,6 +6,7 @@ import { applyEdits, modify, parse } from "jsonc-parser/lib/esm/main.js";
 import * as vscode from "vscode";
 
 import { isDefined, isNonEmpty, isRecord } from "./present";
+import { readWorkspaceSettings } from "./workspace-settings";
 
 const BACKGROUND_KEYS = [
   "editor.background",
@@ -266,34 +267,6 @@ const hasWindowColors = (value: unknown): boolean => {
         WINDOW_KEYS.has(key) || (key.startsWith("[") && hasWindowColors(nested))
     )
   );
-};
-
-const readWorkspaceSettings = async (
-  workspacePath: string
-): Promise<{
-  file: string;
-  settings: Record<string, unknown>;
-  source: string;
-}> => {
-  const file = path.join(workspacePath, ".vscode", "settings.json");
-  let source = "{\n}\n";
-  try {
-    source = await readFile(file, "utf-8");
-  } catch (error) {
-    if (!isRecord(error) || error.code !== "ENOENT") {
-      throw error;
-    }
-  }
-  const errors: { error: number; length: number; offset: number }[] = [];
-  const settings = object(
-    parse(source, errors, {
-      allowTrailingComma: true,
-    })
-  );
-  if (!settings || errors.length) {
-    throw new Error(`Invalid Workspace settings: ${file}`);
-  }
-  return { file, settings, source };
 };
 
 const windowColor = (value: unknown): string | undefined => {

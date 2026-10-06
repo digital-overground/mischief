@@ -8,6 +8,10 @@ import * as vscode from "vscode";
 import { isDefined, isNonEmpty, isNonZero, isRecord } from "./present";
 import type { ProfileDatabase } from "./profile-database/profile-database";
 import {
+  copyIgnoredWorkspaceFiles,
+  ignoredWorkspaceFiles,
+} from "./projects/git";
+import {
   issueWorkspaceName,
   normalizeGitHubRepository,
   normalizeWorkspaceName,
@@ -36,9 +40,14 @@ import {
   ensureWorkspaceColors,
   workspaceWindowColor,
 } from "./workspace-colors";
+import {
+  readWorkspaceSettings,
+  updateWorkspaceSetting,
+} from "./workspace-settings";
 
 const VIEW_ID = "mischief.view";
 const START_WORKSPACES_KEY = "mischief.startWorkspaces";
+const COPY_IGNORED_ITEMS_KEY = "mischief.copyIgnoredItems";
 
 interface PendingWorkspaceStart {
   path: string;
@@ -461,6 +470,40 @@ export class MischiefView implements vscode.WebviewViewProvider {
       name,
       sourceRef
     );
+    try {
+      const entries = await ignoredWorkspaceFiles(project.root);
+      if (entries.length > 0) {
+        const { settings } = await readWorkspaceSettings(project.root);
+        const saved = settings[COPY_IGNORED_ITEMS_KEY];
+        const previous = Array.isArray(saved) ? new Set<unknown>(saved) : null;
+        const selected = await vscode.window.showQuickPick(
+          entries.map((entry) => ({
+            label: entry,
+            picked: previous ? previous.has(entry) : !entry.endsWith("/"),
+          })),
+          {
+            canPickMany: true,
+            placeHolder: "Select ignored files and folders to copy",
+            title: "Copy ignored items from the Project root",
+          }
+        );
+        if (selected) {
+          const names = selected.map((item) => item.label);
+          if (names.length > 0) {
+            await copyIgnoredWorkspaceFiles(project.root, workspace, names);
+          }
+          await updateWorkspaceSetting(
+            project.root,
+            COPY_IGNORED_ITEMS_KEY,
+            names
+          );
+        }
+      }
+    } catch (error) {
+      void vscode.window.showWarningMessage(
+        `Mischief created the Workspace but could not copy ignored items: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
     if (workspaceColorsEnabled()) {
       try {
         await assignWorkspaceColors(workspace, project.root);
