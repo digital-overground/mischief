@@ -607,6 +607,7 @@ export const Transcript = ({
   selectedSetupOptions,
   setup,
   streamedItems,
+  visibleCount,
 }: {
   onCopied: () => void;
   onSetupOptionChange: (id: string, checked: boolean) => void;
@@ -614,6 +615,7 @@ export const Transcript = ({
   selectedSetupOptions: string[];
   setup?: RenderedSetupStep;
   streamedItems: RenderedTranscriptItem[];
+  visibleCount: number;
 }): React.JSX.Element => {
   const onTranscriptHighlight = async (): Promise<void> => {
     const selection = window.getSelection();
@@ -666,7 +668,10 @@ export const Transcript = ({
   } else if (history.length || tail || streamed.length) {
     content = (
       <>
-        <TranscriptNodes items={committed} />
+        {committed.length > visibleCount ? (
+          <div className="empty">Scroll up to load older messages.</div>
+        ) : null}
+        <TranscriptNodes items={committed.slice(-visibleCount)} />
         <TranscriptNodes items={streamed} />
       </>
     );

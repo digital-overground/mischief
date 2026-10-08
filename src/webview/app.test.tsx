@@ -1272,6 +1272,53 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("renders recent history first and loads older entries on scroll", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            font: "Test Mono",
+            projects: { projects: [], ungrouped: [] },
+            threads: {
+              selected: {
+                commands: [],
+                configOptions: [],
+                drafts: [],
+                id: "long",
+                items: Array.from({ length: 210 }, (_, index) => ({
+                  id: `item-${index}`,
+                  kind: "assistant" as const,
+                  text: `Message ${index}`,
+                })),
+                name: "Long",
+                status: "idle",
+                steering: [],
+                streaming: false,
+              },
+              threads: [],
+              workspace: "/workspace",
+            },
+            type: "state",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    expect(document.querySelectorAll("#transcript .entry")).toHaveLength(100);
+    expect(document.querySelector("#transcript")?.textContent).not.toContain(
+      "Message 0"
+    );
+    const chat = document.querySelector<HTMLDivElement>("#chat");
+    if (!chat) {
+      throw new Error("Missing chat");
+    }
+    act(() => {
+      chat.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    expect(document.querySelectorAll("#transcript .entry")).toHaveLength(200);
+    await unmount();
+  });
+
   test("applies streaming transcript items without replacing history or composer text", async () => {
     const unmount = await renderApp();
     const state: HostToWebviewMessage = {
