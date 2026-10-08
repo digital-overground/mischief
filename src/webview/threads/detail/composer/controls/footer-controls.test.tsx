@@ -214,13 +214,28 @@ describe("Footer controls", () => {
       x: 0,
       y: 470,
     });
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({
+      bottom: 500,
+      height: 22,
+      left: 12,
+      right: 34,
+      toJSON: () => ({}),
+      top: 478,
+      width: 22,
+      x: 12,
+      y: 478,
+    });
     act(() => {
       button.dispatchEvent(
         new MouseEvent("click", { bubbles: true, clientX: 179 })
       );
     });
     const list = document.querySelector<HTMLElement>("#history-list");
-    expect(list?.style.left).toBe("8px");
+    expect({
+      bottom: list?.style.bottom,
+      left: list?.style.left,
+      maxHeight: list?.style.maxHeight,
+    }).toStrictEqual({ bottom: "22px", left: "8px", maxHeight: "470px" });
     expect(document.activeElement).toBe(list);
     expect(button?.getAttribute("aria-expanded")).toBe("true");
   });

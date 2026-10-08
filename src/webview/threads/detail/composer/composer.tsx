@@ -22,6 +22,14 @@ interface ComposerMatch {
   start: number;
 }
 
+const resizeComposer = (composer: HTMLTextAreaElement | null): void => {
+  if (!composer) {
+    return;
+  }
+  composer.style.height = "auto";
+  composer.style.height = `${composer.scrollHeight}px`;
+};
+
 const composerContext = (
   value: string,
   cursor: number
@@ -150,6 +158,7 @@ const ComposerView = ({
       : undefined;
     if (box.current) {
       box.current.value = draft?.text ?? "";
+      resizeComposer(box.current);
     }
     setImages(draft?.images ?? []);
     setContext(undefined);
@@ -170,6 +179,7 @@ const ComposerView = ({
       box.current.value = [box.current.value, ...drafts]
         .filter(Boolean)
         .join("\n\n");
+      resizeComposer(box.current);
     }
     consumedDrafts.current = draftKey;
     box.current?.focus();
@@ -205,6 +215,7 @@ const ComposerView = ({
     }
     if (box.current) {
       box.current.value = "";
+      resizeComposer(box.current);
     }
     setImages([]);
     setContext(undefined);
@@ -220,6 +231,7 @@ const ComposerView = ({
     const cursor = start + value.length + 1;
     if (box.current) {
       box.current.value = next;
+      resizeComposer(box.current);
     }
     setContext(undefined);
     window.requestAnimationFrame(() => {
@@ -234,7 +246,22 @@ const ComposerView = ({
     const value = `/${item.name}${item.inputHint === undefined ? "" : " "}`;
     if (box.current) {
       box.current.value = `${value}${text.slice(end)}`;
+      resizeComposer(box.current);
     }
+    setCommand(undefined);
+    window.requestAnimationFrame(() => {
+      box.current?.setSelectionRange(value.length, value.length);
+      box.current?.focus();
+    });
+  };
+
+  const selectSkill = (item: ThreadCommand): void => {
+    const value = `/${item.name} `;
+    if (box.current) {
+      box.current.value = `${value}${box.current.value}`;
+      resizeComposer(box.current);
+    }
+    setContext(undefined);
     setCommand(undefined);
     window.requestAnimationFrame(() => {
       box.current?.setSelectionRange(value.length, value.length);
@@ -327,6 +354,7 @@ const ComposerView = ({
         disabled={!selected && !setup}
         readOnly={setup}
         onChange={(event) => {
+          resizeComposer(event.currentTarget);
           updateSuggestions(
             event.currentTarget.value,
             event.currentTarget.selectionStart
@@ -399,6 +427,7 @@ const ComposerView = ({
       <FooterControls
         historyItems={historyItems}
         onJumpMessage={onJumpMessage}
+        onSelectSkill={selectSkill}
         onSend={() => {
           if (running) {
             postMessage({ type: "cancel" });

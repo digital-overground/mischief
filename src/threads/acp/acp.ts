@@ -61,6 +61,7 @@ export const MESSAGE_TARGET_ACTIONS_CAPABILITY =
   "magpi-acp/message-target-actions";
 export const NAVIGATE_TREE_METHOD = "_magpi-acp/session/navigate-tree";
 export const FORK_MESSAGE_ID_META = "magpi-acp/fork-message-id";
+export const COMMAND_SOURCE_META = "magpi-acp/command-source";
 
 const referencedPaths = (text: string): string[] => [
   ...new Set(
@@ -639,13 +640,17 @@ export const translateSessionUpdate = (
     }
     case "available_commands_update": {
       return {
-        commands: update.availableCommands.map((command) => ({
-          description: command.description,
-          ...(typeof command.input?.hint === "string"
-            ? { inputHint: command.input.hint }
-            : {}),
-          name: command.name,
-        })),
+        commands: update.availableCommands.map((command) => {
+          const source = command._meta?.[COMMAND_SOURCE_META];
+          return {
+            description: command.description,
+            ...(typeof command.input?.hint === "string"
+              ? { inputHint: command.input.hint }
+              : {}),
+            name: command.name,
+            ...(typeof source === "string" ? { source } : {}),
+          };
+        }),
         type: "commands",
       };
     }

@@ -285,6 +285,9 @@ describe("ACP adapter", () => {
       translateSessionUpdate({
         availableCommands: [
           {
+            _meta: {
+              "magpi-acp/command-source": "git:github.com/example/review",
+            },
             description: "Run a review",
             input: { _meta: { futureInputType: "text" }, hint: "[branch]" },
             name: "review",
@@ -303,6 +306,7 @@ describe("ACP adapter", () => {
           description: "Run a review",
           inputHint: "[branch]",
           name: "review",
+          source: "git:github.com/example/review",
         },
         { description: "Start fresh", name: "new" },
       ],

@@ -145,6 +145,39 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("auto-grows and shrinks the composer as its text changes", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("selected", []) })
+      );
+    });
+    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+    const valueDescriptor = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value"
+    );
+    if (!composer || !valueDescriptor?.set) {
+      throw new Error("Missing composer");
+    }
+    Object.defineProperty(composer, "scrollHeight", {
+      configurable: true,
+      get: () => (composer.value ? 160 : 86),
+    });
+    act(() => {
+      valueDescriptor.set?.call(composer, "A longer draft");
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(composer.style.height).toBe("160px");
+
+    act(() => {
+      valueDescriptor.set?.call(composer, "");
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(composer.style.height).toBe("86px");
+    await unmount();
+  });
+
   test("keeps the Project list visible while maximizing the current Thread", async () => {
     const unmount = await renderApp();
     act(() => {
@@ -1212,7 +1245,7 @@ describe("React webview", () => {
     }
     state.threads.selected.items = [
       {
-        html: '<p><a href="src/view.ts">src/view.ts</a></p>',
+        html: '<p><a href="src/view.ts#L3"><code>src/view.ts:3</code></a></p>',
         id: "assistant",
         kind: "assistant",
       },
@@ -1233,7 +1266,7 @@ describe("React webview", () => {
 
     expect(click.defaultPrevented).toBeTruthy();
     expect(postMessage).toHaveBeenCalledExactlyOnceWith({
-      href: "src/view.ts",
+      href: "src/view.ts#L3",
       type: "openTranscriptLink",
     });
     await unmount();
@@ -1347,6 +1380,158 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("sticks through streamed thinking and tool-call layout growth", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "ResizeObserver"
+    );
+    let resizeCallback: ResizeObserverCallback | undefined;
+    let observed: Element | undefined;
+    const observer: ResizeObserver = {
+      disconnect: () => {},
+      observe: () => {},
+      unobserve: () => {},
+    };
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      configurable: true,
+      value: class implements ResizeObserver {
+        private target: Element | undefined;
+        // oxlint-disable-next-line promise/prefer-await-to-callbacks -- ResizeObserver is callback-based
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallback = callback;
+        }
+        observe(target: Element): void {
+          this.target = target;
+          observed = this.target;
+        }
+        unobserve(target: Element): void {
+          this.target = target;
+        }
+        disconnect(): void {
+          this.target = undefined;
+        }
+      },
+    });
+    let unmount: (() => Promise<void>) | undefined;
+    try {
+      unmount = await renderApp();
+      const threadId = "selected";
+      const initial = threadState(threadId, []);
+      if (initial.type !== "state" || !initial.threads.selected) {
+        throw new Error("Missing selected Thread");
+      }
+      initial.threads.selected.status = "running";
+      act(() => {
+        window.dispatchEvent(new MessageEvent("message", { data: initial }));
+      });
+      const chat = document.querySelector<HTMLDivElement>("#chat");
+      if (!chat || !resizeCallback) {
+        throw new Error("Missing scroll observer");
+      }
+      let scrollHeight = 1000;
+      let scrollTop = 900;
+      const setScrollTop = vi.fn<(value: number) => void>((value) => {
+        scrollTop = value;
+      });
+      Object.defineProperties(chat, {
+        clientHeight: { configurable: true, value: 100 },
+        scrollHeight: { configurable: true, get: () => scrollHeight },
+        scrollTop: {
+          configurable: true,
+          get: () => scrollTop,
+          set: setScrollTop,
+        },
+      });
+      chat.dispatchEvent(new Event("scroll"));
+      if (observed?.id !== "chat-content") {
+        throw new Error("Resize observer is not watching transcript content");
+      }
+      const send = (
+        item: Extract<HostToWebviewMessage, { type: "transcript" }>["item"]
+      ): void => {
+        act(() => {
+          window.dispatchEvent(
+            new MessageEvent("message", {
+              data: {
+                item,
+                streaming: true,
+                threadId,
+                type: "transcript",
+              } satisfies HostToWebviewMessage,
+            })
+          );
+        });
+      };
+      send({
+        id: "thought",
+        kind: "thought",
+        text: "Thinking through the change",
+      });
+      expect(document.querySelector(".thinking-group")?.textContent).toContain(
+        "Thinking through the change"
+      );
+      scrollHeight += 250;
+      act(() => resizeCallback?.([], observer));
+      expect(setScrollTop).toHaveBeenLastCalledWith(scrollHeight);
+
+      send({ id: "tool", kind: "tool", title: "Read source" });
+      expect(document.querySelector("#transcript")?.textContent).toContain(
+        "Read source"
+      );
+      scrollHeight += 120;
+      act(() => resizeCallback?.([], observer));
+      expect(setScrollTop).toHaveBeenLastCalledWith(scrollHeight);
+
+      scrollTop = 300;
+      chat.dispatchEvent(new Event("scroll"));
+      setScrollTop.mockClear();
+      scrollHeight += 80;
+      act(() => resizeCallback?.([], observer));
+      expect(setScrollTop).not.toHaveBeenCalled();
+    } finally {
+      await unmount?.();
+      if (descriptor) {
+        Object.defineProperty(globalThis, "ResizeObserver", descriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, "ResizeObserver");
+      }
+    }
+  });
+
+  test("keeps the working-indicator slot while its spinner toggles", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("selected", []) })
+      );
+    });
+    const spinner = document.querySelector<HTMLDivElement>("#processing");
+    if (!spinner) {
+      throw new Error("Missing reserved working-indicator slot");
+    }
+    expect(spinner.hidden).toBeTruthy();
+
+    const running = threadState("selected", []);
+    if (running.type !== "state" || !running.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    running.threads.selected.status = "running";
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: running }));
+    });
+    expect(document.querySelector("#processing")).toBe(spinner);
+    expect(spinner.hidden).toBeFalsy();
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("selected", []) })
+      );
+    });
+    expect(document.querySelector("#processing")).toBe(spinner);
+    expect(spinner.hidden).toBeTruthy();
+    await unmount();
+  });
+
   test("history follows streamed messages and a jump stays put during later updates", async () => {
     const unmount = await renderApp();
     const state = threadState("selected", []);
@@ -1371,23 +1556,29 @@ describe("React webview", () => {
         })
       );
     });
-    const scrollIntoView = vi.fn<(options: ScrollIntoViewOptions) => void>();
+    const chat = document.querySelector<HTMLElement>("#chat");
     const target = document.querySelector<HTMLElement>(
       '[data-message-id="prompt"]'
     );
-    if (!target) {
-      throw new Error("Missing prompt");
+    if (!chat || !target) {
+      throw new Error("Missing transcript scroll target");
     }
+    const scrollIntoView = vi.fn<(options: ScrollIntoViewOptions) => void>(
+      () => {
+        chat.scrollLeft = 48;
+      }
+    );
     target.scrollIntoView = scrollIntoView;
-    const chat = document.querySelector<HTMLElement>("#chat");
-    if (!chat) {
-      throw new Error("Missing chat");
-    }
+    chat.scrollLeft = 12;
+    chat.getBoundingClientRect = () => testValue<DOMRect>({ top: 20 });
+    target.getBoundingClientRect = () => testValue<DOMRect>({ top: 220 });
+    let scrollTop = 40;
     const scroll = vi.fn<(value: number) => void>();
     Object.defineProperty(chat, "scrollTop", {
       configurable: true,
-      get: () => 0,
+      get: () => scrollTop,
       set: (value: number) => {
+        scrollTop = value;
         scroll(value);
       },
     });
@@ -1406,7 +1597,11 @@ describe("React webview", () => {
         .querySelector<HTMLButtonElement>("#history-list .history-jump")
         ?.click();
     });
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+    expect({
+      scrollIntoView: scrollIntoView.mock.calls,
+      scrollLeft: chat.scrollLeft,
+      scrollTop,
+    }).toStrictEqual({ scrollIntoView: [], scrollLeft: 12, scrollTop: 240 });
     scroll.mockClear();
     act(() => {
       window.dispatchEvent(
@@ -1601,6 +1796,63 @@ describe("React webview", () => {
     expect(document.activeElement).toBe(composer);
     expect(composer.selectionStart).toBe(composer.value.length);
     expect(postMessage).toHaveBeenCalledWith({ type: "draftsConsumed" });
+    await unmount();
+  });
+
+  test("prepends a selected skill to the existing draft", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            font: "Test Mono",
+            projects: { projects: [], ungrouped: [] },
+            threads: {
+              selected: {
+                commands: [
+                  {
+                    description: "Review changes",
+                    name: "skill:ponytail-review",
+                  },
+                ],
+                configOptions: [],
+                drafts: [],
+                id: "selected",
+                items: [],
+                name: "Selected Thread",
+                status: "idle",
+                steering: [],
+                streaming: false,
+              },
+              threads: [],
+              workspace: "/workspace",
+            },
+            type: "state",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+    const value = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value"
+    );
+    if (!composer || !value?.set) {
+      throw new Error("Missing composer");
+    }
+    act(() => {
+      value.set?.call(composer, "Review my current branch");
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
+      document
+        .querySelector<HTMLButtonElement>("#skill-picker-button")
+        ?.click();
+    });
+    act(() => {
+      document.querySelector<HTMLButtonElement>(".skill-picker-entry")?.click();
+    });
+    expect(composer.value).toBe(
+      "/skill:ponytail-review Review my current branch"
+    );
     await unmount();
   });
 
@@ -1926,7 +2178,7 @@ describe("React webview", () => {
     await unmount();
   });
 
-  test("renders elicitation choices as radios and submits custom context with the selection", async () => {
+  test("renders themed elicitation choices and submits a multi-select with custom context", async () => {
     const unmount = await renderApp();
     const state: HostToWebviewMessage = {
       font: "Test Mono",
@@ -1959,6 +2211,16 @@ describe("React webview", () => {
                 ],
                 required: false,
                 type: "select",
+              },
+              {
+                label: "Allowed tools",
+                name: "tools",
+                options: [
+                  { name: "Read", value: "read" },
+                  { name: "Search", value: "search" },
+                ],
+                required: false,
+                type: "multiselect",
               },
               {
                 description: "Add context for the selected suggestion.",
@@ -1998,25 +2260,50 @@ describe("React webview", () => {
     const submit = document.querySelector<HTMLButtonElement>(
       '#interaction button[type="submit"]'
     );
-    if (!custom || !submit || choices.length !== 2) {
+    const multipleChoices = [
+      ...document.querySelectorAll<HTMLInputElement>(
+        '#interaction input[type="checkbox"][name="tools"]'
+      ),
+    ];
+    if (
+      !custom ||
+      !submit ||
+      choices.length !== 2 ||
+      multipleChoices.length !== 2
+    ) {
       throw new Error("Missing elicitation controls");
     }
 
     expect({
+      actionIcons: document.querySelectorAll(
+        ".interaction-actions .interaction-action-icon"
+      ).length,
+      blocked: document.querySelector("#thread-content")?.hasAttribute("inert"),
+      cancelIsDanger:
+        document.querySelector(".interaction-actions .action.danger") !== null,
       context: document.querySelector(".interaction-context")?.textContent,
+      customDescription: document.querySelector(
+        ".interaction-custom-response .interaction-field-description"
+      )?.textContent,
       descriptions: [...document.querySelectorAll(".interaction-choice")].map(
         (choice) => choice.textContent
       ),
-      icon: document.querySelector(".interaction-question .lucide"),
+      icon: document.querySelector(".interaction-heading .lucide"),
       question: document.querySelector(".interaction-question")?.textContent,
       tooltips: [
         ...document.querySelectorAll<HTMLButtonElement>("#interaction button"),
       ].map((button) => button.title),
     }).toStrictEqual({
-      context: "Context:Test prompt context.",
+      actionIcons: 2,
+      blocked: true,
+      cancelIsDanger: true,
+      context: "ContextTest prompt context.",
+      customDescription: "Optional additional info or options",
       descriptions: [
         "Immutable once round startsGames can trust the roster for the whole round.",
         "Editable until first scoreChanges remain possible until scoring begins.",
+        "Read",
+        "Search",
       ],
       icon: testValue<unknown>(expect.any(SVGElement)),
       question: "Can Team membership change after a round starts?",
@@ -2026,6 +2313,10 @@ describe("React webview", () => {
     postMessage.mockClear();
     act(() => {
       choices[0]?.click();
+      multipleChoices[0]?.click();
+      multipleChoices[1]?.click();
+    });
+    act(() => {
       custom.value = "Allow admins to correct mistakes.";
       submit.click();
     });
@@ -2037,7 +2328,101 @@ describe("React webview", () => {
         values: {
           choice: "immutable",
           other: "Allow admins to correct mistakes.",
+          tools: ["read", "search"],
         },
+      },
+      type: "respond",
+    });
+    await unmount();
+  });
+
+  test("turns numbered ask-user options into selectable choices", async () => {
+    const unmount = await renderApp();
+    const state: HostToWebviewMessage = {
+      font: "Test Mono",
+      projects: { projects: [], ungrouped: [] },
+      threads: {
+        selected: {
+          commands: [],
+          configOptions: [],
+          drafts: [],
+          id: "thread-1",
+          interaction: {
+            fields: [
+              {
+                description: "Type your selection(s)...",
+                label: "Answer",
+                name: "answer",
+                required: true,
+                type: "text",
+              },
+            ],
+            id: "ask-2",
+            kind: "elicitation",
+            message: [
+              "Which detail should I polish next? Select any that apply.",
+              "",
+              "Options (select one or more):",
+              "1. Typography — Theme the text.",
+              "2. Spacing — Fit more choices.",
+              "3. Buttons — Move actions right.",
+            ].join("\n"),
+          },
+          items: [],
+          name: "Elicitation",
+          status: "waiting",
+          steering: [],
+          streaming: false,
+        },
+        threads: [],
+        workspace: "/workspace",
+      },
+      type: "state",
+    };
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+
+    const choices = [
+      ...document.querySelectorAll<HTMLInputElement>(
+        '#interaction input[type="checkbox"][name="__mischief_options"]'
+      ),
+    ];
+    const custom = document.querySelector<HTMLTextAreaElement>(
+      '#interaction textarea[name="answer"]'
+    );
+    const submit = document.querySelector<HTMLButtonElement>(
+      '#interaction button[type="submit"]'
+    );
+    if (choices.length !== 3 || !custom || !submit) {
+      throw new Error("Missing selectable ask-user options");
+    }
+    expect({
+      choices: [...document.querySelectorAll(".interaction-choice-title")].map(
+        (choice) => choice.textContent
+      ),
+      customDescription: document.querySelector(
+        ".interaction-custom-response .interaction-field-description"
+      )?.textContent,
+      question: document.querySelector(".interaction-question")?.textContent,
+    }).toStrictEqual({
+      choices: ["Typography", "Spacing", "Buttons"],
+      customDescription: "Optional additional info or options",
+      question: "Which detail should I polish next? Select any that apply.",
+    });
+
+    postMessage.mockClear();
+    act(() => {
+      choices[0]?.click();
+      choices[2]?.click();
+      custom.value = "More contrast";
+      submit.click();
+    });
+    expect(postMessage).toHaveBeenCalledWith({
+      id: "ask-2",
+      response: {
+        action: "accept",
+        values: { answer: "Typography, Buttons, More contrast" },
       },
       type: "respond",
     });

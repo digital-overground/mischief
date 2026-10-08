@@ -28,7 +28,9 @@ export const HistoryControl = ({
   };
 }): React.JSX.Element => {
   const [open, setOpen] = useState(false);
+  const [bottom, setBottom] = useState(28);
   const [left, setLeft] = useState(8);
+  const [maxHeight, setMaxHeight] = useState(500);
   const button = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -81,11 +83,31 @@ export const HistoryControl = ({
                 ? bounds.width
                 : window.innerWidth;
             const popupWidth = Math.min(500, width - 16);
+            const buttonBounds = event.currentTarget.getBoundingClientRect();
+            const clippingTop =
+              footer?.closest("#thread")?.getBoundingClientRect().top ?? 0;
+            setBottom(
+              Math.max(
+                0,
+                (bounds?.bottom ?? window.innerHeight) - buttonBounds.top
+              )
+            );
+            setMaxHeight(
+              Math.max(
+                120,
+                Math.min(
+                  buttonBounds.top > 0 ? buttonBounds.top : window.innerHeight,
+                  window.innerHeight
+                ) -
+                  Math.max(0, clippingTop) -
+                  8
+              )
+            );
             setLeft(
               Math.max(
                 8,
                 Math.min(
-                  event.clientX - (bounds?.left ?? 0),
+                  buttonBounds.left - (bounds?.left ?? 0),
                   width - popupWidth - 8
                 )
               )
@@ -103,7 +125,7 @@ export const HistoryControl = ({
           role="dialog"
           aria-label="Message history"
           tabIndex={-1}
-          style={{ left }}
+          style={{ bottom, left, maxHeight }}
         >
           {items.map((item) => {
             const threadId = selected?.id;

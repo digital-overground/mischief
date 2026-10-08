@@ -8,6 +8,10 @@ import * as vscode from "vscode";
 import { isDefined, isNonEmpty, isNonZero, isRecord } from "./present";
 import type { ProfileDatabase } from "./profile-database/profile-database";
 import {
+  copyIgnoredWorkspaceFiles,
+  ignoredWorkspaceFiles,
+} from "./projects/git";
+import {
   issueWorkspaceName,
   normalizeGitHubRepository,
   normalizeWorkspaceName,
@@ -36,9 +40,14 @@ import {
   ensureWorkspaceColors,
   workspaceWindowColor,
 } from "./workspace-colors";
+import {
+  readWorkspaceSettings,
+  updateWorkspaceSetting,
+} from "./workspace-settings";
 
 const VIEW_ID = "mischief.view";
 const START_WORKSPACES_KEY = "mischief.startWorkspaces";
+const COPY_IGNORED_ITEMS_KEY = "mischief.copyIgnoredItems";
 
 interface PendingWorkspaceStart {
   path: string;
@@ -57,6 +66,81 @@ const markdown = new MarkdownIt({ breaks: true, html: false, linkify: true });
 const validateMarkdownLink = markdown.validateLink.bind(markdown);
 markdown.validateLink = (href) =>
   /^file:/iu.test(href) || validateMarkdownLink(href);
+const fileReference =
+  /^(?<file>[A-Za-z0-9_@.+~-]+(?:[/][A-Za-z0-9_@.+~-]+)*[.][A-Za-z0-9_+-]+):(?<line>[1-9][0-9]*)(?:[-–—][1-9][0-9]*)?$/u;
+const resolveTranscriptFile = async (
+  workspace: string,
+  root: string,
+  requestedPath: string
+): Promise<string | undefined> => {
+  try {
+    return await realpath(requestedPath);
+  } catch {
+    const basename = path.basename(requestedPath);
+    if (
+      path.relative(workspace, requestedPath) !== basename ||
+      !/^[A-Za-z0-9_.-]+$/u.test(basename)
+    ) {
+      return undefined;
+    }
+    let matches: vscode.Uri[];
+    try {
+      matches = await vscode.workspace.findFiles(
+        new vscode.RelativePattern(workspace, `**/${basename}`),
+        "**/{.git,node_modules,dist,build}/**",
+        100
+      );
+    } catch {
+      return undefined;
+    }
+    let selectedPath: string | undefined;
+    if (matches.length === 1) {
+      selectedPath = matches[0]?.fsPath;
+    } else if (matches.length > 1) {
+      const selected = await vscode.window.showQuickPick(
+        matches.map((file) => ({
+          label: path.relative(root, file.fsPath),
+          path: file.fsPath,
+        })),
+        { placeHolder: `Choose a file named ${basename}` }
+      );
+      selectedPath = selected?.path;
+    }
+    if (selectedPath === undefined || selectedPath.length === 0) {
+      return undefined;
+    }
+    try {
+      return await realpath(selectedPath);
+    } catch {
+      return undefined;
+    }
+  }
+};
+const defaultCodeInline = markdown.renderer.rules.code_inline;
+markdown.renderer.rules.code_inline = (
+  tokens,
+  index,
+  options,
+  env,
+  renderer
+) => {
+  const token = tokens[index];
+  if (token === undefined) {
+    return "";
+  }
+  const rendered =
+    defaultCodeInline?.(tokens, index, options, env, renderer) ??
+    `<code>${markdown.utils.escapeHtml(token.content)}</code>`;
+  const match = fileReference.exec(token.content);
+  if (match?.groups === undefined) {
+    return rendered;
+  }
+  const href = `${match.groups.file
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/")}#L${match.groups.line}`;
+  return `<a href="${href}">${rendered}</a>`;
+};
 
 const renderTranscriptItem = (
   item: TranscriptItem
@@ -461,6 +545,40 @@ export class MischiefView implements vscode.WebviewViewProvider {
       name,
       sourceRef
     );
+    try {
+      const entries = await ignoredWorkspaceFiles(project.root);
+      if (entries.length > 0) {
+        const { settings } = await readWorkspaceSettings(project.root);
+        const saved = settings[COPY_IGNORED_ITEMS_KEY];
+        const previous = Array.isArray(saved) ? new Set<unknown>(saved) : null;
+        const selected = await vscode.window.showQuickPick(
+          entries.map((entry) => ({
+            label: entry,
+            picked: previous ? previous.has(entry) : !entry.endsWith("/"),
+          })),
+          {
+            canPickMany: true,
+            placeHolder: "Select ignored files and folders to copy",
+            title: "Copy ignored items from the Project root",
+          }
+        );
+        if (selected) {
+          const names = selected.map((item) => item.label);
+          if (names.length > 0) {
+            await copyIgnoredWorkspaceFiles(project.root, workspace, names);
+          }
+          await updateWorkspaceSetting(
+            project.root,
+            COPY_IGNORED_ITEMS_KEY,
+            names
+          );
+        }
+      }
+    } catch (error) {
+      void vscode.window.showWarningMessage(
+        `Mischief created the Workspace but could not copy ignored items: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
     if (workspaceColorsEnabled()) {
       try {
         await assignWorkspaceColors(workspace, project.root);
@@ -500,7 +618,8 @@ export class MischiefView implements vscode.WebviewViewProvider {
     if (
       !editor ||
       editor.selection.isEmpty ||
-      editor.document.uri.scheme !== "file"
+      (editor.document.uri.scheme !== "file" &&
+        editor.document.uri.scheme !== "git")
     ) {
       return;
     }
@@ -1113,13 +1232,17 @@ export class MischiefView implements vscode.WebviewViewProvider {
       return;
     }
     let root: string;
-    let candidate: string;
     try {
-      [root, candidate] = await Promise.all([
-        realpath(workspace),
-        realpath(fileURLToPath(target)),
-      ]);
+      root = await realpath(workspace);
     } catch {
+      return;
+    }
+    const candidate = await resolveTranscriptFile(
+      workspace,
+      root,
+      fileURLToPath(target)
+    );
+    if (candidate === undefined) {
       return;
     }
     const relative = path.relative(root, candidate);

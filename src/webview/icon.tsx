@@ -7,6 +7,7 @@ type IconKind =
   | "circle"
   | "circleSlash"
   | "download"
+  | "draftingCompass"
   | "history"
   | "maximize"
   | "minimize"
@@ -28,6 +29,8 @@ type IconKind =
   | "search"
   | "send"
   | "signpost"
+  | "square"
+  | "squareCheck"
   | "stop"
   | "terminal"
   | "tool"
@@ -96,6 +99,15 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M12 3v12" />
       <path d="m7 10 5 5 5-5" />
       <path d="M5 21h14" />
+    </>
+  ),
+  draftingCompass: (
+    <>
+      <path d="m12.99 6.74 1.93 3.44" />
+      <path d="M19.136 12a10 10 0 0 1-14.271 0" />
+      <path d="m21 21-2.16-3.84" />
+      <path d="m3 21 8.02-14.26" />
+      <circle cx="12" cy="5" r="2" />
     </>
   ),
   externalLink: (
@@ -237,6 +249,13 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M12 13v8" />
       <path d="M12 3v3" />
       <path d="M2.354 10.354a1.207 1.207 0 0 1 0-1.708l2.06-2.06A2 2 0 0 1 5.828 6h12.344a2 2 0 0 1 1.414.586l2.06 2.06a1.207 1.207 0 0 1 0 1.708l-2.06 2.06a2 2 0 0 1-1.414.586H5.828a2 2 0 0 1-1.414-.586z" />
+    </>
+  ),
+  square: <rect width="18" height="18" x="3" y="3" rx="2" />,
+  squareCheck: (
+    <>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="m9 12 2 2 4-4" />
     </>
   ),
   stop: <rect width="18" height="18" x="3" y="3" rx="2" />,

@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, test, vi } from "vitest";
 
+import { exec } from "./exec";
 import { isNonEmpty } from "./present";
 import { testValue } from "./test-value";
 import { MischiefView } from "./view";
@@ -25,10 +28,26 @@ const vscode = vi.hoisted(() => ({
   executeCommand: vi.fn<() => Promise<void>>(async () => {
     await Promise.resolve();
   }),
+  findFiles: vi.fn<(...args: unknown[]) => Promise<{ fsPath: string }[]>>(),
   openExternal: vi.fn<() => Promise<boolean>>(async () => {
     await Promise.resolve();
     return true;
   }),
+  range: vi.fn<
+    (
+      startLine: number,
+      startCharacter: number,
+      endLine: number,
+      endCharacter: number
+    ) => {
+      end: { character: number; line: number };
+      start: { character: number; line: number };
+    }
+  >((startLine, startCharacter, endLine, endCharacter) => ({
+    end: { character: endCharacter, line: endLine },
+    start: { character: startCharacter, line: startLine },
+  })),
+  relativePattern: vi.fn<() => object>(() => ({})),
   showErrorMessage: vi.fn<() => Promise<void>>(async () => {
     await Promise.resolve();
   }),
@@ -54,6 +73,8 @@ vi.mock(import("vscode"), () =>
   testValue<never>({
     ConfigurationTarget: { Global: 1, Workspace: 2 },
     QuickPickItemKind: { Separator: -1 },
+    Range: vscode.range,
+    RelativePattern: vscode.relativePattern,
     ThemeIcon: class ThemeIcon {
       readonly id: string;
 
@@ -84,6 +105,7 @@ vi.mock(import("vscode"), () =>
       showWarningMessage: vscode.showWarningMessage,
     },
     workspace: {
+      findFiles: vscode.findFiles,
       getConfiguration: () => ({
         get: (key: string) =>
           key === "assignWorkspaceColors" ? vscode.assignWorkspaceColors : "",
@@ -100,6 +122,80 @@ const profileDatabase = () => ({
 });
 
 describe("view provider", () => {
+  test("remembers checked ignored items for the same Project", async () => {
+    const parent = await mkdtemp(path.join(os.tmpdir(), "mischief-picker-"));
+    const root = path.join(parent, "project");
+    try {
+      await mkdir(root);
+      await exec("git", ["-C", root, "init"]);
+      await writeFile(path.join(root, ".gitignore"), ".env\ncache/\n");
+      await writeFile(path.join(root, ".env"), "secret");
+      await mkdir(path.join(root, "cache"));
+      await writeFile(path.join(root, "cache", "data"), "cache");
+      const workspaces = [
+        path.join(parent, "first"),
+        path.join(parent, "second"),
+      ];
+      const snapshot = {
+        projects: [{ name: "project", root, workspaces: [] }],
+        ungrouped: [],
+      };
+      vscode.assignWorkspaceColors = false;
+      vscode.showInputBox.mockReset().mockResolvedValue("new");
+      vscode.showQuickPick.mockReset().mockImplementation(async (items) => {
+        const choices = testValue<{ label: string; picked: boolean }[]>(items);
+        await Promise.resolve();
+        return vscode.showQuickPick.mock.calls.length === 1
+          ? choices.filter((item) => item.label === "cache/")
+          : undefined;
+      });
+      const provider = new MischiefView(
+        testValue<never>({
+          createWorkspace: async () => {
+            const next = workspaces.shift();
+            if (next === undefined) {
+              throw new Error("No worktree path");
+            }
+            await mkdir(next);
+            return next;
+          },
+          open: async () => await Promise.resolve(snapshot),
+          refresh: async () => await Promise.resolve(snapshot),
+        }),
+        testValue<never>({
+          onChange: vi.fn<() => void>(),
+          snapshot: () => ({ threads: [] }),
+        }),
+        testValue<never>({ fsPath: process.cwd() }),
+        testValue<never>({
+          get: (_key: string, fallback: unknown) => fallback,
+          update: async () => {
+            await Promise.resolve();
+          },
+        }),
+        testValue<never>(profileDatabase())
+      );
+      await provider.initialize(root);
+      await provider.newWorkspace(root);
+      await provider.newWorkspace(root);
+      expect(
+        vscode.showQuickPick.mock.calls.map(([items]) => items)
+      ).toStrictEqual([
+        [
+          { label: ".env", picked: true },
+          { label: "cache/", picked: false },
+        ],
+        [
+          { label: ".env", picked: false },
+          { label: "cache/", picked: true },
+        ],
+      ]);
+    } finally {
+      vscode.showQuickPick.mockReset();
+      await rm(parent, { force: true, recursive: true });
+    }
+  });
+
   test("stages the current selection, or creates a Thread first, without sending", async () => {
     const events: string[] = [];
     const threads = {
@@ -124,7 +220,7 @@ describe("view provider", () => {
       document: {
         getText: () => "const answer = 42;\n",
         languageId: "typescript",
-        uri: { fsPath: "/workspace/src/example.ts", scheme: "file" },
+        uri: { fsPath: "/workspace/src/example.ts", scheme: "git" },
       },
       selection: {
         end: { character: 0, line: 3 },
@@ -1362,11 +1458,14 @@ describe("view provider", () => {
     });
   });
 
-  test("toggles Expand All and Collapse All in the native Mischief title bar", () => {
+  test("contributes editor and Mischief title-bar menu actions", () => {
     const manifest = testValue<{
       contributes: {
         commands: { command: string; icon?: string; title: string }[];
-        menus: Record<string, { command: string; group: string }[]>;
+        menus: Record<
+          string,
+          { command: string; group: string; when?: string }[]
+        >;
       };
     }>(JSON.parse(readFileSync("package.json", "utf-8")));
 
@@ -1398,6 +1497,20 @@ describe("view provider", () => {
         },
       ])
     );
+    expect(manifest.contributes.menus["editor/context"]).toStrictEqual(
+      expect.arrayContaining([
+        {
+          command: "mischief.addSelectionToCurrentThread",
+          group: "1_chat@-2",
+          when: "editorHasSelection && (resourceScheme == file || resourceScheme == git)",
+        },
+        {
+          command: "mischief.addSelectionToNewThread",
+          group: "1_chat@-1",
+          when: "editorHasSelection && (resourceScheme == file || resourceScheme == git)",
+        },
+      ])
+    );
   });
 
   test("static webview shell loads the React bundle", () => {
@@ -1406,6 +1519,13 @@ describe("view provider", () => {
     expect(html).toContain('id="root"');
     expect(html).toContain('src="{{scriptUri}}"');
     expect(html).toContain('href="{{styleUri}}"');
+  });
+
+  test("caps composer height relative to a short webview", () => {
+    const css = readFileSync("media/webview.css", "utf-8");
+    const composerRule = /#composer \{[\s\S]*?\n\}/u.exec(css)?.[0];
+
+    expect(composerRule).toContain("max-height: min(400px, 45vh);");
   });
 
   test("sends only the changed transcript item while streaming", async () => {
@@ -1827,6 +1947,57 @@ describe("view provider", () => {
     });
   });
 
+  test("opens a unique basename reference at its line", async () => {
+    let receive: ((message: unknown) => void) | undefined;
+    const workspace = process.cwd();
+    const file = path.join(workspace, "src/view.ts");
+    vscode.showTextDocument.mockClear();
+    vscode.findFiles.mockReset().mockResolvedValue([{ fsPath: file }]);
+    const provider = new MischiefView(
+      testValue<never>({}),
+      testValue<never>({
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({ threads: [], workspace }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase())
+    );
+    await provider.resolveWebviewView(
+      testValue<never>({
+        onDidDispose: vi.fn<() => void>(),
+        webview: {
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => `webview:${uri.fsPath}`,
+          }),
+          cspSource: "webview-csp",
+          html: "",
+          onDidReceiveMessage: (listener: (message: unknown) => void) => {
+            receive = listener;
+          },
+          options: {},
+          postMessage: vi.fn<() => void>(),
+        },
+      })
+    );
+
+    receive?.({ href: "view.ts#L12", type: "openTranscriptLink" });
+
+    await vi.waitFor(() => {
+      expect(vscode.showTextDocument).toHaveBeenCalledExactlyOnceWith(
+        { fsPath: file },
+        {
+          preview: true,
+          selection: {
+            end: { character: 0, line: 11 },
+            start: { character: 0, line: 11 },
+          },
+        }
+      );
+    });
+    vscode.findFiles.mockReset().mockResolvedValue([]);
+  });
+
   test("renders Markdown without allowing raw HTML", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     const webview = {
@@ -1851,7 +2022,7 @@ describe("view provider", () => {
             {
               id: "assistant-1",
               kind: "assistant",
-              text: "**Bold** <script>alert(1)</script> [Open](file:///workspace/src/view.ts)",
+              text: "**Bold** <script>alert(1)</script> [Open](file:///workspace/src/view.ts) `RoundReview.swift:27` and `Sources/View/PlayerInput.swift:307–308`.",
             },
           ],
         },
@@ -1874,7 +2045,7 @@ describe("view provider", () => {
       threads: { selected: { items: { html: string }[] } };
     }>(postMessage.mock.calls.at(-1)?.[0]);
     expect(state.threads.selected.items[0]?.html).toBe(
-      '<p><strong>Bold</strong> &lt;script&gt;alert(1)&lt;/script&gt; <a href="file:///workspace/src/view.ts">Open</a></p>\n'
+      '<p><strong>Bold</strong> &lt;script&gt;alert(1)&lt;/script&gt; <a href="file:///workspace/src/view.ts">Open</a> <a href="RoundReview.swift#L27"><code>RoundReview.swift:27</code></a> and <a href="Sources/View/PlayerInput.swift#L307"><code>Sources/View/PlayerInput.swift:307–308</code></a>.</p>\n'
     );
   });
 });

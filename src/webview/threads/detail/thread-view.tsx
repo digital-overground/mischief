@@ -16,8 +16,14 @@ import { Transcript } from "./transcript";
 
 const noTranscriptItems: RenderedTranscriptItem[] = [];
 
-const Processing = (): React.JSX.Element => (
-  <div id="processing" role="status" aria-label="Agent is working" />
+const Processing = ({ hidden }: { hidden: boolean }): React.JSX.Element => (
+  <div
+    id="processing"
+    aria-hidden={hidden}
+    aria-label={hidden ? undefined : "Agent is working"}
+    hidden={hidden}
+    role={hidden ? undefined : "status"}
+  />
 );
 
 // oxlint-disable-next-line complexity -- the component renders Thread state branches
@@ -41,6 +47,7 @@ export const ThreadView = ({
   };
 }): React.JSX.Element => {
   const chat = useRef<HTMLDivElement>(null);
+  const chatContent = useRef<HTMLDivElement>(null);
   const previousThread = useRef<string | null>(null);
   const [copyNotice, setCopyNotice] = useState(0);
   const [selectedSetupOptions, setSelectedSetupOptions] = useState<string[]>(
@@ -78,6 +85,26 @@ export const ThreadView = ({
     }
     previousThread.current = selected?.id ?? null;
   }, [changed, selected, transcriptItems]);
+  useEffect(() => {
+    const container = chat.current;
+    const content = chatContent.current;
+    const observer =
+      container && content && typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            if (shouldStick.current) {
+              container.scrollTop = container.scrollHeight;
+            }
+          })
+        : undefined;
+    if (content) {
+      observer?.observe(content);
+    }
+    return () => {
+      if (observer) {
+        observer.disconnect();
+      }
+    };
+  }, []);
   const streaming =
     transcript.threadId === selected?.id
       ? transcript.streaming
@@ -100,7 +127,10 @@ export const ThreadView = ({
   const blocked = selected?.sessionOperation !== undefined;
   return (
     <section id="thread" aria-busy={blocked}>
-      <div id="thread-content" inert={blocked}>
+      <div
+        id="thread-content"
+        inert={blocked || Boolean(selected?.interaction)}
+      >
         <header id="thread-header">
           <span className="heading" id="thread-title">
             {setup ? "Setup" : (selected?.name ?? "Thread")}
@@ -142,64 +172,69 @@ export const ThreadView = ({
               48;
           }}
         >
-          <Transcript
-            onCopied={() => {
-              setCopyNotice((notice) => notice + 1);
-            }}
-            selected={selected}
-            onSetupOptionChange={(id, checked) => {
-              setSelectedSetupOptions((current) =>
-                checked
-                  ? [...new Set([...current, id])]
-                  : current.filter((candidate) => candidate !== id)
-              );
-            }}
-            selectedSetupOptions={selectedSetupOptions}
-            setup={setup}
-            streamedItems={transcriptItems}
-            key={setup ? "setup" : (selected?.id ?? "none")}
-          />
-          {processing ? <Processing /> : null}
-          <div id="notice">{selected?.error ?? ""}</div>
-          <div id="actions">
-            {selected?.status === "error" ? (
-              <button
-                className="action primary"
-                title="Retry"
-                onClick={() => {
-                  postMessage({ type: "retry" });
-                }}
-              >
-                Retry
-              </button>
-            ) : null}
-            {selected?.authentication ? (
-              <button
-                className="action primary"
-                title="Authenticate Agent"
-                onClick={() => {
-                  postMessage({ type: "authenticate" });
-                }}
-              >
-                {selected.authentication.label}
-              </button>
-            ) : null}
+          <div id="chat-content" ref={chatContent}>
+            <Transcript
+              onCopied={() => {
+                setCopyNotice((notice) => notice + 1);
+              }}
+              selected={selected}
+              onSetupOptionChange={(id, checked) => {
+                setSelectedSetupOptions((current) =>
+                  checked
+                    ? [...new Set([...current, id])]
+                    : current.filter((candidate) => candidate !== id)
+                );
+              }}
+              selectedSetupOptions={selectedSetupOptions}
+              setup={setup}
+              streamedItems={transcriptItems}
+              key={setup ? "setup" : (selected?.id ?? "none")}
+            />
+            <div id="notice">{selected?.error ?? ""}</div>
+            <div id="actions">
+              {selected?.status === "error" ? (
+                <button
+                  className="action primary"
+                  title="Retry"
+                  onClick={() => {
+                    postMessage({ type: "retry" });
+                  }}
+                >
+                  Retry
+                </button>
+              ) : null}
+              {selected?.authentication ? (
+                <button
+                  className="action primary"
+                  title="Authenticate Agent"
+                  onClick={() => {
+                    postMessage({ type: "authenticate" });
+                  }}
+                >
+                  {selected.authentication.label}
+                </button>
+              ) : null}
+            </div>
+            <Processing hidden={!processing} />
           </div>
-          <Interaction interaction={selected?.interaction} />
         </div>
         <SteeringControl messages={selected?.steering ?? []} />
         <PlanControl plan={plan} key={plan?.id ?? "no-plan"} />
         <Composer
           historyItems={visibleMessages}
           onJumpMessage={(id) => {
+            const container = chat.current;
             const target = [
-              ...(chat.current?.querySelectorAll<HTMLElement>(
+              ...(container?.querySelectorAll<HTMLElement>(
                 "[data-message-id]"
               ) ?? []),
             ].find((element) => element.dataset.messageId === id);
-            if (target) {
+            if (container && target) {
               shouldStick.current = false;
-              target.scrollIntoView({ block: "start" });
+              // scrollIntoView can also shift the transcript horizontally.
+              container.scrollTop +=
+                target.getBoundingClientRect().top -
+                container.getBoundingClientRect().top;
             }
           }}
           contextItems={contextItems}
@@ -209,6 +244,7 @@ export const ThreadView = ({
           setupSelected={selectedSetupOptions}
         />
       </div>
+      <Interaction interaction={selected?.interaction} />
       {isNonEmpty(processingLabel) ? (
         <div
           aria-live="polite"
