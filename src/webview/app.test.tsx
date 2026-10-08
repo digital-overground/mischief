@@ -1245,7 +1245,7 @@ describe("React webview", () => {
     }
     state.threads.selected.items = [
       {
-        html: '<p><a href="src/view.ts">src/view.ts</a></p>',
+        html: '<p><a href="src/view.ts#L3"><code>src/view.ts:3</code></a></p>',
         id: "assistant",
         kind: "assistant",
       },
@@ -1266,7 +1266,7 @@ describe("React webview", () => {
 
     expect(click.defaultPrevented).toBeTruthy();
     expect(postMessage).toHaveBeenCalledExactlyOnceWith({
-      href: "src/view.ts",
+      href: "src/view.ts#L3",
       type: "openTranscriptLink",
     });
     await unmount();

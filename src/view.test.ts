@@ -28,10 +28,26 @@ const vscode = vi.hoisted(() => ({
   executeCommand: vi.fn<() => Promise<void>>(async () => {
     await Promise.resolve();
   }),
+  findFiles: vi.fn<(...args: unknown[]) => Promise<{ fsPath: string }[]>>(),
   openExternal: vi.fn<() => Promise<boolean>>(async () => {
     await Promise.resolve();
     return true;
   }),
+  range: vi.fn<
+    (
+      startLine: number,
+      startCharacter: number,
+      endLine: number,
+      endCharacter: number
+    ) => {
+      end: { character: number; line: number };
+      start: { character: number; line: number };
+    }
+  >((startLine, startCharacter, endLine, endCharacter) => ({
+    end: { character: endCharacter, line: endLine },
+    start: { character: startCharacter, line: startLine },
+  })),
+  relativePattern: vi.fn<() => object>(() => ({})),
   showErrorMessage: vi.fn<() => Promise<void>>(async () => {
     await Promise.resolve();
   }),
@@ -57,6 +73,8 @@ vi.mock(import("vscode"), () =>
   testValue<never>({
     ConfigurationTarget: { Global: 1, Workspace: 2 },
     QuickPickItemKind: { Separator: -1 },
+    Range: vscode.range,
+    RelativePattern: vscode.relativePattern,
     ThemeIcon: class ThemeIcon {
       readonly id: string;
 
@@ -87,6 +105,7 @@ vi.mock(import("vscode"), () =>
       showWarningMessage: vscode.showWarningMessage,
     },
     workspace: {
+      findFiles: vscode.findFiles,
       getConfiguration: () => ({
         get: (key: string) =>
           key === "assignWorkspaceColors" ? vscode.assignWorkspaceColors : "",
@@ -1928,6 +1947,57 @@ describe("view provider", () => {
     });
   });
 
+  test("opens a unique basename reference at its line", async () => {
+    let receive: ((message: unknown) => void) | undefined;
+    const workspace = process.cwd();
+    const file = path.join(workspace, "src/view.ts");
+    vscode.showTextDocument.mockClear();
+    vscode.findFiles.mockReset().mockResolvedValue([{ fsPath: file }]);
+    const provider = new MischiefView(
+      testValue<never>({}),
+      testValue<never>({
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({ threads: [], workspace }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase())
+    );
+    await provider.resolveWebviewView(
+      testValue<never>({
+        onDidDispose: vi.fn<() => void>(),
+        webview: {
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => `webview:${uri.fsPath}`,
+          }),
+          cspSource: "webview-csp",
+          html: "",
+          onDidReceiveMessage: (listener: (message: unknown) => void) => {
+            receive = listener;
+          },
+          options: {},
+          postMessage: vi.fn<() => void>(),
+        },
+      })
+    );
+
+    receive?.({ href: "view.ts#L12", type: "openTranscriptLink" });
+
+    await vi.waitFor(() => {
+      expect(vscode.showTextDocument).toHaveBeenCalledExactlyOnceWith(
+        { fsPath: file },
+        {
+          preview: true,
+          selection: {
+            end: { character: 0, line: 11 },
+            start: { character: 0, line: 11 },
+          },
+        }
+      );
+    });
+    vscode.findFiles.mockReset().mockResolvedValue([]);
+  });
+
   test("renders Markdown without allowing raw HTML", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     const webview = {
@@ -1952,7 +2022,7 @@ describe("view provider", () => {
             {
               id: "assistant-1",
               kind: "assistant",
-              text: "**Bold** <script>alert(1)</script> [Open](file:///workspace/src/view.ts)",
+              text: "**Bold** <script>alert(1)</script> [Open](file:///workspace/src/view.ts) `RoundReview.swift:27` and `Sources/View/PlayerInput.swift:307–308`.",
             },
           ],
         },
@@ -1975,7 +2045,7 @@ describe("view provider", () => {
       threads: { selected: { items: { html: string }[] } };
     }>(postMessage.mock.calls.at(-1)?.[0]);
     expect(state.threads.selected.items[0]?.html).toBe(
-      '<p><strong>Bold</strong> &lt;script&gt;alert(1)&lt;/script&gt; <a href="file:///workspace/src/view.ts">Open</a></p>\n'
+      '<p><strong>Bold</strong> &lt;script&gt;alert(1)&lt;/script&gt; <a href="file:///workspace/src/view.ts">Open</a> <a href="RoundReview.swift#L27"><code>RoundReview.swift:27</code></a> and <a href="Sources/View/PlayerInput.swift#L307"><code>Sources/View/PlayerInput.swift:307–308</code></a>.</p>\n'
     );
   });
 });
