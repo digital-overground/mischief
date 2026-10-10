@@ -8,6 +8,49 @@ import { HistoryControl } from "./history-control";
 import { SkillPickerControl } from "./skill-picker-control";
 import { UsageControl } from "./usage-control";
 
+const isRunning = (selected?: RenderedThreadDetail): boolean =>
+  Boolean(selected && ["running", "waiting"].includes(selected.status));
+
+const sendLabel = (setup: boolean, running: boolean): string => {
+  if (setup) {
+    return "Continue setup";
+  }
+  return running ? "Stop" : "Send";
+};
+
+const isSendDisabled = (
+  selected: RenderedThreadDetail | undefined,
+  setup: boolean
+): boolean =>
+  (!selected && !setup) ||
+  (!setup && !selected?.agentId) ||
+  selected?.sessionOperation !== undefined;
+
+const AgentConfigControls = ({
+  selected,
+}: {
+  selected?: RenderedThreadDetail;
+}): React.JSX.Element | null => {
+  if (!selected) {
+    return null;
+  }
+  const { agentId, configOptions } = selected;
+  if (!agentId) {
+    return null;
+  }
+  return (
+    <div id="configs">
+      {configOptions.map((config) => (
+        <ConfigControl
+          agentId={agentId}
+          config={config}
+          key={`${config.id}:${config.currentValue}`}
+        />
+      ))}
+    </div>
+  );
+};
+
 export const FooterControls = ({
   historyItems = [],
   onJumpMessage,
@@ -23,15 +66,7 @@ export const FooterControls = ({
   selected?: RenderedThreadDetail;
   setup?: boolean;
 }): React.JSX.Element => {
-  const running = Boolean(
-    selected && ["running", "waiting"].includes(selected.status)
-  );
-  let sendLabel = "Send";
-  if (setup) {
-    sendLabel = "Continue setup";
-  } else if (running) {
-    sendLabel = "Stop";
-  }
+  const running = isRunning(selected);
   return (
     <div className="footer-row">
       <HistoryControl
@@ -48,22 +83,13 @@ export const FooterControls = ({
       {selected?.usage && selected.usage.size > 0 ? (
         <UsageControl usage={selected.usage} key={selected.id} />
       ) : null}
-      <div id="configs">
-        {selected?.configOptions.map((config) => (
-          <ConfigControl
-            config={config}
-            key={`${config.id}:${config.currentValue}`}
-          />
-        ))}
-      </div>
+      <AgentConfigControls selected={selected} />
       <button
         className={`action${running ? " stop" : ""}`}
         id="send"
-        title={sendLabel}
-        aria-label={sendLabel}
-        disabled={
-          (!selected && !setup) || selected?.sessionOperation !== undefined
-        }
+        title={sendLabel(setup, running)}
+        aria-label={sendLabel(setup, running)}
+        disabled={isSendDisabled(selected, setup)}
         onClick={onSend}
       >
         <SvgIcon className="send-icon" kind="send" />

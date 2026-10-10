@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import type { AgentId } from "../agents/update";
 import { isDefined } from "../present";
 import { testValue } from "../test-value";
 import type { HostToWebviewMessage } from "./protocol";
@@ -22,11 +23,16 @@ testValue<{ IS_REACT_ACT_ENVIRONMENT?: boolean }>(
 
 const { App } = await import("./app");
 
-const threadState = (id: string, drafts: string[]): HostToWebviewMessage => ({
+const threadState = (
+  id: string,
+  drafts: string[],
+  agentId: AgentId | null = "magpi-acp"
+): HostToWebviewMessage => ({
   font: "Test Mono",
   projects: { projects: [], ungrouped: [] },
   threads: {
     selected: {
+      ...(agentId === null ? {} : { agentId }),
       commands: [],
       configOptions: [],
       drafts,
@@ -142,6 +148,30 @@ describe("React webview", () => {
       selected: ["matt"],
       type: "setupContinue",
     });
+    await unmount();
+  });
+
+  test.each([
+    [null, "Choose an Agent to start a Thread"],
+    ["magpi-acp", "MagPi"],
+    ["claude-agent-acp", "Claude Agent"],
+    ["codex-acp", "Codex"],
+  ] as const)("names %s in the composer hint", async (agentId, name) => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: threadState("selected", [], agentId),
+        })
+      );
+    });
+    expect(
+      document.querySelector<HTMLTextAreaElement>("#composer")?.placeholder
+    ).toBe(
+      name === "Choose an Agent to start a Thread"
+        ? name
+        : `Message ${name} — @ to include context, / for commands`
+    );
     await unmount();
   });
 
@@ -371,10 +401,12 @@ describe("React webview", () => {
     const checkbox = dialog?.querySelector<HTMLInputElement>(
       'input[type="checkbox"]'
     );
+    const defaultAgent =
+      dialog?.querySelector<HTMLSelectElement>("#default-agent");
     const close = dialog?.querySelector<HTMLButtonElement>(
       '[aria-label="Close Settings"]'
     );
-    if (!dialog || !checkbox || !close) {
+    if (!dialog || !checkbox || !defaultAgent || !close) {
       throw new Error("Missing Settings controls");
     }
     Object.defineProperties(dialog, {
@@ -395,7 +427,17 @@ describe("React webview", () => {
       window.dispatchEvent(
         new MessageEvent("message", {
           data: {
+            agents: [
+              {
+                id: "magpi-acp",
+                installedVersion: "0.3.0",
+                latestVersion: "0.3.0",
+                name: "MagPi",
+                state: "current",
+              },
+            ],
             assignWorkspaceColors: false,
+            defaultAgent: "",
             type: "showSettings",
           } satisfies HostToWebviewMessage,
         })
@@ -403,13 +445,17 @@ describe("React webview", () => {
     });
 
     expect({
+      agent: dialog.querySelector(".settings-agent")?.textContent,
       checked: checkbox.checked,
+      defaultAgent: defaultAgent.value,
       defaultChecked,
       description: dialog.querySelector(".settings-description")?.textContent,
       open: dialog.open,
       title: dialog.querySelector(".settings-name")?.textContent,
     }).toStrictEqual({
+      agent: "MagPiInstalled 0.3.0 · Latest 0.3.0 · Up to dateInstall managed",
       checked: false,
+      defaultAgent: "",
       defaultChecked: true,
       description:
         "Automatically assigns colors from the active theme to Workspace windows that do not already define them.",
@@ -417,6 +463,15 @@ describe("React webview", () => {
       title: "Assign Workspace window colors",
     });
 
+    postMessage.mockClear();
+    act(() => {
+      defaultAgent.value = "magpi-acp";
+      defaultAgent.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({
+      id: "magpi-acp",
+      type: "setDefaultAgent",
+    });
     postMessage.mockClear();
     act(() => {
       checkbox.click();
@@ -430,6 +485,61 @@ describe("React webview", () => {
       close.click();
     });
     expect(dialog.open).toBeFalsy();
+    await unmount();
+  });
+
+  test("routes approved Agent install and update controls to the host", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            agents: [
+              {
+                id: "claude-agent-acp",
+                name: "Claude Agent",
+                state: "missing",
+              },
+              {
+                id: "codex-acp",
+                installedVersion: "2.1.1",
+                latestVersion: "2.2.1",
+                managed: true,
+                name: "Codex",
+                state: "updateAvailable",
+              },
+            ],
+            type: "agents",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    const buttons = document.querySelectorAll<HTMLButtonElement>(
+      ".settings-agent button"
+    );
+    expect(
+      [...buttons].map((button) => ({
+        icon: button.querySelector("svg path")?.getAttribute("d"),
+        label: button.getAttribute("aria-label"),
+        style: button.className,
+      }))
+    ).toStrictEqual([
+      {
+        icon: "M12 3v12",
+        label: "Install Claude Agent managed",
+        style: "action primary",
+      },
+      { icon: undefined, label: "Check Codex for updates", style: "action" },
+    ]);
+    postMessage.mockClear();
+    act(() => {
+      buttons[0]?.click();
+      buttons[1]?.click();
+    });
+    expect(postMessage.mock.calls).toStrictEqual([
+      [{ id: "claude-agent-acp", type: "installAgent" }],
+      [{ id: "codex-acp", type: "checkAgent" }],
+    ]);
     await unmount();
   });
 
@@ -1272,6 +1382,53 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("renders recent history first and loads older entries on scroll", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            font: "Test Mono",
+            projects: { projects: [], ungrouped: [] },
+            threads: {
+              selected: {
+                commands: [],
+                configOptions: [],
+                drafts: [],
+                id: "long",
+                items: Array.from({ length: 210 }, (_, index) => ({
+                  id: `item-${index}`,
+                  kind: "assistant" as const,
+                  text: `Message ${index}`,
+                })),
+                name: "Long",
+                status: "idle",
+                steering: [],
+                streaming: false,
+              },
+              threads: [],
+              workspace: "/workspace",
+            },
+            type: "state",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    expect(document.querySelectorAll("#transcript .entry")).toHaveLength(100);
+    expect(document.querySelector("#transcript")?.textContent).not.toContain(
+      "Message 0"
+    );
+    const chat = document.querySelector<HTMLDivElement>("#chat");
+    if (!chat) {
+      throw new Error("Missing chat");
+    }
+    act(() => {
+      chat.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    expect(document.querySelectorAll("#transcript .entry")).toHaveLength(200);
+    await unmount();
+  });
+
   test("applies streaming transcript items without replacing history or composer text", async () => {
     const unmount = await renderApp();
     const state: HostToWebviewMessage = {
@@ -1991,6 +2148,7 @@ describe("React webview", () => {
       projects: { projects: [], ungrouped: [] },
       threads: {
         selected: {
+          agentId: "magpi-acp",
           commands: [],
           configOptions: [model],
           drafts: [],
@@ -2009,14 +2167,18 @@ describe("React webview", () => {
     act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
     });
-    const select = document.querySelector<HTMLSelectElement>(
-      'select[aria-label="Model"]'
+    const button = document.querySelector<HTMLButtonElement>(
+      '.config-trigger[aria-label="Model"]'
     );
-    if (!select) {
-      throw new Error("Missing model select");
+    if (!button) {
+      throw new Error("Missing model dropdown");
     }
-    select.focus();
-    select.value = "provider/two";
+    act(() => {
+      button.click();
+    });
+    const option = [
+      ...document.querySelectorAll<HTMLElement>('[role="option"]'),
+    ].find((item) => item.textContent?.includes("one"));
 
     act(() => {
       window.dispatchEvent(
@@ -2048,10 +2210,12 @@ describe("React webview", () => {
 
     expect({
       active: document.activeElement,
-      value: select.value,
+      expanded: button.getAttribute("aria-expanded"),
+      selected: option?.getAttribute("aria-selected"),
     }).toStrictEqual({
-      active: select,
-      value: "provider/two",
+      active: option,
+      expanded: "true",
+      selected: "true",
     });
     await unmount();
   });

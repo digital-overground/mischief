@@ -4,6 +4,8 @@ import path from "node:path";
 
 import { describe, expect, test, vi } from "vitest";
 
+import { testValue } from "../test-value";
+import type { DatabaseThread } from "./profile-database";
 import { ProfileDatabase } from "./profile-database";
 
 describe(ProfileDatabase, () => {
@@ -191,6 +193,16 @@ describe(ProfileDatabase, () => {
         })),
       });
 
+      await expect(
+        database.apply({
+          thread: testValue<DatabaseThread>({
+            ...previous.threads[0],
+            agentId: "unapproved-acp",
+            status: "idle",
+          }),
+          type: "putThread",
+        })
+      ).rejects.toThrow("Thread is invalid");
       expect(database.snapshot()).toMatchObject({
         selections: [
           { threadId: firstId, workspace: firstWorkspace },
@@ -199,10 +211,12 @@ describe(ProfileDatabase, () => {
         threads: [
           {
             ...previous.threads[0],
+            agentId: "magpi-acp",
             status: "error",
           },
           {
             ...previous.threads[1],
+            agentId: "magpi-acp",
             status: "idle",
           },
         ],

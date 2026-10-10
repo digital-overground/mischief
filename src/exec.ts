@@ -7,6 +7,11 @@ const execute = promisify(execFile);
 export const exec = async (
   file: string,
   args: readonly string[],
-  options?: { cwd?: string; env?: NodeJS.ProcessEnv }
+  options?: {
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+    shell?: boolean;
+    signal?: AbortSignal;
+  }
 ): Promise<{ stderr: string; stdout: string }> =>
   await execute(file, [...args], { ...options, encoding: "utf-8" });

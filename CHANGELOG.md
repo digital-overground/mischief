@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0
+
+- Run Threads with MagPi, Claude Agent, or Codex; choose an Agent for each new Thread or set a default.
+- Install and manage Agents from Mischief Settings, with approval-based installation and automatic updates.
+- Configure Agent-provided options from the Thread header.
+- Restore long Threads more efficiently by loading transcript history incrementally.
+
 ## 0.2.5
 
 - Browse and search Agent skills from the composer.

@@ -4,9 +4,11 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import type { AgentId } from "../../agents/update";
 import { isNonEmpty } from "../../present";
 import { ProfileDatabase } from "../../profile-database/profile-database";
 import { testValue } from "../../test-value";
+import { unavailableAgent } from "../acp/acp";
 import type { AgentTreeNavigationOptions } from "../acp/models";
 import type {
   AgentConnection,
@@ -16,7 +18,7 @@ import type {
   PromptImage,
   ThreadConfigOption,
 } from "../model";
-import type { ThreadsChange } from "./models";
+import type { ThreadHistoryEntry, ThreadsChange } from "./models";
 import { Threads } from "./threads";
 
 interface Deferred {
@@ -38,6 +40,7 @@ const deferred = (): Deferred => {
 
 class FakeAgent {
   createCalls = 0;
+  authenticatedMethods: string[] = [];
   loadCalls = 0;
   loadRequests: { sessionId: string; cwd: string }[] = [];
   initialConfigOptions: ThreadConfigOption[] = [];
@@ -119,6 +122,11 @@ class FakeAgent {
   private connection(handlers: AgentHandlers): AgentConnection {
     this.update = handlers.update;
     return {
+      authenticate: async (methodId) => {
+        await Promise.resolve();
+        this.authenticatedMethods.push(methodId);
+        this.createError = undefined;
+      },
       cancel: async () => {
         await Promise.resolve();
         for (const resolve of this.promptResolvers.splice(0)) {
@@ -342,8 +350,11 @@ describe("threads module", () => {
     await rm(profileDirectory, { force: true, recursive: true });
   });
 
-  const createThreads = (factory: AgentConnectionFactory): Threads => {
-    const threads = new Threads(database, factory);
+  const createThreads = (
+    factory: AgentConnectionFactory,
+    preferredAgent: AgentId = "magpi-acp"
+  ): Threads => {
+    const threads = new Threads(database, factory, preferredAgent);
     instances.push(threads);
     return threads;
   };
@@ -365,6 +376,7 @@ describe("threads module", () => {
 
     expect(threads.snapshot().threads).toStrictEqual([
       {
+        agentId: "magpi-acp",
         id: "10000000-0000-4000-8000-000000000001",
         indicator: "waiting",
         name: "Waiting",
@@ -1226,18 +1238,162 @@ describe("threads module", () => {
     await threads.openWorkspace("/workspace");
     await threads.prompt("Register this session");
 
-    await expect(threads.history()).resolves.toStrictEqual([
+    await expect(threads.history("magpi-acp")).resolves.toStrictEqual([
       {
+        agentId: "magpi-acp",
         preview: "Fix the login cache",
         previewRole: "user",
         sessionId: "session-newest",
         title: "Newest",
         updatedAt: "2026-09-16T12:00:00.000Z",
       },
-      { sessionId: "session-unknown", title: "Untitled Thread" },
+      {
+        agentId: "magpi-acp",
+        sessionId: "session-unknown",
+        title: "Untitled Thread",
+      },
     ]);
     expect(agent.historyCalls).toStrictEqual(["/workspace"]);
     expect(agent.disposed).toBeTruthy();
+  });
+
+  test("authenticates through the selected Agent and retries on the same connection", async () => {
+    const codex = new FakeAgent();
+    codex.createError = Object.assign(new Error("Authentication required"), {
+      authentication: { label: "Log in with ChatGPT", methodId: "chatgpt" },
+    });
+    const threads = createThreads(codex.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.newThread("codex-acp");
+    expect(threads.snapshot().selected).toMatchObject({
+      agentId: "codex-acp",
+      authentication: { label: "Log in with ChatGPT", methodId: "chatgpt" },
+      status: "error",
+    });
+    await threads.authenticate();
+    expect({
+      methods: codex.authenticatedMethods,
+      status: threads.snapshot().selected?.status,
+    }).toStrictEqual({ methods: ["chatgpt"], status: "idle" });
+  });
+
+  test("a missing Agent stays visible and can be installed before retry", async () => {
+    const claude = new FakeAgent();
+    let installed = false;
+    const factory: AgentConnectionFactory = (handlers) =>
+      installed
+        ? claude.factory(handlers, "claude-agent-acp")
+        : unavailableAgent(
+            "Claude Agent is not installed. Install it from Mischief Settings."
+          )(handlers, "claude-agent-acp");
+    const threads = createThreads(factory);
+    await threads.openWorkspace("/workspace");
+    await threads.newThread("claude-agent-acp");
+    expect(threads.snapshot().selected).toMatchObject({
+      agentId: "claude-agent-acp",
+      error:
+        "Claude Agent is not installed. Install it from Mischief Settings.",
+      status: "error",
+    });
+    installed = true;
+    await threads.retry();
+    expect(threads.snapshot().selected).toMatchObject({
+      agentId: "claude-agent-acp",
+      status: "idle",
+    });
+    expect(claude.createCalls).toBe(1);
+  });
+
+  test("does not invent a default Agent for empty Threads", async () => {
+    const agent = new FakeAgent();
+    const threads = new Threads(database, agent.factory);
+    instances.push(threads);
+    await threads.openWorkspace("/workspace");
+    expect(threads.snapshot().selected).toMatchObject({ id: null });
+    expect(threads.snapshot().selected?.agentId).toBeUndefined();
+    await expect(threads.newThread()).rejects.toThrow(
+      "Choose an Agent before starting a Thread"
+    );
+    await expect(threads.prompt("Choose an Agent first")).rejects.toThrow(
+      "Choose an Agent before starting a Thread"
+    );
+    expect(agent.createCalls).toBe(0);
+  });
+
+  test("keeps an explicitly selected draft Agent across default changes", async () => {
+    const threads = new Threads(database, new FakeAgent().factory);
+    instances.push(threads);
+    await threads.openWorkspace("/workspace");
+    threads.setPreferredAgent("codex-acp");
+    threads.selectDraftAgent("magpi-acp");
+    threads.setPreferredAgent("codex-acp");
+    expect(threads.snapshot().selected?.agentId).toBe("magpi-acp");
+  });
+
+  test("uses the available Agent for empty drafts and new Threads", async () => {
+    const codex = new FakeAgent();
+    const threads = createThreads(codex.factory, "codex-acp");
+    await threads.openWorkspace("/workspace");
+    expect(threads.snapshot().selected?.agentId).toBe("codex-acp");
+    await threads.prompt("Use Codex");
+    expect(database.snapshot().threads[0]?.agentId).toBe("codex-acp");
+    const id = threads.snapshot().selected?.id;
+    if (isNonEmpty(id)) {
+      await threads.remove(id);
+    }
+    expect(threads.snapshot().selected?.agentId).toBe("codex-acp");
+  });
+
+  test("pins each Thread and history to its Agent across restoration", async () => {
+    const magpi = new FakeAgent();
+    const codex = new FakeAgent();
+    magpi.historyEntries = [
+      { cwd: "/workspace", sessionId: "session-1", title: "MagPi history" },
+    ];
+    codex.historyEntries = [
+      { cwd: "/workspace", sessionId: "session-1", title: "Codex history" },
+    ];
+    const factory: AgentConnectionFactory = (handlers, id) =>
+      id === "codex-acp"
+        ? codex.factory(handlers, id)
+        : magpi.factory(handlers, id);
+    const first = createThreads(factory);
+    await first.openWorkspace("/workspace");
+    first.selectDraftAgent("codex-acp");
+    await first.prompt("Use Codex");
+    const codexId = first.snapshot().selected?.id;
+    expect({
+      codexCreates: codex.createCalls,
+      magpiCreates: magpi.createCalls,
+      owner: database.snapshot().threads[0]?.agentId,
+    }).toStrictEqual({ codexCreates: 1, magpiCreates: 0, owner: "codex-acp" });
+    const magpiHistory = await first.history("magpi-acp");
+    expect(magpiHistory.map(({ sessionId }) => sessionId)).toStrictEqual([
+      "session-1",
+    ]);
+    await expect(first.history("codex-acp")).resolves.toStrictEqual([]);
+    await first.reopen({
+      agentId: "magpi-acp",
+      sessionId: "session-1",
+      title: "MagPi history",
+    });
+    const second = createThreads(factory);
+    await second.openWorkspace("/workspace");
+    if (codexId !== null && codexId !== undefined) {
+      await second.select(codexId);
+    }
+    expect({
+      codexLoads: codex.loadCalls,
+      ids: second
+        .snapshot()
+        .threads.map(({ agentId }) => agentId)
+        .toSorted((left, right) => (left ?? "").localeCompare(right ?? "")),
+      magpiLoads: magpi.loadCalls,
+    }).toStrictEqual({
+      codexLoads: 1,
+      ids: ["codex-acp", "magpi-acp"],
+      magpiLoads: 2,
+    });
   });
 
   test("reopens an Agent session once as the selected durable Thread", async () => {
@@ -1245,7 +1401,8 @@ describe("threads module", () => {
     agent.replayOnLoad = true;
     const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
-    const entry = {
+    const entry: ThreadHistoryEntry = {
+      agentId: "magpi-acp",
       sessionId: "previous-session",
       title: "Previous Thread",
       updatedAt: "2026-09-15T12:00:00.000Z",
