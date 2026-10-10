@@ -1,4 +1,4 @@
-type IconKind =
+export type IconKind =
   | "alert"
   | "archive"
   | "bot"
@@ -28,6 +28,7 @@ type IconKind =
   | "save"
   | "search"
   | "send"
+  | "shieldCheck"
   | "signpost"
   | "square"
   | "squareCheck"
@@ -35,7 +36,8 @@ type IconKind =
   | "terminal"
   | "tool"
   | "user"
-  | "x";
+  | "x"
+  | "zap";
 
 const paths: Record<IconKind, React.ReactNode> = {
   alert: (
@@ -244,6 +246,12 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M12 19V5" />
     </>
   ),
+  shieldCheck: (
+    <>
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+      <path d="m9 12 2 2 4-4" />
+    </>
+  ),
   signpost: (
     <>
       <path d="M12 13v8" />
@@ -280,7 +288,11 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="m6 6 12 12" />
     </>
   ),
+  zap: <path d="M4 14 12 2l-1 8h9L9 22l1-8z" />,
 };
+
+export const isIconKind = (value: string): value is IconKind =>
+  Object.hasOwn(paths, value);
 
 export const SvgIcon = ({
   className = "",

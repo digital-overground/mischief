@@ -2,7 +2,7 @@
   "name": "mischief",
   "displayName": "Mischief",
   "version": "0.2.5",
-  "description": "A VS Code project, workspace, and agent-thread browser for MagPi.",
+  "description": "A VS Code project, workspace, and Agent Thread browser for MagPi, Claude Agent, and Codex.",
   "categories": [
     "Chat",
     "Other"
@@ -33,7 +33,7 @@
     "format:check": "oxfmt --check .",
     "install:local": "pnpm check && pnpm exec vsce package --no-dependencies && code --install-extension \"mischief-$(node -p 'require(\"./package.json\").version').vsix\" --force",
     "lint": "ultracite check",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --passWithNoTests --maxWorkers=2",
     "typecheck": "tsc --noEmit",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
@@ -167,6 +167,11 @@
           "default": true,
           "description": "Automatically assign Workspace window colors from the active theme."
         },
+        "mischief.defaultAgent": {
+          "type": "string",
+          "default": "",
+          "description": "Default Agent for new Threads. Leave empty to choose an Agent each time. Existing Threads keep their original Agent."
+        },
         "mischief.copyIgnoredItems": {
           "type": "array",
           "items": {
@@ -183,7 +188,7 @@
         "mischief.magpiAcpPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the MagPi ACP executable or built index.js. Empty uses magpi-acp from PATH. Reload the window after changing it."
+          "description": "Development override for MagPi's executable or built index.js. Empty uses the managed MagPi install when available, then magpi-acp from PATH. Reload the window after changing it."
         }
       }
     }

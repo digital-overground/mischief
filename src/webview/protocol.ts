@@ -8,6 +8,24 @@ import type {
   TranscriptItem,
 } from "../threads/threads/models";
 
+export interface AgentSetting {
+  id: string;
+  name: string;
+  installedVersion?: string;
+  latestVersion?: string;
+  managed?: boolean;
+  error?: string;
+  state:
+    | "waiting"
+    | "checking"
+    | "installing"
+    | "updateAvailable"
+    | "current"
+    | "newer"
+    | "unknown"
+    | "missing";
+}
+
 export interface RenderedTranscriptItem extends TranscriptItem {
   html?: string;
 }
@@ -60,11 +78,22 @@ export type HostToWebviewMessage =
     }
   | { type: "contextItems"; items: string[] }
   | { type: "setAllExpanded"; expanded: boolean }
-  | { type: "showSettings"; assignWorkspaceColors: boolean };
+  | {
+      type: "showSettings";
+      assignWorkspaceColors: boolean;
+      defaultAgent: string;
+      agents: AgentSetting[];
+    }
+  | { type: "agents"; agents: AgentSetting[] };
 
 export type WebviewToHostMessage =
   | {
-      type: "ready" | "contextItems" | "newThread" | "threadHistory";
+      type:
+        | "ready"
+        | "contextItems"
+        | "newThread"
+        | "threadHistory"
+        | "chooseAgent";
     }
   | {
       type: "forkThread" | "navigateThreadTree";
@@ -96,6 +125,8 @@ export type WebviewToHostMessage =
   | { type: "setupContinue"; selected: string[] }
   | { type: "navigatorExpanded"; expanded: boolean }
   | { type: "setAssignWorkspaceColors"; value: boolean }
+  | { type: "setDefaultAgent"; id: string }
+  | { type: "installAgent" | "checkAgent"; id: string }
   | { type: "removeSteering" | "sendSteering"; id: string }
   | { type: "setConfig"; id: string; value: string | boolean }
   | { type: "respond"; id: string; response: ThreadInteractionResponse }

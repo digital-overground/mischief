@@ -51,9 +51,11 @@ const vscode = vi.hoisted(() => ({
   showErrorMessage: vi.fn<() => Promise<void>>(async () => {
     await Promise.resolve();
   }),
-  showInformationMessage: vi.fn<() => Promise<void>>(async () => {
-    await Promise.resolve();
-  }),
+  showInformationMessage: vi.fn<(...args: unknown[]) => Promise<unknown>>(
+    async () => {
+      await Promise.resolve();
+    }
+  ),
   showInputBox: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   showQuickPick: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   showTextDocument: vi.fn<() => Promise<void>>(async () => {
@@ -67,11 +69,15 @@ const vscode = vi.hoisted(() => ({
   >(async () => {
     await Promise.resolve();
   }),
+  withProgress: vi.fn<
+    (_options: unknown, task: () => Promise<unknown>) => Promise<unknown>
+  >(async (_options, task) => await task()),
 }));
 
 vi.mock(import("vscode"), () =>
   testValue<never>({
     ConfigurationTarget: { Global: 1, Workspace: 2 },
+    ProgressLocation: { Notification: 1 },
     QuickPickItemKind: { Separator: -1 },
     Range: vscode.range,
     RelativePattern: vscode.relativePattern,
@@ -103,6 +109,7 @@ vi.mock(import("vscode"), () =>
       showQuickPick: vscode.showQuickPick,
       showTextDocument: vscode.showTextDocument,
       showWarningMessage: vscode.showWarningMessage,
+      withProgress: vscode.withProgress,
     },
     workspace: {
       findFiles: vscode.findFiles,
@@ -204,6 +211,7 @@ describe("view provider", () => {
         events.push("new");
       }),
       onChange: vi.fn<() => void>(),
+      preferredAgentId: () => "magpi-acp",
       snapshot: () => ({ workspace: "/workspace" }),
       stageDraft: vi.fn<(text: string) => void>((text) => {
         events.push(`draft:${text}`);
@@ -298,6 +306,7 @@ describe("view provider", () => {
           active = workspace;
         }
       ),
+      preferredAgentId: () => "magpi-acp",
       prompt: vi.fn<() => Promise<void>>(async () => {
         await Promise.resolve();
       }),
@@ -359,6 +368,7 @@ describe("view provider", () => {
       openWorkspace: vi.fn<() => Promise<void>>(async () => {
         await Promise.resolve();
       }),
+      preferredAgentId: () => "magpi-acp",
       prompt: vi.fn<(text: string) => Promise<void>>(async (text) => {
         events.push(`prompt:${text}`);
         promptStarted.resolve();
@@ -694,7 +704,11 @@ describe("view provider", () => {
     ];
     sourceAccept?.();
     await vi.waitFor(() => {
-      expect(createWorkspace).toHaveBeenCalledOnce();
+      expect(vscode.executeCommand).toHaveBeenCalledWith(
+        "vscode.openFolder",
+        { fsPath: "/worktree" },
+        { forceNewWindow: true }
+      );
     });
     const [repositoryOptions] = testValue<
       [{ prompt: string; title: string; value: string }]
@@ -851,6 +865,7 @@ describe("view provider", () => {
       testValue<never>({
         history,
         onChange: vi.fn<() => void>(),
+        preferredAgentId: () => "magpi-acp",
         reopen,
         snapshot: () => ({ threads: [], workspace: "/workspace" }),
       }),
@@ -877,6 +892,7 @@ describe("view provider", () => {
     );
 
     receive?.({ type: "threadHistory" });
+    await Promise.resolve();
     expect({
       busy: loadingPicker.busy,
       placeholder: loadingPicker.placeholder,
@@ -1313,7 +1329,12 @@ describe("view provider", () => {
     >().get("complete");
     const provider = new MischiefView(
       testValue<never>({}),
-      testValue<never>({ newThread, onChange: vi.fn<() => void>(), prompt }),
+      testValue<never>({
+        newThread,
+        onChange: vi.fn<() => void>(),
+        preferredAgentId: () => "magpi-acp",
+        prompt,
+      }),
       testValue<never>({ fsPath: process.cwd() }),
       testValue<never>({}),
       testValue<never>(profileDatabase()),
@@ -1339,6 +1360,42 @@ describe("view provider", () => {
 
     expect(newThread).toHaveBeenCalledOnce();
     expect(prompt).toHaveBeenCalledExactlyOnceWith("Read issue");
+  });
+
+  test("continues setup with Codex when MagPi was never installed", async () => {
+    const newThread = vi.fn<(_id: string) => Promise<void>>(async () => {
+      await Promise.resolve();
+    });
+    let available: "codex-acp"[] = [];
+    const provider = new MischiefView(
+      testValue<never>({}),
+      testValue<never>({
+        newThread,
+        onChange: vi.fn<() => void>(),
+        prompt: async () => {
+          await Promise.resolve();
+        },
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase()),
+      {
+        advance: async () => {
+          await Promise.resolve();
+          available = ["codex-acp"];
+          // oxlint-disable-next-line unicorn/no-useless-undefined -- no further setup step
+          return undefined;
+        },
+        prompt: () => ({ id: "agents", message: "Choose an Agent" }),
+      },
+      [],
+      testValue<never>({ availableAgents: () => available })
+    );
+    await provider.newThread(true, "Read issue");
+    await testValue<{
+      continueSetup: (selected: string[]) => Promise<void>;
+    }>(testValue<unknown>(provider)).continueSetup([]);
+    expect(newThread.mock.calls).toStrictEqual([["codex-acp"]]);
   });
 
   test("opens the owning Workspace only after a remote Thread selection", async () => {
@@ -1845,6 +1902,81 @@ describe("view provider", () => {
     });
   });
 
+  test("asks before installing a chosen Agent and pins it to the new Thread", async () => {
+    const install = vi.fn<() => Promise<void>>(async () => {
+      await Promise.resolve();
+    });
+    const newThread = vi.fn<(_id: string) => Promise<void>>(async () => {
+      await Promise.resolve();
+    });
+    const provider = new MischiefView(
+      testValue<never>({}),
+      testValue<never>({
+        newThread,
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({ threads: [], workspace: "/workspace" }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase()),
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- omit the setup slot before Agent settings
+      undefined,
+      [],
+      testValue<never>({
+        availableAgents: () => [],
+        install,
+      })
+    );
+    vscode.showQuickPick.mockResolvedValue({ id: "codex-acp", label: "Codex" });
+    vscode.showInformationMessage
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce("Install");
+    await provider.newThread();
+    expect({
+      installs: install.mock.calls,
+      threads: newThread.mock.calls,
+    }).toStrictEqual({ installs: [], threads: [] });
+    await provider.newThread();
+    expect({
+      installs: install.mock.calls,
+      threads: newThread.mock.calls,
+    }).toStrictEqual({ installs: [["codex-acp"]], threads: [["codex-acp"]] });
+    expect(vscode.showInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining("automatically update"),
+      { modal: true },
+      "Install"
+    );
+  });
+
+  test("starts pending Workspace prompts with the installed Agent instead of requiring MagPi", async () => {
+    const newThread = vi.fn<(_id: string) => Promise<void>>(async () => {
+      await Promise.resolve();
+    });
+    const provider = new MischiefView(
+      testValue<never>({}),
+      testValue<never>({
+        newThread,
+        onChange: vi.fn<() => void>(),
+        prompt: async () => {
+          await Promise.resolve();
+        },
+        snapshot: () => ({ threads: [], workspace: "/workspace" }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase()),
+      testValue<never>({
+        prompt: () => {
+          /* No setup for an installed Agent. */
+        },
+      }),
+      [],
+      testValue<never>({ availableAgents: () => ["codex-acp"] })
+    );
+    await provider.newThread(true, "Read issue");
+    expect(newThread.mock.calls).toStrictEqual([["codex-acp"]]);
+  });
+
   test("persists Workspace color assignment from Settings", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     let receive: ((message: unknown) => void) | undefined;
@@ -1894,9 +2026,31 @@ describe("view provider", () => {
     provider.showSettings();
 
     expect(postMessage.mock.calls).toStrictEqual([
-      [{ assignWorkspaceColors: true, type: "showSettings" }],
-      [{ assignWorkspaceColors: false, type: "showSettings" }],
+      [
+        {
+          agents: [],
+          assignWorkspaceColors: true,
+          defaultAgent: "",
+          type: "showSettings",
+        },
+      ],
+      [
+        {
+          agents: [],
+          assignWorkspaceColors: false,
+          defaultAgent: "",
+          type: "showSettings",
+        },
+      ],
     ]);
+    receive?.({ id: "codex-acp", type: "setDefaultAgent" });
+    await vi.waitFor(() => {
+      expect(vscode.updateConfiguration).toHaveBeenCalledWith(
+        "defaultAgent",
+        "codex-acp",
+        1
+      );
+    });
     vscode.updateConfiguration.mockReset();
     vscode.assignWorkspaceColors = true;
   });
