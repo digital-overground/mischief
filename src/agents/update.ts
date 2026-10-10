@@ -2,7 +2,7 @@ import config from "./config.json";
 
 export const AGENTS = config;
 export type AgentId = keyof typeof AGENTS;
-export const DEFAULT_AGENT: AgentId = "magpi-acp";
+export const LEGACY_THREAD_AGENT: AgentId = "magpi-acp";
 export const isAgentId = (id: unknown): id is AgentId =>
   typeof id === "string" && Object.hasOwn(AGENTS, id);
 export const AGENT_IDS: AgentId[] = Object.keys(AGENTS).filter(isAgentId);

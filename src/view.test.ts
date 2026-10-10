@@ -211,6 +211,7 @@ describe("view provider", () => {
         events.push("new");
       }),
       onChange: vi.fn<() => void>(),
+      preferredAgentId: () => "magpi-acp",
       snapshot: () => ({ workspace: "/workspace" }),
       stageDraft: vi.fn<(text: string) => void>((text) => {
         events.push(`draft:${text}`);
@@ -305,6 +306,7 @@ describe("view provider", () => {
           active = workspace;
         }
       ),
+      preferredAgentId: () => "magpi-acp",
       prompt: vi.fn<() => Promise<void>>(async () => {
         await Promise.resolve();
       }),
@@ -366,6 +368,7 @@ describe("view provider", () => {
       openWorkspace: vi.fn<() => Promise<void>>(async () => {
         await Promise.resolve();
       }),
+      preferredAgentId: () => "magpi-acp",
       prompt: vi.fn<(text: string) => Promise<void>>(async (text) => {
         events.push(`prompt:${text}`);
         promptStarted.resolve();
@@ -862,6 +865,7 @@ describe("view provider", () => {
       testValue<never>({
         history,
         onChange: vi.fn<() => void>(),
+        preferredAgentId: () => "magpi-acp",
         reopen,
         snapshot: () => ({ threads: [], workspace: "/workspace" }),
       }),
@@ -1325,7 +1329,12 @@ describe("view provider", () => {
     >().get("complete");
     const provider = new MischiefView(
       testValue<never>({}),
-      testValue<never>({ newThread, onChange: vi.fn<() => void>(), prompt }),
+      testValue<never>({
+        newThread,
+        onChange: vi.fn<() => void>(),
+        preferredAgentId: () => "magpi-acp",
+        prompt,
+      }),
       testValue<never>({ fsPath: process.cwd() }),
       testValue<never>({}),
       testValue<never>(profileDatabase()),
@@ -2017,9 +2026,31 @@ describe("view provider", () => {
     provider.showSettings();
 
     expect(postMessage.mock.calls).toStrictEqual([
-      [{ agents: [], assignWorkspaceColors: true, type: "showSettings" }],
-      [{ agents: [], assignWorkspaceColors: false, type: "showSettings" }],
+      [
+        {
+          agents: [],
+          assignWorkspaceColors: true,
+          defaultAgent: "",
+          type: "showSettings",
+        },
+      ],
+      [
+        {
+          agents: [],
+          assignWorkspaceColors: false,
+          defaultAgent: "",
+          type: "showSettings",
+        },
+      ],
     ]);
+    receive?.({ id: "codex-acp", type: "setDefaultAgent" });
+    await vi.waitFor(() => {
+      expect(vscode.updateConfiguration).toHaveBeenCalledWith(
+        "defaultAgent",
+        "codex-acp",
+        1
+      );
+    });
     vscode.updateConfiguration.mockReset();
     vscode.assignWorkspaceColors = true;
   });

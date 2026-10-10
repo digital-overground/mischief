@@ -26,13 +26,13 @@ const { App } = await import("./app");
 const threadState = (
   id: string,
   drafts: string[],
-  agentId?: AgentId
+  agentId: AgentId | null = "magpi-acp"
 ): HostToWebviewMessage => ({
   font: "Test Mono",
   projects: { projects: [], ungrouped: [] },
   threads: {
     selected: {
-      ...(agentId === undefined ? {} : { agentId }),
+      ...(agentId === null ? {} : { agentId }),
       commands: [],
       configOptions: [],
       drafts,
@@ -152,7 +152,7 @@ describe("React webview", () => {
   });
 
   test.each([
-    [undefined, "MagPi"],
+    [null, "Choose an Agent to start a Thread"],
     ["magpi-acp", "MagPi"],
     ["claude-agent-acp", "Claude Agent"],
     ["codex-acp", "Codex"],
@@ -167,7 +167,11 @@ describe("React webview", () => {
     });
     expect(
       document.querySelector<HTMLTextAreaElement>("#composer")?.placeholder
-    ).toBe(`Message ${name} — @ to include context, / for commands`);
+    ).toBe(
+      name === "Choose an Agent to start a Thread"
+        ? name
+        : `Message ${name} — @ to include context, / for commands`
+    );
     await unmount();
   });
 
@@ -397,10 +401,12 @@ describe("React webview", () => {
     const checkbox = dialog?.querySelector<HTMLInputElement>(
       'input[type="checkbox"]'
     );
+    const defaultAgent =
+      dialog?.querySelector<HTMLSelectElement>("#default-agent");
     const close = dialog?.querySelector<HTMLButtonElement>(
       '[aria-label="Close Settings"]'
     );
-    if (!dialog || !checkbox || !close) {
+    if (!dialog || !checkbox || !defaultAgent || !close) {
       throw new Error("Missing Settings controls");
     }
     Object.defineProperties(dialog, {
@@ -431,6 +437,7 @@ describe("React webview", () => {
               },
             ],
             assignWorkspaceColors: false,
+            defaultAgent: "",
             type: "showSettings",
           } satisfies HostToWebviewMessage,
         })
@@ -440,6 +447,7 @@ describe("React webview", () => {
     expect({
       agent: dialog.querySelector(".settings-agent")?.textContent,
       checked: checkbox.checked,
+      defaultAgent: defaultAgent.value,
       defaultChecked,
       description: dialog.querySelector(".settings-description")?.textContent,
       open: dialog.open,
@@ -447,6 +455,7 @@ describe("React webview", () => {
     }).toStrictEqual({
       agent: "MagPiInstalled 0.3.0 · Latest 0.3.0 · Up to dateInstall managed",
       checked: false,
+      defaultAgent: "",
       defaultChecked: true,
       description:
         "Automatically assigns colors from the active theme to Workspace windows that do not already define them.",
@@ -454,6 +463,15 @@ describe("React webview", () => {
       title: "Assign Workspace window colors",
     });
 
+    postMessage.mockClear();
+    act(() => {
+      defaultAgent.value = "magpi-acp";
+      defaultAgent.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({
+      id: "magpi-acp",
+      type: "setDefaultAgent",
+    });
     postMessage.mockClear();
     act(() => {
       checkbox.click();
@@ -2130,6 +2148,7 @@ describe("React webview", () => {
       projects: { projects: [], ungrouped: [] },
       threads: {
         selected: {
+          agentId: "magpi-acp",
           commands: [],
           configOptions: [model],
           drafts: [],

@@ -11,7 +11,7 @@ import type {
 } from "../model";
 
 export interface ThreadHistoryEntry {
-  agentId?: AgentId;
+  agentId: AgentId;
   sessionId: string;
   title: string;
   updatedAt?: string;

@@ -103,6 +103,7 @@ export interface ThreadCommand {
   name: string;
   description: string;
   inputHint?: string;
+  skill?: boolean;
   source?: string;
 }
 
@@ -206,5 +207,5 @@ export interface AgentConnection {
 
 export type AgentConnectionFactory = (
   handlers: AgentHandlers,
-  agentId?: AgentId
+  agentId: AgentId
 ) => AgentConnection;

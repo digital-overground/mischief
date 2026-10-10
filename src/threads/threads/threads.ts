@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { DEFAULT_AGENT, isAgentId } from "../../agents/update";
+import { LEGACY_THREAD_AGENT, isAgentId } from "../../agents/update";
 import type { AgentId } from "../../agents/update";
 import { isDefined, isNonEmpty, isNonZero } from "../../present";
 import type {
@@ -160,14 +160,15 @@ export class Threads {
   private selectedId?: string;
   private viewedId?: string;
   private draft = false;
-  private draftAgentId: AgentId;
+  private draftAgentId?: AgentId;
+  private draftAgentExplicit = false;
   private draftMessages: string[] = [];
-  private readonly preferredAgent: AgentId;
+  private preferredAgent?: AgentId;
 
   constructor(
     database: ProfileDatabase,
     createConnection: AgentConnectionFactory,
-    preferredAgent: AgentId = DEFAULT_AGENT
+    preferredAgent?: AgentId
   ) {
     this.createConnection = createConnection;
     this.database = database;
@@ -193,6 +194,7 @@ export class Threads {
   async openWorkspace(workspace: string): Promise<ThreadsSnapshot> {
     this.draftMessages = [];
     this.draftAgentId = this.preferredAgent;
+    this.draftAgentExplicit = false;
     this.workspace = workspace;
     this.viewedId = undefined;
     this.stored = this.database
@@ -233,9 +235,7 @@ export class Threads {
     };
   }
 
-  async history(
-    agentId: AgentId = DEFAULT_AGENT
-  ): Promise<ThreadHistoryEntry[]> {
+  async history(agentId: AgentId): Promise<ThreadHistoryEntry[]> {
     const { workspace } = this;
     if (!isNonEmpty(workspace)) {
       return [];
@@ -303,7 +303,7 @@ export class Threads {
 
   async reopen(entry: ThreadHistoryEntry): Promise<void> {
     const { workspace } = this;
-    const agentId = entry.agentId ?? DEFAULT_AGENT;
+    const { agentId } = entry;
     if (!isNonEmpty(workspace)) {
       return;
     }
@@ -342,12 +342,28 @@ export class Threads {
       throw new Error("The Agent is fixed for the lifetime of a Thread");
     }
     this.draftAgentId = agentId;
+    this.draftAgentExplicit = true;
     this.emit();
   }
 
-  async newThread(agentId: AgentId = this.preferredAgent): Promise<void> {
+  setPreferredAgent(agentId?: AgentId): void {
+    this.preferredAgent = agentId;
+    if (this.draft && !this.draftAgentExplicit) {
+      this.draftAgentId = agentId;
+      this.emit();
+    }
+  }
+
+  preferredAgentId(): AgentId | undefined {
+    return this.preferredAgent;
+  }
+
+  async newThread(agentId = this.preferredAgent): Promise<void> {
     if (!isNonEmpty(this.workspace)) {
       return;
+    }
+    if (agentId === undefined) {
+      throw new Error("Choose an Agent before starting a Thread");
     }
     this.draftMessages = [];
     const now = new Date().toISOString();
@@ -412,6 +428,7 @@ export class Threads {
       this.viewedId = next?.id;
       this.draft = !isDefined(next);
       this.draftAgentId = this.preferredAgent;
+      this.draftAgentExplicit = false;
       await this.selectThread(record.workspace, next?.id);
       if (isDefined(next)) {
         await this.load(next);
@@ -494,9 +511,13 @@ export class Threads {
       ? this.requireRecord(this.selectedId)
       : undefined;
     if (!record) {
+      const agentId = this.draftAgentId;
+      if (agentId === undefined) {
+        throw new Error("Choose an Agent before starting a Thread");
+      }
       const now = new Date().toISOString();
       record = {
-        agentId: this.draftAgentId,
+        agentId,
         createdAt: now,
         id: randomUUID(),
         name: "New Thread",
@@ -1017,7 +1038,7 @@ export class Threads {
       : undefined;
     if (this.draft || !record) {
       return {
-        agentId: this.draftAgentId,
+        ...(this.draftAgentId ? { agentId: this.draftAgentId } : {}),
         commands: [],
         configOptions: [],
         drafts: this.draftMessages,
@@ -1050,12 +1071,10 @@ export class Threads {
       configOptions: runtime?.configOptions ?? [],
       ...(isNonEmpty(record.error) ? { error: record.error } : {}),
       drafts: runtime?.drafts ?? [],
-      ...(record.agentId === DEFAULT_AGENT &&
-      runtime?.operations.forkMessage === true
+      ...(runtime?.operations.forkMessage === true
         ? { forkSupported: true }
         : {}),
-      ...(record.agentId === DEFAULT_AGENT &&
-      runtime?.operations.treeNavigation === true
+      ...(runtime?.operations.treeNavigation === true
         ? { treeNavigationSupported: true }
         : {}),
       agentId: record.agentId,
@@ -1449,7 +1468,7 @@ export class Threads {
       operation === "fork"
         ? runtime.operations.forkMessage
         : runtime.operations.treeNavigation;
-    if (!supported || record.agentId !== DEFAULT_AGENT) {
+    if (!supported) {
       throw new Error(`This Agent does not support ${title}`);
     }
     if (runtime.sessionOperation) {
@@ -1469,7 +1488,7 @@ export class Threads {
   private static copyRecord(record: DatabaseThread): StoredThread {
     return {
       ...record,
-      agentId: isAgentId(record.agentId) ? record.agentId : DEFAULT_AGENT,
+      agentId: isAgentId(record.agentId) ? record.agentId : LEGACY_THREAD_AGENT,
       ...(record.authentication
         ? {
             authentication:

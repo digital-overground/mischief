@@ -493,7 +493,7 @@ const entryMeta: Partial<
     { icon: "alert" | "bot" | "brain" | "user"; label: string }
   >
 > = {
-  assistant: { icon: "bot", label: "Pi" },
+  assistant: { icon: "bot", label: "Agent" },
   system: { icon: "alert", label: "Mischief" },
   thought: { icon: "brain", label: "Thinking" },
   user: { icon: "user", label: "You" },

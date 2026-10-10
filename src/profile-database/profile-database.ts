@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { DEFAULT_AGENT, isAgentId } from "../agents/update";
+import { LEGACY_THREAD_AGENT, isAgentId } from "../agents/update";
 import type { AgentId } from "../agents/update";
 import { isNonEmpty, isRecord } from "../present";
 
@@ -223,7 +223,7 @@ const copyWorkspace = (workspace: DatabaseWorkspace): DatabaseWorkspace => ({
 });
 
 const copyThread = (thread: DatabaseThread): DatabaseThread => ({
-  agentId: thread.agentId ?? DEFAULT_AGENT,
+  agentId: thread.agentId ?? LEGACY_THREAD_AGENT,
   ...(thread.authentication
     ? {
         authentication:

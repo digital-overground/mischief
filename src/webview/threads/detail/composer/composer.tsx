@@ -8,7 +8,7 @@ import {
 } from "react";
 import type { ClipboardEvent, KeyboardEvent } from "react";
 
-import { AGENTS, DEFAULT_AGENT } from "../../../../agents/update";
+import { AGENTS } from "../../../../agents/update";
 import { isDefined, isNonEmpty } from "../../../../present";
 import type { PromptImage, ThreadCommand } from "../../../../threads/model";
 import { postMessage } from "../../../bridge";
@@ -336,6 +336,12 @@ const ComposerView = ({
   const running = Boolean(
     selected && ["running", "waiting"].includes(selected.status)
   );
+  let placeholder = "Choose an Agent to start a Thread";
+  if (setup) {
+    placeholder = "Press Enter to continue";
+  } else if (selected?.agentId) {
+    placeholder = `Message ${AGENTS[selected.agentId].name} — @ to include context, / for commands`;
+  }
   return (
     <footer>
       {copyNotice ? (
@@ -346,13 +352,9 @@ const ComposerView = ({
       <textarea
         id="composer"
         ref={box}
-        placeholder={
-          setup
-            ? "Press Enter to continue"
-            : `Message ${AGENTS[selected?.agentId ?? DEFAULT_AGENT].name} — @ to include context, / for commands`
-        }
+        placeholder={placeholder}
         autoComplete="off"
-        disabled={!selected && !setup}
+        disabled={(!selected || !selected.agentId) && !setup}
         readOnly={setup}
         onChange={(event) => {
           resizeComposer(event.currentTarget);

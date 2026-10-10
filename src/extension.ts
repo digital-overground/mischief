@@ -4,7 +4,7 @@ import * as vscode from "vscode";
 
 import { requestAgentInstall } from "./agents/install";
 import { AgentManager } from "./agents/manager";
-import { AGENTS, AGENT_IDS, DEFAULT_AGENT } from "./agents/update";
+import { AGENTS, AGENT_IDS, isAgentId } from "./agents/update";
 import type { AgentId } from "./agents/update";
 import { isNonEmpty } from "./present";
 import { ProfileDatabase } from "./profile-database/profile-database";
@@ -21,6 +21,7 @@ import {
   probeAgent,
   unavailableAgent,
 } from "./threads/acp/acp";
+import { magpiAcpExtension } from "./threads/acp/magpi-acp";
 import { Threads } from "./threads/threads/threads";
 import { MischiefView, registerMischiefView } from "./view";
 import type { ThreadSetup } from "./view";
@@ -35,13 +36,29 @@ let database: ProfileDatabase | undefined;
 let activeThreads: Threads | undefined;
 let agentManager: AgentManager | undefined;
 
+const defaultAgentSetting = (): AgentId | undefined => {
+  const value = vscode.workspace
+    .getConfiguration("mischief")
+    .get<unknown>("defaultAgent");
+  return isAgentId(value) ? value : undefined;
+};
+
+const configuredAvailableAgent = (
+  manager: AgentManager
+): AgentId | undefined => {
+  const agentId = defaultAgentSetting();
+  return agentId !== undefined && manager.availableAgents().includes(agentId)
+    ? agentId
+    : undefined;
+};
+
 const softwareSetup = (
   manager: AgentManager,
   storage: vscode.Memento
 ): ThreadSetup => {
   let installingAddons = false;
   let waitingFor: SoftwareRequirement | undefined;
-  let selectedAgent = manager.availableAgents()[0] ?? DEFAULT_AGENT;
+  let selectedAgent = defaultAgentSetting();
   const nextRequirement = (): SoftwareRequirement | undefined =>
     nextSoftwareRequirement(manager.availableAgents().length > 0);
   const prompt = (agentId?: AgentId): SetupStep | undefined => {
@@ -84,8 +101,8 @@ const softwareSetup = (
     const addons = missingRecommendedAddons();
     return storage.get<boolean>(ADDONS_OFFERED_KEY, false) ||
       addons.length === 0 ||
-      selectedAgent !== DEFAULT_AGENT ||
-      !manager.availableAgents().includes(DEFAULT_AGENT) ||
+      selectedAgent !== "magpi-acp" ||
+      !manager.availableAgents().includes("magpi-acp") ||
       (manager.piCli() === undefined && !commandExists("pi"))
       ? undefined
       : {
@@ -107,7 +124,7 @@ const softwareSetup = (
         if (choice) {
           await requestAgentInstall(manager, choice.id);
         }
-        return prompt();
+        return prompt(choice?.id);
       }
       if (requirement && waitingFor === requirement) {
         return prompt();
@@ -190,17 +207,14 @@ export const activate = async (
   const warnedCapabilities = new Set<string>();
   const threads = new Threads(
     database,
-    (handlers, agentId = DEFAULT_AGENT) => {
+    (handlers, agentId) => {
       try {
         const launch = manager.launch(agentId);
         return acpConnectionFactory(
           launch,
           log,
           (capability) => {
-            if (
-              agentId !== DEFAULT_AGENT ||
-              warnedCapabilities.has(capability)
-            ) {
+            if (agentId !== "magpi-acp" || warnedCapabilities.has(capability)) {
               return;
             }
             warnedCapabilities.add(capability);
@@ -222,15 +236,15 @@ export const activate = async (
             manager.connected(agentId, info?.version);
             void manager.check(agentId);
           },
-          agentId
-        )(handlers);
+          agentId === "magpi-acp" ? magpiAcpExtension : undefined
+        )(handlers, agentId);
       } catch (error) {
         return unavailableAgent(
           error instanceof Error ? error.message : String(error)
-        )(handlers);
+        )(handlers, agentId);
       }
     },
-    manager.availableAgents()[0] ?? DEFAULT_AGENT
+    configuredAvailableAgent(manager)
   );
   activeThreads = threads;
   const view = new MischiefView(
@@ -244,15 +258,7 @@ export const activate = async (
     manager
   );
   manager.onChange((statuses) => {
-    const available = manager.availableAgents();
-    const { selected } = threads.snapshot();
-    if (
-      selected?.id === null &&
-      !available.includes(selected.agentId ?? DEFAULT_AGENT) &&
-      available[0] !== undefined
-    ) {
-      threads.selectDraftAgent(available[0]);
-    }
+    threads.setPreferredAgent(configuredAvailableAgent(manager));
     for (const status of statuses) {
       view.setAgentStatus(status);
     }
@@ -294,6 +300,9 @@ export const activate = async (
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration("mischief.fontFamily")) {
         view.configurationChanged();
+      }
+      if (event.affectsConfiguration("mischief.defaultAgent")) {
+        threads.setPreferredAgent(configuredAvailableAgent(manager));
       }
     })
   );

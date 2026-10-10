@@ -7,7 +7,7 @@ import * as vscode from "vscode";
 
 import { requestAgentInstall } from "./agents/install";
 import type { AgentManager } from "./agents/manager";
-import { AGENTS, AGENT_IDS, DEFAULT_AGENT, isAgentId } from "./agents/update";
+import { AGENTS, AGENT_IDS, isAgentId } from "./agents/update";
 import type { AgentId } from "./agents/update";
 import { isDefined, isNonEmpty, isNonZero, isRecord } from "./present";
 import type { ProfileDatabase } from "./profile-database/profile-database";
@@ -626,12 +626,10 @@ export class MischiefView implements vscode.WebviewViewProvider {
     preserveFocus = true,
     initialPrompt?: string
   ): Promise<boolean> {
-    const agentId =
-      initialPrompt === undefined
-        ? await this.pickAgent()
-        : (this.agentManager?.availableAgents()[0] ?? DEFAULT_AGENT);
-    if (agentId === undefined) {
-      return false;
+    const available = this.agentManager?.availableAgents() ?? [];
+    let agentId = this.threads.preferredAgentId?.();
+    if (agentId === undefined && (available.length > 0 || !this.setup)) {
+      agentId = await this.pickAgent();
     }
     const setupStep = this.setup?.prompt(agentId);
     if (setupStep) {
@@ -642,13 +640,16 @@ export class MischiefView implements vscode.WebviewViewProvider {
       this.render();
       return true;
     }
-    await this.startThread(preserveFocus, initialPrompt, agentId);
+    if (agentId === undefined) {
+      return false;
+    }
+    await this.startThread(agentId, preserveFocus, initialPrompt);
     return true;
   }
 
   private async pickAgent(): Promise<AgentId | undefined> {
     if (!this.agentManager) {
-      return DEFAULT_AGENT;
+      return this.threads.preferredAgentId?.();
     }
     const available = this.agentManager.availableAgents();
     const selected = await vscode.window.showQuickPick(
@@ -728,9 +729,13 @@ export class MischiefView implements vscode.WebviewViewProvider {
 
   showSettings(): void {
     const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
+    const defaultAgent = vscode.workspace
+      .getConfiguration("mischief")
+      .get<unknown>("defaultAgent");
     void postMessage?.({
       agents: this.agents,
       assignWorkspaceColors: workspaceColorsEnabled(),
+      defaultAgent: isAgentId(defaultAgent) ? defaultAgent : "",
       type: "showSettings",
     } satisfies HostToWebviewMessage);
   }
@@ -930,6 +935,22 @@ export class MischiefView implements vscode.WebviewViewProvider {
   private async handleAgentMessage(
     data: Record<string, unknown>
   ): Promise<boolean> {
+    if (data.type === "setDefaultAgent") {
+      if (
+        typeof data.id !== "string" ||
+        (data.id !== "" && !isAgentId(data.id))
+      ) {
+        return false;
+      }
+      await vscode.workspace
+        .getConfiguration("mischief")
+        .update(
+          "defaultAgent",
+          data.id || undefined,
+          vscode.ConfigurationTarget.Global
+        );
+      return true;
+    }
     if (data.type === "chooseAgent") {
       if (this.threads.snapshot().selected?.id === null) {
         const agentId = await this.pickAgent();
@@ -1177,17 +1198,20 @@ export class MischiefView implements vscode.WebviewViewProvider {
       const agentId =
         this.setupAgentId !== undefined && available.includes(this.setupAgentId)
           ? this.setupAgentId
-          : (available[0] ?? this.setupAgentId ?? DEFAULT_AGENT);
+          : (this.threads.preferredAgentId?.() ??
+            (available.length === 1 ? available[0] : undefined));
       this.setupPrompt = undefined;
       this.setupAgentId = undefined;
-      await this.startThread(true, prompt, agentId);
+      await (agentId === undefined
+        ? this.newThread(true, prompt)
+        : this.startThread(agentId, true, prompt));
     }
   }
 
   private async startThread(
+    agentId: AgentId,
     preserveFocus = true,
-    initialPrompt?: string,
-    agentId: AgentId = DEFAULT_AGENT
+    initialPrompt?: string
   ): Promise<void> {
     this.setupStep = undefined;
     const creating = this.threads.newThread(agentId);

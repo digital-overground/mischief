@@ -15,6 +15,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import type {
   ClientConnection,
+  AgentCapabilities,
   ClientContext,
   ContentBlock,
   CreateElicitationRequest,
@@ -28,8 +29,6 @@ import type {
 } from "@agentclientprotocol/sdk";
 
 import { version } from "../../../package.json";
-import { DEFAULT_AGENT } from "../../agents/update";
-import type { AgentId } from "../../agents/update";
 import { isNonEmpty, isRecord } from "../../present";
 import type {
   AgentAuthentication,
@@ -50,22 +49,15 @@ import type {
   ThreadConfigOption,
 } from "../model";
 import type {
+  AcpExtension,
   AgentImplementation,
   AgentLaunch,
   AgentSessionOperations,
   AgentTreeNavigationOptions,
-  AgentTreeNavigationResult,
 } from "./models";
 
 const MAX_CONTEXT_BYTES = 1_000_000;
 const MAX_CONTEXT_FILES = 20;
-
-export const BRANCH_SUMMARY_CAPABILITY = "magpi-acp/branch-summary";
-export const MESSAGE_TARGET_ACTIONS_CAPABILITY =
-  "magpi-acp/message-target-actions";
-export const NAVIGATE_TREE_METHOD = "_magpi-acp/session/navigate-tree";
-export const FORK_MESSAGE_ID_META = "magpi-acp/fork-message-id";
-export const COMMAND_SOURCE_META = "magpi-acp/command-source";
 
 const referencedPaths = (text: string): string[] => [
   ...new Set(
@@ -547,36 +539,14 @@ const toolUpdate = (
   };
 };
 
-const sessionPreview = (
-  meta: Record<string, unknown> | null | undefined
-): { preview?: string; previewRole?: "user" | "assistant" } => {
-  const value = meta?.magPiAcp;
-  if (!isRecord(value)) {
-    return {};
-  }
-  const { preview, previewRole } = value;
-  return typeof preview === "string" &&
-    preview.length <= 160 &&
-    (previewRole === "user" || previewRole === "assistant")
-    ? { preview, previewRole }
-    : {};
-};
-
-const visibleMessageText = (
-  update: SessionUpdate["sessionUpdate"],
-  text: string
-): string =>
-  update === "user_message_chunk"
-    ? text.split("\n[Embedded Context] ", 1)[0]
-    : text;
-
 const allPlanEntriesCompleted = (entries: { status: string }[]): boolean =>
   entries.length > 0 && entries.every((entry) => entry.status === "completed");
 
 // oxlint-disable-next-line complexity -- ACP session updates are a protocol union
 export const translateSessionUpdate = (
   update: SessionUpdate,
-  meta?: Record<string, unknown> | null
+  meta?: Record<string, unknown> | null,
+  extension?: AcpExtension
 ): AgentUpdate | undefined => {
   switch (update.sessionUpdate) {
     case "user_message_chunk":
@@ -591,7 +561,7 @@ export const translateSessionUpdate = (
         kind = "user";
       } else if (
         update.sessionUpdate === "agent_message_chunk" &&
-        meta?.[BRANCH_SUMMARY_CAPABILITY] === true
+        extension?.messageKind?.(update, meta) === "branchSummary"
       ) {
         kind = "branchSummary";
       } else if (update.sessionUpdate === "agent_message_chunk") {
@@ -604,10 +574,11 @@ export const translateSessionUpdate = (
         kind,
         ...(update.content.type === "text"
           ? {
-              text: visibleMessageText(
-                update.sessionUpdate,
-                update.content.text
-              ),
+              text:
+                extension?.visibleMessageText?.(
+                  update.sessionUpdate,
+                  update.content.text
+                ) ?? update.content.text,
             }
           : {
               images: [
@@ -645,17 +616,14 @@ export const translateSessionUpdate = (
     }
     case "available_commands_update": {
       return {
-        commands: update.availableCommands.map((command) => {
-          const source = command._meta?.[COMMAND_SOURCE_META];
-          return {
-            description: command.description,
-            ...(typeof command.input?.hint === "string"
-              ? { inputHint: command.input.hint }
-              : {}),
-            name: command.name,
-            ...(typeof source === "string" ? { source } : {}),
-          };
-        }),
+        commands: update.availableCommands.map((command) => ({
+          description: command.description,
+          ...(typeof command.input?.hint === "string"
+            ? { inputHint: command.input.hint }
+            : {}),
+          name: command.name,
+          ...extension?.command?.(command),
+        })),
         type: "commands",
       };
     }
@@ -722,65 +690,6 @@ const standardTerminalAuthentication = (
   };
 };
 
-const legacyTerminalAuthentication = (
-  method: unknown
-): TerminalAuthentication | undefined => {
-  if (!isRecord(method)) {
-    return undefined;
-  }
-  const { _meta: rawMeta, name } = method;
-  const meta = isRecord(rawMeta) ? rawMeta : undefined;
-  const rawPrivateLaunch = meta?.["terminal-auth"];
-  const privateLaunch = isRecord(rawPrivateLaunch)
-    ? rawPrivateLaunch
-    : undefined;
-  const {
-    args,
-    command,
-    env: rawEnv,
-    label: privateLabel,
-  } = privateLaunch ?? {};
-  if (typeof command !== "string" || !stringArguments(args)) {
-    return undefined;
-  }
-  const env = stringEnvironment(rawEnv) ? rawEnv : undefined;
-  let label = typeof name === "string" ? name : "Authenticate";
-  if (typeof privateLabel === "string") {
-    label = privateLabel;
-  }
-  return {
-    args,
-    command,
-    ...(env && Object.keys(env).length ? { env } : {}),
-    label,
-  };
-};
-
-export const terminalAuthentication = (
-  error: unknown,
-  launch?: AgentLaunch
-): TerminalAuthentication | undefined => {
-  const data = isRecord(error) && isRecord(error.data) ? error.data : undefined;
-  if (!Array.isArray(data?.authMethods)) {
-    return undefined;
-  }
-  if (launch) {
-    for (const method of data.authMethods) {
-      const authentication = standardTerminalAuthentication(method, launch);
-      if (authentication) {
-        return authentication;
-      }
-    }
-  }
-  for (const method of data.authMethods) {
-    const authentication = legacyTerminalAuthentication(method);
-    if (authentication) {
-      return authentication;
-    }
-  }
-  return undefined;
-};
-
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
@@ -788,7 +697,7 @@ export const authenticationFor = (
   error: unknown,
   launch: AgentLaunch,
   advertised: unknown[],
-  agentId: AgentId = DEFAULT_AGENT
+  extension?: AcpExtension
 ): AgentAuthentication | undefined => {
   if (!isRecord(error) || error.code !== -32_000) {
     return undefined;
@@ -803,13 +712,9 @@ export const authenticationFor = (
   if (standard !== undefined) {
     return standard;
   }
-  if (agentId === DEFAULT_AGENT) {
-    const legacy = terminalAuthentication({
-      data: { authMethods: availableMethods },
-    });
-    if (legacy !== undefined) {
-      return legacy;
-    }
+  const custom = extension?.authentication?.(error, launch, availableMethods);
+  if (custom !== undefined) {
+    return custom;
   }
   for (const method of availableMethods) {
     if (
@@ -831,47 +736,12 @@ const toAgentError = (
   error: unknown,
   launch: AgentLaunch,
   advertised: unknown[],
-  agentId: AgentId
+  extension?: AcpExtension
 ): AgentError =>
   Object.assign(
     error instanceof Error ? error : new Error(errorMessage(error)),
-    { authentication: authenticationFor(error, launch, advertised, agentId) }
+    { authentication: authenticationFor(error, launch, advertised, extension) }
   );
-
-const invalidResponse = (name: string): Error =>
-  new Error(`Invalid MagPi ${name} response`);
-
-export const sessionOperations = (
-  agentCapabilities: unknown
-): AgentSessionOperations => {
-  const meta =
-    isRecord(agentCapabilities) && isRecord(agentCapabilities._meta)
-      ? agentCapabilities._meta
-      : undefined;
-  return {
-    branchSummary: meta?.[BRANCH_SUMMARY_CAPABILITY] === true,
-    forkMessage: meta?.[MESSAGE_TARGET_ACTIONS_CAPABILITY] === true,
-    treeNavigation: meta?.[MESSAGE_TARGET_ACTIONS_CAPABILITY] === true,
-  };
-};
-
-export const decodeTreeNavigationResult = (
-  value: unknown
-): AgentTreeNavigationResult => {
-  if (
-    !isRecord(value) ||
-    (value.leafId !== null && typeof value.leafId !== "string")
-  ) {
-    throw invalidResponse("tree navigation");
-  }
-  if (value.draft === undefined || value.draft === null || value.draft === "") {
-    return {};
-  }
-  if (typeof value.draft !== "string") {
-    throw invalidResponse("tree navigation");
-  }
-  return { draft: value.draft };
-};
 
 class AcpConnection implements AgentConnection {
   private child?: ChildProcessWithoutNullStreams;
@@ -891,11 +761,11 @@ class AcpConnection implements AgentConnection {
   private readonly onInitialized?: (info?: AgentImplementation) => void;
   private implementation?: AgentImplementation;
   private authMethods: unknown[] = [];
-  private supportsLoad = true;
-  private supportsHistory = true;
-  private supportsImages = true;
-  private supportsEmbeddedContext = true;
-  private readonly agentId: AgentId;
+  private supportsLoad = false;
+  private supportsHistory = false;
+  private supportsImages = false;
+  private supportsEmbeddedContext = false;
+  private readonly extension?: AcpExtension;
 
   constructor(
     launch: AgentLaunch,
@@ -903,14 +773,14 @@ class AcpConnection implements AgentConnection {
     log: (message: string) => void,
     onMissingCapability: (capability: string) => void,
     onInitialized?: (info?: AgentImplementation) => void,
-    agentId: AgentId = DEFAULT_AGENT
+    extension?: AcpExtension
   ) {
     this.launch = launch;
     this.handlers = handlers;
     this.log = log;
     this.onMissingCapability = onMissingCapability;
     this.onInitialized = onInitialized;
-    this.agentId = agentId;
+    this.extension = extension;
   }
 
   async inspect(): Promise<AgentImplementation | undefined> {
@@ -940,14 +810,15 @@ class AcpConnection implements AgentConnection {
   async forkMessage(sessionId: string, cwd: string, messageId: string) {
     return await this.call(async () => {
       await this.start();
-      const session = await this.requireAgent().request(
-        methods.agent.session.fork,
-        {
-          _meta: { [FORK_MESSAGE_ID_META]: messageId },
-          cwd,
-          mcpServers: [],
-          sessionId,
-        }
+      const fork = this.extension?.forkMessage;
+      if (!this.operations.forkMessage || !fork) {
+        throw new Error("This Agent does not support Fork at a message");
+      }
+      const session = await fork(
+        this.requireAgent(),
+        sessionId,
+        cwd,
+        messageId
       );
       return {
         configOptions: configOptions(session.configOptions),
@@ -980,7 +851,7 @@ class AcpConnection implements AgentConnection {
             .filter((session) => session.cwd === cwd)
             .map((session) => ({
               cwd: session.cwd,
-              ...sessionPreview(session._meta),
+              ...this.extension?.sessionPreview?.(session._meta),
               sessionId: session.sessionId,
               ...(isNonEmpty(session.title) ? { title: session.title } : {}),
               ...(isNonEmpty(session.updatedAt) &&
@@ -1025,11 +896,11 @@ class AcpConnection implements AgentConnection {
   ) {
     return await this.call(async () => {
       await this.start();
-      const response = await this.requireAgent().request<
-        unknown,
-        AgentTreeNavigationOptions & { messageId: string; sessionId: string }
-      >(NAVIGATE_TREE_METHOD, { ...options, messageId, sessionId });
-      return decodeTreeNavigationResult(response);
+      const navigate = this.extension?.navigateTreeMessage;
+      if (!this.operations.treeNavigation || !navigate) {
+        throw new Error("This Agent does not support Thread tree navigation");
+      }
+      return await navigate(this.requireAgent(), sessionId, messageId, options);
     });
   }
 
@@ -1117,7 +988,7 @@ class AcpConnection implements AgentConnection {
     try {
       return await operation();
     } catch (error) {
-      throw toAgentError(error, this.launch, this.authMethods, this.agentId);
+      throw toAgentError(error, this.launch, this.authMethods, this.extension);
     }
   }
 
@@ -1165,7 +1036,7 @@ class AcpConnection implements AgentConnection {
             ),
             this.launch,
             this.authMethods,
-            this.agentId
+            this.extension
           )
         );
       }
@@ -1231,7 +1102,11 @@ class AcpConnection implements AgentConnection {
       )
       .onNotification(methods.client.session.update, async ({ params }) => {
         await Promise.resolve();
-        const translated = translateSessionUpdate(params.update, params._meta);
+        const translated = translateSessionUpdate(
+          params.update,
+          params._meta,
+          this.extension
+        );
         if (translated) {
           this.handlers.update(translated);
         }
@@ -1257,21 +1132,7 @@ class AcpConnection implements AgentConnection {
     this.authMethods = Array.isArray(response.authMethods)
       ? response.authMethods
       : [];
-    const capabilities = response.agentCapabilities;
-    if (this.agentId !== DEFAULT_AGENT) {
-      this.supportsLoad = capabilities?.loadSession === true;
-      this.supportsHistory = isRecord(capabilities?.sessionCapabilities?.list);
-      this.supportsImages = capabilities?.promptCapabilities?.image === true;
-      this.supportsEmbeddedContext =
-        capabilities?.promptCapabilities?.embeddedContext === true;
-    }
-    this.operations =
-      this.agentId === DEFAULT_AGENT
-        ? sessionOperations(capabilities)
-        : { branchSummary: false, forkMessage: false, treeNavigation: false };
-    if (this.agentId === DEFAULT_AGENT && !this.operations.forkMessage) {
-      this.onMissingCapability(MESSAGE_TARGET_ACTIONS_CAPABILITY);
-    }
+    this.initializeCapabilities(response.agentCapabilities);
     const rawInfo: unknown = response.agentInfo;
     const info =
       isRecord(rawInfo) &&
@@ -1292,6 +1153,27 @@ class AcpConnection implements AgentConnection {
       this.onInitialized?.(info);
     } catch (error) {
       this.log(`Agent version check failed: ${errorMessage(error)}`);
+    }
+  }
+
+  private initializeCapabilities(
+    capabilities: AgentCapabilities | null | undefined
+  ): void {
+    this.supportsLoad = capabilities?.loadSession === true;
+    this.supportsHistory = isRecord(capabilities?.sessionCapabilities?.list);
+    this.supportsImages = capabilities?.promptCapabilities?.image === true;
+    this.supportsEmbeddedContext =
+      capabilities?.promptCapabilities?.embeddedContext === true;
+    this.operations = {
+      branchSummary: false,
+      forkMessage: false,
+      treeNavigation: false,
+      ...this.extension?.operations?.(capabilities),
+    };
+    for (const capability of this.extension?.missingCapabilities?.(
+      capabilities
+    ) ?? []) {
+      this.onMissingCapability(capability);
     }
   }
 
@@ -1363,7 +1245,7 @@ export const acpConnectionFactory =
     log: (message: string) => void,
     onMissingCapability: (capability: string) => void,
     onInitialized?: (info?: AgentImplementation) => void,
-    agentId: AgentId = DEFAULT_AGENT
+    extension?: AcpExtension
   ): AgentConnectionFactory =>
   (handlers) =>
     new AcpConnection(
@@ -1372,5 +1254,5 @@ export const acpConnectionFactory =
       log,
       onMissingCapability,
       onInitialized,
-      agentId
+      extension
     );

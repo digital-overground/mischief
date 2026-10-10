@@ -81,6 +81,7 @@ export type HostToWebviewMessage =
   | {
       type: "showSettings";
       assignWorkspaceColors: boolean;
+      defaultAgent: string;
       agents: AgentSetting[];
     }
   | { type: "agents"; agents: AgentSetting[] };
@@ -124,6 +125,7 @@ export type WebviewToHostMessage =
   | { type: "setupContinue"; selected: string[] }
   | { type: "navigatorExpanded"; expanded: boolean }
   | { type: "setAssignWorkspaceColors"; value: boolean }
+  | { type: "setDefaultAgent"; id: string }
   | { type: "installAgent" | "checkAgent"; id: string }
   | { type: "removeSteering" | "sendSteering"; id: string }
   | { type: "setConfig"; id: string; value: string | boolean }

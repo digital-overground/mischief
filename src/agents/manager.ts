@@ -11,7 +11,6 @@ import type { AgentSetting } from "../webview/protocol";
 import {
   AGENTS,
   AGENT_IDS,
-  DEFAULT_AGENT,
   compareVersions,
   latestAgentVersion,
 } from "./update";
@@ -211,7 +210,7 @@ export class AgentManager {
 
   availableAgents(): AgentId[] {
     return AGENT_IDS.filter((id) => {
-      if (id !== DEFAULT_AGENT) {
+      if (id !== "magpi-acp") {
         return this.activeVersion(id) !== undefined;
       }
       const launch = this.launch(id);

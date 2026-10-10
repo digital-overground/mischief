@@ -6,6 +6,7 @@ import { describe, expect, test } from "vitest";
 
 import { isNonEmpty, isRecord } from "../present";
 import { acpConnectionFactory, probeAgent } from "../threads/acp/acp";
+import { magpiAcpExtension } from "../threads/acp/magpi-acp";
 import { AgentManager } from "./manager";
 import type { AgentId } from "./update";
 
@@ -23,19 +24,22 @@ const sessionReady = async (
     ignore,
     ignore,
     ignore,
+    id === "magpi-acp" ? magpiAcpExtension : undefined
+  )(
+    {
+      elicitation: async () => {
+        await Promise.resolve();
+        return { action: "cancel" };
+      },
+      error: ignore,
+      permission: async () => {
+        await Promise.resolve();
+        return { cancelled: true };
+      },
+      update: ignore,
+    },
     id
-  )({
-    elicitation: async () => {
-      await Promise.resolve();
-      return { action: "cancel" };
-    },
-    error: ignore,
-    permission: async () => {
-      await Promise.resolve();
-      return { cancelled: true };
-    },
-    update: ignore,
-  });
+  );
   try {
     try {
       const session = await connection.create(cwd);

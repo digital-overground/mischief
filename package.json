@@ -167,6 +167,11 @@
           "default": true,
           "description": "Automatically assign Workspace window colors from the active theme."
         },
+        "mischief.defaultAgent": {
+          "type": "string",
+          "default": "",
+          "description": "Default Agent for new Threads. Leave empty to choose an Agent each time. Existing Threads keep their original Agent."
+        },
         "mischief.copyIgnoredItems": {
           "type": "array",
           "items": {

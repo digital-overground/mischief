@@ -32,6 +32,7 @@ const initialState: Extract<HostToWebviewMessage, { type: "state" }> = {
 export const App = (): React.JSX.Element => {
   const [snapshot, setSnapshot] = useState(initialState);
   const [assignWorkspaceColors, setAssignWorkspaceColors] = useState(true);
+  const [defaultAgent, setDefaultAgent] = useState("");
   const [agents, setAgents] = useState<AgentSetting[]>([]);
   const [contextItems, setContextItems] = useState<string[]>([]);
   const [expandAllRequest, setExpandAllRequest] = useState(0);
@@ -48,6 +49,7 @@ export const App = (): React.JSX.Element => {
     const receive = (event: MessageEvent<HostToWebviewMessage>): void => {
       if (event.data.type === "showSettings") {
         setAssignWorkspaceColors(event.data.assignWorkspaceColors);
+        setDefaultAgent(event.data.defaultAgent);
         setAgents(event.data.agents);
         const dialog = settingsDialog.current;
         if (dialog && !dialog.open) {
@@ -197,6 +199,30 @@ export const App = (): React.JSX.Element => {
               windows that do not already define them.
             </span>
           </span>
+        </label>
+        <label className="settings-option" htmlFor="default-agent">
+          <span>
+            <span className="settings-name">Default Agent</span>
+            <span className="settings-description">
+              Used for new Threads. Existing Threads keep their Agent.
+            </span>
+          </span>
+          <select
+            id="default-agent"
+            value={defaultAgent}
+            onChange={(event) => {
+              const id = event.currentTarget.value;
+              setDefaultAgent(id);
+              postMessage({ id, type: "setDefaultAgent" });
+            }}
+          >
+            <option value="">Choose each time</option>
+            {agents.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.name}
+              </option>
+            ))}
+          </select>
         </label>
         <section className="settings-agents" aria-labelledby="agents-title">
           <h3 id="agents-title">Agents</h3>

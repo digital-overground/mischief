@@ -7,23 +7,28 @@ import { describe, expect, test } from "vitest";
 
 import {
   authenticationFor,
-  decodeTreeNavigationResult,
   elicitationRequest,
   promptContent,
-  sessionOperations,
-  terminalAuthentication,
   translateSessionUpdate,
 } from "./acp";
+import {
+  BRANCH_SUMMARY_CAPABILITY,
+  COMMAND_SOURCE_META,
+  MESSAGE_TARGET_ACTIONS_CAPABILITY,
+  decodeMagpiTreeNavigationResult,
+  magpiAcpExtension,
+} from "./magpi-acp";
 
 describe("ACP adapter", () => {
-  test("requires explicit message-target support, not legacy picker capabilities", () => {
+  test("requires advertised ACP fork and MagPi message-target capabilities", () => {
     expect(
-      sessionOperations({
+      magpiAcpExtension.operations?.({
         _meta: {
-          "magpi-acp/branch-summary": true,
+          [BRANCH_SUMMARY_CAPABILITY]: true,
           "magpi-acp/fork-picker": true,
           "magpi-acp/tree-picker": true,
         },
+        sessionCapabilities: { fork: {} },
       })
     ).toStrictEqual({
       branchSummary: true,
@@ -31,8 +36,9 @@ describe("ACP adapter", () => {
       treeNavigation: false,
     });
     expect(
-      sessionOperations({
-        _meta: { "magpi-acp/message-target-actions": true },
+      magpiAcpExtension.operations?.({
+        _meta: { [MESSAGE_TARGET_ACTIONS_CAPABILITY]: true },
+        sessionCapabilities: { fork: {} },
       })
     ).toStrictEqual({
       branchSummary: false,
@@ -40,30 +46,30 @@ describe("ACP adapter", () => {
       treeNavigation: true,
     });
     expect(
-      sessionOperations({
-        _meta: { "magpi-acp/message-target-actions": "true" },
+      magpiAcpExtension.operations?.({
+        _meta: { [MESSAGE_TARGET_ACTIONS_CAPABILITY]: true },
       })
     ).toStrictEqual({
       branchSummary: false,
       forkMessage: false,
-      treeNavigation: false,
+      treeNavigation: true,
     });
-    expect(sessionOperations({ _meta: null })).toStrictEqual({
+    expect(magpiAcpExtension.operations?.({ _meta: null })).toStrictEqual({
       branchSummary: false,
       forkMessage: false,
       treeNavigation: false,
     });
   });
 
-  test("decodes optional tree navigation drafts", () => {
+  test("decodes optional MagPi tree navigation drafts", () => {
     expect(
-      decodeTreeNavigationResult({ draft: "Try again", leafId: "user-1" })
+      decodeMagpiTreeNavigationResult({ draft: "Try again", leafId: "user-1" })
     ).toStrictEqual({ draft: "Try again" });
     expect(
-      decodeTreeNavigationResult({ draft: null, leafId: "assistant-1" })
+      decodeMagpiTreeNavigationResult({ draft: null, leafId: "assistant-1" })
     ).toStrictEqual({});
     expect(() =>
-      decodeTreeNavigationResult({ draft: 42, leafId: "user-1" })
+      decodeMagpiTreeNavigationResult({ draft: 42, leafId: "user-1" })
     ).toThrow("Invalid MagPi tree navigation response");
   });
 
@@ -135,96 +141,111 @@ describe("ACP adapter", () => {
     ).toThrow("Unsupported elicitation property schema");
   });
 
-  test("prefers standard terminal authentication methods", () => {
+  test("translates standard terminal authentication methods", () => {
     expect(
-      terminalAuthentication(
+      authenticationFor(
         {
+          code: -32_000,
           data: {
             authMethods: [
               {
-                _meta: {
-                  "terminal-auth": {
-                    args: ["--old"],
-                    command: "old-agent",
-                  },
-                },
-                name: "Old login",
-              },
-              {
                 args: ["--login"],
-                env: { MAGPI_TOKEN: "new" },
+                env: { TOKEN: "new" },
                 name: "Log in",
                 type: "terminal",
               },
             ],
           },
         },
-        { args: ["--stdio"], command: "magpi", env: { BASE: "yes" } }
+        { args: ["--stdio"], command: "agent", env: { BASE: "yes" } },
+        []
       )
     ).toStrictEqual({
       args: ["--stdio", "--login"],
-      command: "magpi",
-      env: { BASE: "yes", MAGPI_TOKEN: "new" },
+      command: "agent",
+      env: { BASE: "yes", TOKEN: "new" },
       label: "Log in",
     });
   });
 
-  test("keeps the legacy terminal authentication fallback", () => {
-    expect(
-      terminalAuthentication({
-        data: {
-          authMethods: [
-            {
-              _meta: {
-                "terminal-auth": {
-                  args: ["--login"],
-                  command: "magpi-auth",
-                  env: { MAGPI_TOKEN: "old" },
-                  label: "Old login",
-                },
+  test("keeps MagPi legacy terminal authentication inside its extension", () => {
+    const error = {
+      code: -32_000,
+      data: {
+        authMethods: [
+          {
+            _meta: {
+              "terminal-auth": {
+                args: ["--login"],
+                command: "magpi-auth",
+                env: { TOKEN: "old" },
+                label: "Old login",
               },
             },
-          ],
-        },
-      })
+          },
+        ],
+      },
+    };
+    expect(
+      authenticationFor(
+        error,
+        { args: [], command: "magpi" },
+        [],
+        magpiAcpExtension
+      )
     ).toStrictEqual({
       args: ["--login"],
       command: "magpi-auth",
-      env: { MAGPI_TOKEN: "old" },
+      env: { TOKEN: "old" },
+      label: "Old login",
+    });
+    expect(
+      authenticationFor(error, { args: [], command: "agent" }, [])
+    ).toBeUndefined();
+    expect(
+      authenticationFor(
+        { code: -32_000 },
+        { args: [], command: "magpi" },
+        error.data.authMethods,
+        magpiAcpExtension
+      )
+    ).toStrictEqual({
+      args: ["--login"],
+      command: "magpi-auth",
+      env: { TOKEN: "old" },
       label: "Old login",
     });
   });
 
-  test("offers standard Agent authentication but not MagPi's private terminal metadata to Codex", () => {
+  test("offers standard Agent authentication without MagPi's private metadata", () => {
     const launch = { args: ["/codex/dist/index.js"], command: "node" };
     const required = {
       code: -32_000,
       data: { authMethods: [{ id: "chatgpt", name: "Log in with ChatGPT" }] },
     };
-    expect(authenticationFor(required, launch, [], "codex-acp")).toStrictEqual({
+    expect(authenticationFor(required, launch, [])).toStrictEqual({
       label: "Log in with ChatGPT",
       methodId: "chatgpt",
     });
     expect(
-      authenticationFor(
-        { code: -32_001 },
-        launch,
-        required.data.authMethods,
-        "codex-acp"
-      )
+      authenticationFor({ code: -32_001 }, launch, required.data.authMethods)
     ).toBeUndefined();
     expect(
       authenticationFor(
-        { code: -32_000 },
-        launch,
-        [
-          {
-            _meta: { "terminal-auth": { args: [], command: "untrusted" } },
-            id: "legacy",
-            name: "MagPi login",
+        {
+          code: -32_000,
+          data: {
+            authMethods: [
+              {
+                _meta: { "terminal-auth": { args: [], command: "untrusted" } },
+                id: "legacy",
+                name: "MagPi login",
+              },
+            ],
           },
-        ],
-        "codex-acp"
+        },
+        launch,
+        []
       )
     ).toStrictEqual({ label: "MagPi login", methodId: "legacy" });
   });
@@ -271,39 +292,39 @@ describe("ACP adapter", () => {
     }
   });
 
-  test("keeps embedded file contents out of replayed prompt text", () => {
-    expect(
-      translateSessionUpdate({
-        content: {
-          text: "@src/projects.ts testing\n[Embedded Context] file:///workspace/src/projects.ts (text/plain)\nexport const projects = true;",
-          type: "text",
-        },
-        sessionUpdate: "user_message_chunk",
-      })
-    ).toStrictEqual({
+  test("keeps protocol updates generic and applies MagPi markers only through its extension", () => {
+    const userUpdate = {
+      content: {
+        text: "@src/projects.ts testing\n[Embedded Context] file:///workspace/src/projects.ts (text/plain)\nexport const projects = true;",
+        type: "text" as const,
+      },
+      sessionUpdate: "user_message_chunk" as const,
+    };
+    expect(translateSessionUpdate(userUpdate)).toMatchObject({
       kind: "user",
-      text: "@src/projects.ts testing",
-      type: "message",
+      text: "@src/projects.ts testing\n[Embedded Context] file:///workspace/src/projects.ts (text/plain)\nexport const projects = true;",
     });
-  });
+    expect(
+      translateSessionUpdate(userUpdate, undefined, magpiAcpExtension)
+    ).toMatchObject({ kind: "user", text: "@src/projects.ts testing" });
 
-  test("translates MagPi branch summaries into system transcript entries", () => {
+    const summary = {
+      content: {
+        text: "Preserve the adapter decision.",
+        type: "text" as const,
+      },
+      sessionUpdate: "agent_message_chunk" as const,
+    };
+    expect(
+      translateSessionUpdate(summary, { [BRANCH_SUMMARY_CAPABILITY]: true })
+    ).toMatchObject({ kind: "assistant" });
     expect(
       translateSessionUpdate(
-        {
-          content: {
-            text: "Preserve the adapter decision.",
-            type: "text",
-          },
-          sessionUpdate: "agent_message_chunk",
-        },
-        { "magpi-acp/branch-summary": true }
+        summary,
+        { [BRANCH_SUMMARY_CAPABILITY]: true },
+        magpiAcpExtension
       )
-    ).toStrictEqual({
-      kind: "branchSummary",
-      text: "Preserve the adapter decision.",
-      type: "message",
-    });
+    ).toMatchObject({ kind: "branchSummary" });
   });
 
   test("translates image chunks into Thread messages", () => {
@@ -325,35 +346,54 @@ describe("ACP adapter", () => {
     });
   });
 
-  test("translates advertised commands without leaking ACP input metadata", () => {
+  test("translates every standard advertised command; MagPi metadata stays extension-owned", () => {
+    const update = {
+      availableCommands: [
+        {
+          _meta: {
+            [COMMAND_SOURCE_META]: "git:github.com/example/review",
+          },
+          description: "Run a review",
+          input: { _meta: { futureInputType: "text" }, hint: "[branch]" },
+          name: "skill:review",
+        },
+        {
+          description: "Clear context",
+          input: null,
+          name: "clear",
+        },
+        {
+          description: "Codex skill",
+          name: "$review",
+        },
+      ],
+      sessionUpdate: "available_commands_update" as const,
+    };
+    expect(translateSessionUpdate(update)).toStrictEqual({
+      commands: [
+        {
+          description: "Run a review",
+          inputHint: "[branch]",
+          name: "skill:review",
+        },
+        { description: "Clear context", name: "clear" },
+        { description: "Codex skill", name: "$review" },
+      ],
+      type: "commands",
+    });
     expect(
-      translateSessionUpdate({
-        availableCommands: [
-          {
-            _meta: {
-              "magpi-acp/command-source": "git:github.com/example/review",
-            },
-            description: "Run a review",
-            input: { _meta: { futureInputType: "text" }, hint: "[branch]" },
-            name: "review",
-          },
-          {
-            description: "Start fresh",
-            input: null,
-            name: "new",
-          },
-        ],
-        sessionUpdate: "available_commands_update",
-      })
+      translateSessionUpdate(update, undefined, magpiAcpExtension)
     ).toStrictEqual({
       commands: [
         {
           description: "Run a review",
           inputHint: "[branch]",
-          name: "review",
+          name: "skill:review",
+          skill: true,
           source: "git:github.com/example/review",
         },
-        { description: "Start fresh", name: "new" },
+        { description: "Clear context", name: "clear", skill: false },
+        { description: "Codex skill", name: "$review", skill: false },
       ],
       type: "commands",
     });

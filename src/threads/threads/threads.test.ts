@@ -18,7 +18,7 @@ import type {
   PromptImage,
   ThreadConfigOption,
 } from "../model";
-import type { ThreadsChange } from "./models";
+import type { ThreadHistoryEntry, ThreadsChange } from "./models";
 import { Threads } from "./threads";
 
 interface Deferred {
@@ -352,7 +352,7 @@ describe("threads module", () => {
 
   const createThreads = (
     factory: AgentConnectionFactory,
-    preferredAgent?: AgentId
+    preferredAgent: AgentId = "magpi-acp"
   ): Threads => {
     const threads = new Threads(database, factory, preferredAgent);
     instances.push(threads);
@@ -1238,7 +1238,7 @@ describe("threads module", () => {
     await threads.openWorkspace("/workspace");
     await threads.prompt("Register this session");
 
-    await expect(threads.history()).resolves.toStrictEqual([
+    await expect(threads.history("magpi-acp")).resolves.toStrictEqual([
       {
         agentId: "magpi-acp",
         preview: "Fix the login cache",
@@ -1282,10 +1282,10 @@ describe("threads module", () => {
     let installed = false;
     const factory: AgentConnectionFactory = (handlers) =>
       installed
-        ? claude.factory(handlers)
+        ? claude.factory(handlers, "claude-agent-acp")
         : unavailableAgent(
             "Claude Agent is not installed. Install it from Mischief Settings."
-          )(handlers);
+          )(handlers, "claude-agent-acp");
     const threads = createThreads(factory);
     await threads.openWorkspace("/workspace");
     await threads.newThread("claude-agent-acp");
@@ -1302,6 +1302,32 @@ describe("threads module", () => {
       status: "idle",
     });
     expect(claude.createCalls).toBe(1);
+  });
+
+  test("does not invent a default Agent for empty Threads", async () => {
+    const agent = new FakeAgent();
+    const threads = new Threads(database, agent.factory);
+    instances.push(threads);
+    await threads.openWorkspace("/workspace");
+    expect(threads.snapshot().selected).toMatchObject({ id: null });
+    expect(threads.snapshot().selected?.agentId).toBeUndefined();
+    await expect(threads.newThread()).rejects.toThrow(
+      "Choose an Agent before starting a Thread"
+    );
+    await expect(threads.prompt("Choose an Agent first")).rejects.toThrow(
+      "Choose an Agent before starting a Thread"
+    );
+    expect(agent.createCalls).toBe(0);
+  });
+
+  test("keeps an explicitly selected draft Agent across default changes", async () => {
+    const threads = new Threads(database, new FakeAgent().factory);
+    instances.push(threads);
+    await threads.openWorkspace("/workspace");
+    threads.setPreferredAgent("codex-acp");
+    threads.selectDraftAgent("magpi-acp");
+    threads.setPreferredAgent("codex-acp");
+    expect(threads.snapshot().selected?.agentId).toBe("magpi-acp");
   });
 
   test("uses the available Agent for empty drafts and new Threads", async () => {
@@ -1328,7 +1354,9 @@ describe("threads module", () => {
       { cwd: "/workspace", sessionId: "session-1", title: "Codex history" },
     ];
     const factory: AgentConnectionFactory = (handlers, id) =>
-      id === "codex-acp" ? codex.factory(handlers) : magpi.factory(handlers);
+      id === "codex-acp"
+        ? codex.factory(handlers, id)
+        : magpi.factory(handlers, id);
     const first = createThreads(factory);
     await first.openWorkspace("/workspace");
     first.selectDraftAgent("codex-acp");
@@ -1373,7 +1401,8 @@ describe("threads module", () => {
     agent.replayOnLoad = true;
     const threads = createThreads(agent.factory);
     await threads.openWorkspace("/workspace");
-    const entry = {
+    const entry: ThreadHistoryEntry = {
+      agentId: "magpi-acp",
       sessionId: "previous-session",
       title: "Previous Thread",
       updatedAt: "2026-09-15T12:00:00.000Z",
