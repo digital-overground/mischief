@@ -1,6 +1,6 @@
 # Mischief
 
-Mischief is a VS Code extension for managing code Projects and graphical Agent Threads powered by MagPi ACP. It replaces the old Herdr terminal integration with a focused Project → Workspace → Thread experience.
+Mischief is a VS Code extension for managing code Projects and graphical Agent Threads powered by MagPi, Claude Agent, or Codex over ACP. It replaces the old Herdr terminal integration with a focused Project → Workspace → Thread experience.
 
 ## Language
 
@@ -50,7 +50,7 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 - The first version uses one stable Activity Bar Webview rather than native TreeViews or proposed Chat Session APIs. It renders a profile-wide `Project → Workspace → Thread` Navigator above the selected Thread transcript/composer. The whole view can use a Mischief-specific font. Domain state and actions stay outside webview JavaScript so the sections can become separate native views later without changing Projects or Threads.
 - Multiple Thread turns may run concurrently, including within one Workspace. A running Thread’s composer remains enabled; additional messages are shown as queued with their position and run in order. Stopping the active turn clears the Agent’s queue but restores the queued message text as editable drafts. Navigating away from a Thread does not cancel its turn; it continues in its Workspace’s VS Code window and remains visible when the Thread is reopened.
 - Open Mischief windows in one VS Code profile share registered Threads, selection, and Thread attention state. Navigator nests all registered Threads beneath visible active Workspaces. Workspace rows show one indicator for each present attention state (waiting, error, or unread completed), while the Activity Bar badge counts individual attention-needing Threads. Each Workspace window’s extension host still owns its running Threads; closing that window stops its in-flight turns.
-- MagPi ACP is the only Agent in v1. The selected Thread header renders its ACP-provided Role, Model, and Thinking configuration controls. These settings belong to that Thread. An Agent is fixed for the lifetime of a Thread; future support for additional ACP Agents may use the same `{ command, args, env }` shape.
+- MagPi is the default Agent when available; Claude Agent and Codex are available after a user-approved, Mischief-owned npm install. At least one Agent must be available, but MagPi is optional. Subsequent updates are automatic. Each Thread persists its Agent ID for restoration and Workspace/Agent-scoped Thread History; records without an Agent ID are MagPi Threads. The selected Thread header renders its ACP-provided configuration controls. These settings belong to that Thread. An Agent is fixed for the lifetime of a Thread. Running Threads keep their process during Agent updates.
 - Mischief does not require Herdr, a Herdr server, terminal mirroring, or TUI interaction.
 
 ## Architecture decisions
@@ -103,7 +103,6 @@ The exact split is allowed to shrink if a file does not earn its own behavior. `
 - Durable background ownership of in-flight turns.
 - Proposed VS Code Chat APIs.
 - Automatically or bulk importing all existing Pi sessions.
-- Configuring or selecting additional ACP Agents.
 - Displaying ACP context usage and cost in the Thread header.
 - Filters, status-bar decoration, background waiting/error notifications, and other convenience features not required for the first vertical slice.
 - Automatic deletion of ACP/Pi history when a Workspace becomes inactive.

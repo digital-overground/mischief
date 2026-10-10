@@ -138,6 +138,17 @@ main {
   font-size: 11px;
   line-height: 1.4;
 }
+.settings-agents {
+  padding: 12px;
+  border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+}
+.settings-agents h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+.settings-agent + .settings-agent {
+  margin-top: 12px;
+}
 main > section {
   display: flex;
   flex-direction: column;
@@ -200,6 +211,21 @@ header {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
+}
+.thread-agent {
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  white-space: nowrap;
+}
+button.thread-agent {
+  border: 0;
+  padding: 3px;
+  background: transparent;
+  cursor: pointer;
+}
+button.thread-agent:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-list-hoverBackground);
 }
 header > .heading {
   flex: 1;
@@ -1196,7 +1222,8 @@ fieldset.interaction-field {
   padding: 8px 12px;
   background: var(--vscode-editorWidget-background);
 }
-.interaction-actions .action {
+.interaction-actions .action,
+.settings-agent .action {
   display: inline-flex;
   align-items: center;
   gap: 6px;

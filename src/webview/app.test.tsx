@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import type { AgentId } from "../agents/update";
 import { isDefined } from "../present";
 import { testValue } from "../test-value";
 import type { HostToWebviewMessage } from "./protocol";
@@ -22,11 +23,16 @@ testValue<{ IS_REACT_ACT_ENVIRONMENT?: boolean }>(
 
 const { App } = await import("./app");
 
-const threadState = (id: string, drafts: string[]): HostToWebviewMessage => ({
+const threadState = (
+  id: string,
+  drafts: string[],
+  agentId?: AgentId
+): HostToWebviewMessage => ({
   font: "Test Mono",
   projects: { projects: [], ungrouped: [] },
   threads: {
     selected: {
+      ...(agentId === undefined ? {} : { agentId }),
       commands: [],
       configOptions: [],
       drafts,
@@ -142,6 +148,26 @@ describe("React webview", () => {
       selected: ["matt"],
       type: "setupContinue",
     });
+    await unmount();
+  });
+
+  test.each([
+    [undefined, "MagPi"],
+    ["magpi-acp", "MagPi"],
+    ["claude-agent-acp", "Claude Agent"],
+    ["codex-acp", "Codex"],
+  ] as const)("names %s in the composer hint", async (agentId, name) => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: threadState("selected", [], agentId),
+        })
+      );
+    });
+    expect(
+      document.querySelector<HTMLTextAreaElement>("#composer")?.placeholder
+    ).toBe(`Message ${name} — @ to include context, / for commands`);
     await unmount();
   });
 
@@ -395,6 +421,15 @@ describe("React webview", () => {
       window.dispatchEvent(
         new MessageEvent("message", {
           data: {
+            agents: [
+              {
+                id: "magpi-acp",
+                installedVersion: "0.3.0",
+                latestVersion: "0.3.0",
+                name: "MagPi",
+                state: "current",
+              },
+            ],
             assignWorkspaceColors: false,
             type: "showSettings",
           } satisfies HostToWebviewMessage,
@@ -403,12 +438,14 @@ describe("React webview", () => {
     });
 
     expect({
+      agent: dialog.querySelector(".settings-agent")?.textContent,
       checked: checkbox.checked,
       defaultChecked,
       description: dialog.querySelector(".settings-description")?.textContent,
       open: dialog.open,
       title: dialog.querySelector(".settings-name")?.textContent,
     }).toStrictEqual({
+      agent: "MagPiInstalled 0.3.0 · Latest 0.3.0 · Up to dateInstall managed",
       checked: false,
       defaultChecked: true,
       description:
@@ -430,6 +467,61 @@ describe("React webview", () => {
       close.click();
     });
     expect(dialog.open).toBeFalsy();
+    await unmount();
+  });
+
+  test("routes approved Agent install and update controls to the host", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            agents: [
+              {
+                id: "claude-agent-acp",
+                name: "Claude Agent",
+                state: "missing",
+              },
+              {
+                id: "codex-acp",
+                installedVersion: "2.1.1",
+                latestVersion: "2.2.1",
+                managed: true,
+                name: "Codex",
+                state: "updateAvailable",
+              },
+            ],
+            type: "agents",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    const buttons = document.querySelectorAll<HTMLButtonElement>(
+      ".settings-agent button"
+    );
+    expect(
+      [...buttons].map((button) => ({
+        icon: button.querySelector("svg path")?.getAttribute("d"),
+        label: button.getAttribute("aria-label"),
+        style: button.className,
+      }))
+    ).toStrictEqual([
+      {
+        icon: "M12 3v12",
+        label: "Install Claude Agent managed",
+        style: "action primary",
+      },
+      { icon: undefined, label: "Check Codex for updates", style: "action" },
+    ]);
+    postMessage.mockClear();
+    act(() => {
+      buttons[0]?.click();
+      buttons[1]?.click();
+    });
+    expect(postMessage.mock.calls).toStrictEqual([
+      [{ id: "claude-agent-acp", type: "installAgent" }],
+      [{ id: "codex-acp", type: "checkAgent" }],
+    ]);
     await unmount();
   });
 

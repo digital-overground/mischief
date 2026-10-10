@@ -1,3 +1,9 @@
+export interface AgentImplementation {
+  name: string;
+  title?: string;
+  version?: string;
+}
+
 export interface AgentLaunch {
   command: string;
   args: string[];

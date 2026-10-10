@@ -2,9 +2,25 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { postMessage } from "./bridge";
 import { ButtonTooltip } from "./button-tooltip";
+import { SvgIcon } from "./icon";
 import { NavigatorPane } from "./navigator-pane";
-import type { HostToWebviewMessage, RenderedTranscriptItem } from "./protocol";
+import type {
+  AgentSetting,
+  HostToWebviewMessage,
+  RenderedTranscriptItem,
+} from "./protocol";
 import { ThreadView } from "./threads/detail/thread-view";
+
+const agentStatus: Record<AgentSetting["state"], string> = {
+  checking: "Checking for updates…",
+  current: "Up to date",
+  installing: "Installing…",
+  missing: "Not installed",
+  newer: "Newer than published release",
+  unknown: "Could not check for updates",
+  updateAvailable: "Update available",
+  waiting: "Not connected yet",
+};
 
 const initialState: Extract<HostToWebviewMessage, { type: "state" }> = {
   font: "ui-monospace, monospace",
@@ -16,6 +32,7 @@ const initialState: Extract<HostToWebviewMessage, { type: "state" }> = {
 export const App = (): React.JSX.Element => {
   const [snapshot, setSnapshot] = useState(initialState);
   const [assignWorkspaceColors, setAssignWorkspaceColors] = useState(true);
+  const [agents, setAgents] = useState<AgentSetting[]>([]);
   const [contextItems, setContextItems] = useState<string[]>([]);
   const [expandAllRequest, setExpandAllRequest] = useState(0);
   const [threadMaximized, setThreadMaximized] = useState(false);
@@ -31,10 +48,13 @@ export const App = (): React.JSX.Element => {
     const receive = (event: MessageEvent<HostToWebviewMessage>): void => {
       if (event.data.type === "showSettings") {
         setAssignWorkspaceColors(event.data.assignWorkspaceColors);
+        setAgents(event.data.agents);
         const dialog = settingsDialog.current;
         if (dialog && !dialog.open) {
           dialog.showModal();
         }
+      } else if (event.data.type === "agents") {
+        setAgents(event.data.agents);
       } else if (event.data.type === "contextItems") {
         setContextItems(event.data.items);
       } else if (event.data.type === "setAllExpanded") {
@@ -178,6 +198,59 @@ export const App = (): React.JSX.Element => {
             </span>
           </span>
         </label>
+        <section className="settings-agents" aria-labelledby="agents-title">
+          <h3 id="agents-title">Agents</h3>
+          <div aria-live="polite">
+            {agents.map((agent) => (
+              <div className="settings-agent" key={agent.id}>
+                <span className="settings-name">{agent.name}</span>
+                <span className="settings-description">
+                  {agent.installedVersion === undefined
+                    ? ""
+                    : `Installed ${agent.installedVersion} · `}
+                  {agent.latestVersion === undefined
+                    ? ""
+                    : `Latest ${agent.latestVersion} · `}
+                  {agent.error ?? agentStatus[agent.state]}
+                </span>
+                <button
+                  className={`action${agent.managed === true ? "" : " primary"}`}
+                  type="button"
+                  aria-label={
+                    agent.managed === true
+                      ? `Check ${agent.name} for updates`
+                      : `Install ${agent.name} managed`
+                  }
+                  disabled={
+                    agent.state === "checking" || agent.state === "installing"
+                  }
+                  onClick={() => {
+                    postMessage({
+                      id: agent.id,
+                      type:
+                        agent.managed === true ? "checkAgent" : "installAgent",
+                    });
+                  }}
+                >
+                  {agent.managed === true ? null : (
+                    <SvgIcon
+                      className="interaction-action-icon"
+                      kind="download"
+                    />
+                  )}
+                  {agent.managed === true
+                    ? "Check for updates"
+                    : "Install managed"}
+                </button>
+              </div>
+            ))}
+          </div>
+          <p className="settings-description">
+            Managed Agents install in Mischief storage. After you approve an
+            install, Mischief updates it automatically; running Threads keep
+            their current process.
+          </p>
+        </section>
       </dialog>
       <ButtonTooltip />
     </>

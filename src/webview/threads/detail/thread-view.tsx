@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import { AGENTS, DEFAULT_AGENT } from "../../../agents/update";
 import { isNonEmpty } from "../../../present";
 import { postMessage } from "../../bridge";
 import { SvgIcon } from "../../icon";
@@ -145,6 +146,27 @@ export const ThreadView = ({
           <span className="heading" id="thread-title">
             {setup ? "Setup" : (selected?.name ?? "Thread")}
           </span>
+          {!setup &&
+            selected &&
+            (selected.id === null ? (
+              <button
+                type="button"
+                className="thread-agent"
+                title="Choose Agent for new Thread"
+                onClick={() => {
+                  postMessage({ type: "chooseAgent" });
+                }}
+              >
+                {AGENTS[selected.agentId ?? DEFAULT_AGENT].name} ▾
+              </button>
+            ) : (
+              <span
+                className="thread-agent"
+                title="This Thread's Agent cannot be changed"
+              >
+                {AGENTS[selected.agentId ?? DEFAULT_AGENT].name}
+              </span>
+            ))}
           <button
             className="icon"
             id="maximize-thread"

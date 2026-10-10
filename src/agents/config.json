@@ -1,0 +1,17 @@
+{
+  "magpi-acp": {
+    "bin": "dist/index.js",
+    "name": "MagPi",
+    "package": "magpi-acp"
+  },
+  "claude-agent-acp": {
+    "bin": "dist/index.js",
+    "name": "Claude Agent",
+    "package": "@agentclientprotocol/claude-agent-acp"
+  },
+  "codex-acp": {
+    "bin": "dist/index.js",
+    "name": "Codex",
+    "package": "@agentclientprotocol/codex-acp"
+  }
+}

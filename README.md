@@ -1,8 +1,8 @@
 # Mischief
 
-A VS Code extension for managing Projects, Workspaces, and graphical Agent Threads powered by MagPi ACP.
+A VS Code extension for managing Projects, Workspaces, and graphical Agent Threads powered by MagPi, Claude Agent, or Codex over ACP.
 
-Mischief provides a profile-wide Project/Workspace browser plus durable MagPi-backed Threads with streamed messages, thinking, tools, plans, inline interaction requests, Agent configuration, cancellation, and transcript restoration.
+Mischief provides a profile-wide Project/Workspace browser plus durable Threads with streamed messages, thinking, tools, plans, inline interaction requests, Agent configuration, cancellation, and transcript restoration.
 
 Its domain hierarchy is:
 
@@ -21,17 +21,18 @@ In VS Code, open **Extensions**, search for **Mischief**, and select **Install**
 Install these on the machine where the VS Code extension host runs:
 
 - [VS Code desktop](https://code.visualstudio.com/) 1.85 or newer.
-- [Node.js](https://nodejs.org/) 22 or newer. `npm` is included with Node.js.
-- [Pi](https://github.com/earendil-works/pi-mono), installed as `pi` on `PATH` and configured with a model provider.
-- [MagPi ACP](https://github.com/digital-overground/magpi-acp), installed as `magpi-acp` on `PATH` or selected with the `mischief.magpiAcpPath` setting.
+- [Node.js](https://nodejs.org/) 22.19 or newer. `npm` is included with Node.js.
+- Agent credentials or a configured model provider for the Agent you choose.
 
 [Git](https://git-scm.com/) is required for Git Projects, linked worktree discovery, status, and worktree creation. Without Git, Mischief can still manage folders as ungrouped Workspaces.
 
-When using Remote SSH, Dev Containers, or WSL, install Node.js, Pi, MagPi ACP, and Git in that remote environment because Mischief runs there.
+When using Remote SSH, Dev Containers, or WSL, install Node.js and Git in that remote environment because Mischief runs there.
 
-Before creating a Thread, Mischief checks for Node.js, Git, Pi, and MagPi ACP in the transcript. Press Enter to open the Node.js or Git installation page, or to install Pi and MagPi ACP in a visible terminal. After each step finishes, return to the transcript and press Enter to check again.
+**MagPi**, **Claude Agent**, and **Codex** are available in Mischief Settings → Agents. At least one must be available; MagPi itself is optional. Choose an Agent when starting a Thread, or from the empty New Thread composer. An Agent cannot be changed after the Thread begins; previous MagPi Threads remain MagPi Threads. Thread History is scoped to the chosen Workspace and Agent.
 
-Mischief then offers three recommended Pi add-ons: Todo, Ponytail, and Matt Pocock Skills. All are selected by default; deselect anything you do not want, then press Enter to install the selection. Structured Ask User support is bundled with MagPi ACP.
+Before installing an Agent, Mischief asks for approval and names the exact npm package. It installs only these three approved packages in VS Code profile storage, not globally. Once approved, it checks for and installs subsequent npm `latest` releases automatically. New connections use the verified update; running Threads keep their existing process. Settings shows installed and latest versions, status, and a manual update check. Failed updates keep the previous version available. MagPi includes Pi; a separate global Pi install is not required. `mischief.magpiAcpPath` still takes precedence for an explicitly configured development build, as does MagPi's `MAGPI_ACP_PI_COMMAND` override.
+
+For a first Thread, Mischief checks Node.js, Git, and whether at least one Agent is available. If none is available, press Enter to choose which Agent to install, then approve the managed install. Starting a MagPi Thread also offers three optional Pi add-ons: Todo, Ponytail, and Matt Pocock Skills. Structured Ask User support is bundled with MagPi.
 
 ## GitHub issue Workspaces
 
@@ -41,7 +42,7 @@ The first time you open issues for a Project, Mischief asks for the GitHub issue
 
 ## Security and compatibility
 
-Mischief, MagPi ACP, and Pi run locally with the same filesystem and process access as the VS Code extension host. Review Agent permission requests before approving them. Mischief supports desktop VS Code with local or remote folders; untrusted and virtual Workspaces are not supported.
+Mischief and the selected Agent run locally with the same filesystem and process access as the VS Code extension host. Review Agent permission requests before approving them. Mischief supports desktop VS Code with local or remote folders; untrusted and virtual Workspaces are not supported.
 
 ## Development
 
@@ -54,7 +55,7 @@ pnpm check
 
 Press **F5** in VS Code to launch the extension development host, or run `pnpm build` and package the extension with `vsce package`.
 
-Development automatically uses `../magpi-acp/dist/index.js` when present. Otherwise install `magpi-acp` on `PATH` or set `mischief.magpiAcpPath` to its executable or built `index.js`.
+Development automatically uses `../magpi-acp/dist/index.js` when present. `mischief.magpiAcpPath` explicitly overrides MagPi's launch; without either, Mischief uses its approved managed installation, falling back to `magpi-acp` on `PATH` for existing users.
 
 ## Tooling
 

@@ -1,3 +1,4 @@
+import type { AgentId } from "../agents/update";
 import type {
   AgentSessionOperations,
   AgentTreeNavigationOptions,
@@ -132,6 +133,13 @@ export interface TerminalAuthentication {
   label: string;
 }
 
+export type AgentAuthentication =
+  | TerminalAuthentication
+  | {
+      methodId: string;
+      label: string;
+    };
+
 export type AgentUpdate =
   | {
       type: "message";
@@ -153,7 +161,7 @@ export type AgentUpdate =
   | { type: "sessionInfo"; title?: string; updatedAt?: string };
 
 export interface AgentError extends Error {
-  readonly authentication?: TerminalAuthentication;
+  readonly authentication?: AgentAuthentication;
 }
 
 export interface AgentHandlers {
@@ -168,6 +176,7 @@ export interface AgentHandlers {
 }
 
 export interface AgentConnection {
+  authenticate?: (methodId: string) => Promise<void>;
   cancel: (sessionId: string) => Promise<void>;
   create: (cwd: string) => Promise<AgentSession>;
   dispose: () => void;
@@ -196,5 +205,6 @@ export interface AgentConnection {
 }
 
 export type AgentConnectionFactory = (
-  handlers: AgentHandlers
+  handlers: AgentHandlers,
+  agentId?: AgentId
 ) => AgentConnection;

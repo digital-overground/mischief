@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { DEFAULT_AGENT, isAgentId } from "../../agents/update";
+import type { AgentId } from "../../agents/update";
 import { isDefined, isNonEmpty, isNonZero } from "../../present";
 import type {
   DatabaseThread,
@@ -11,6 +13,7 @@ import type {
   AgentTreeNavigationOptions,
 } from "../acp/models";
 import type {
+  AgentAuthentication,
   AgentConnection,
   AgentConnectionFactory,
   AgentError,
@@ -20,7 +23,6 @@ import type {
   AgentPermissionResponse,
   AgentUpdate,
   PromptImage,
-  TerminalAuthentication,
   ThreadCommand,
   ThreadConfigOption,
   ThreadUsage,
@@ -62,10 +64,11 @@ const indicatorNeedsAttention = (indicator: ThreadIndicator): boolean =>
 
 const agentAuthentication = (
   error: unknown
-): TerminalAuthentication | undefined =>
+): AgentAuthentication | undefined =>
   error instanceof Error ? (error as AgentError).authentication : undefined;
 
 interface StoredThread {
+  agentId: AgentId;
   id: string;
   workspace: string;
   sessionId?: string;
@@ -75,7 +78,7 @@ interface StoredThread {
   status: ThreadStatus;
   error?: string;
   retryText?: string;
-  authentication?: TerminalAuthentication;
+  authentication?: AgentAuthentication;
   manualName?: boolean;
   unread?: boolean;
   usage?: ThreadUsage;
@@ -157,14 +160,19 @@ export class Threads {
   private selectedId?: string;
   private viewedId?: string;
   private draft = false;
+  private draftAgentId: AgentId;
   private draftMessages: string[] = [];
+  private readonly preferredAgent: AgentId;
 
   constructor(
     database: ProfileDatabase,
-    createConnection: AgentConnectionFactory
+    createConnection: AgentConnectionFactory,
+    preferredAgent: AgentId = DEFAULT_AGENT
   ) {
     this.createConnection = createConnection;
     this.database = database;
+    this.preferredAgent = preferredAgent;
+    this.draftAgentId = preferredAgent;
     this.stored = database
       .snapshot()
       .threads.map((record) => Threads.copyRecord(record));
@@ -184,6 +192,7 @@ export class Threads {
 
   async openWorkspace(workspace: string): Promise<ThreadsSnapshot> {
     this.draftMessages = [];
+    this.draftAgentId = this.preferredAgent;
     this.workspace = workspace;
     this.viewedId = undefined;
     this.stored = this.database
@@ -224,31 +233,40 @@ export class Threads {
     };
   }
 
-  async history(): Promise<ThreadHistoryEntry[]> {
+  async history(
+    agentId: AgentId = DEFAULT_AGENT
+  ): Promise<ThreadHistoryEntry[]> {
     const { workspace } = this;
     if (!isNonEmpty(workspace)) {
       return [];
     }
-    const connection = this.createConnection({
-      elicitation: async () => {
-        await Promise.resolve();
-        return { action: "cancel" };
+    const connection = this.createConnection(
+      {
+        elicitation: async () => {
+          await Promise.resolve();
+          return { action: "cancel" };
+        },
+        error: () => {
+          // History does not retain live connection errors.
+        },
+        permission: async () => {
+          await Promise.resolve();
+          return { cancelled: true };
+        },
+        update: () => {
+          // History does not consume live session updates.
+        },
       },
-      error: () => {
-        // History does not retain live connection errors.
-      },
-      permission: async () => {
-        await Promise.resolve();
-        return { cancelled: true };
-      },
-      update: () => {
-        // History does not consume live session updates.
-      },
-    });
+      agentId
+    );
     try {
       const registered = new Set(
         this.stored.flatMap((record) =>
-          isNonEmpty(record.sessionId) ? [record.sessionId] : []
+          record.workspace === workspace &&
+          record.agentId === agentId &&
+          isNonEmpty(record.sessionId)
+            ? [record.sessionId]
+            : []
         )
       );
       const history = await connection.history(workspace);
@@ -260,6 +278,7 @@ export class Threads {
           ...(isNonEmpty(entry.preview) && entry.previewRole
             ? { preview: entry.preview, previewRole: entry.previewRole }
             : {}),
+          agentId,
           sessionId: entry.sessionId,
           title:
             entry.title !== undefined && entry.title.trim().length > 0
@@ -284,11 +303,15 @@ export class Threads {
 
   async reopen(entry: ThreadHistoryEntry): Promise<void> {
     const { workspace } = this;
+    const agentId = entry.agentId ?? DEFAULT_AGENT;
     if (!isNonEmpty(workspace)) {
       return;
     }
     const existing = this.stored.find(
-      (record) => record.sessionId === entry.sessionId
+      (record) =>
+        record.workspace === workspace &&
+        record.agentId === agentId &&
+        record.sessionId === entry.sessionId
     );
     if (existing) {
       await this.select(existing.id);
@@ -296,6 +319,7 @@ export class Threads {
     }
     const now = new Date().toISOString();
     const record: StoredThread = {
+      agentId,
       createdAt: now,
       id: randomUUID(),
       name: entry.title,
@@ -313,13 +337,22 @@ export class Threads {
     this.emit();
   }
 
-  async newThread(): Promise<void> {
+  selectDraftAgent(agentId: AgentId): void {
+    if (!this.draft || isNonEmpty(this.selectedId)) {
+      throw new Error("The Agent is fixed for the lifetime of a Thread");
+    }
+    this.draftAgentId = agentId;
+    this.emit();
+  }
+
+  async newThread(agentId: AgentId = this.preferredAgent): Promise<void> {
     if (!isNonEmpty(this.workspace)) {
       return;
     }
     this.draftMessages = [];
     const now = new Date().toISOString();
     const record: StoredThread = {
+      agentId,
       createdAt: now,
       id: randomUUID(),
       name: "New Thread",
@@ -378,6 +411,7 @@ export class Threads {
       this.selectedId = next?.id;
       this.viewedId = next?.id;
       this.draft = !isDefined(next);
+      this.draftAgentId = this.preferredAgent;
       await this.selectThread(record.workspace, next?.id);
       if (isDefined(next)) {
         await this.load(next);
@@ -462,6 +496,7 @@ export class Threads {
     if (!record) {
       const now = new Date().toISOString();
       record = {
+        agentId: this.draftAgentId,
         createdAt: now,
         id: randomUUID(),
         name: "New Thread",
@@ -577,6 +612,31 @@ export class Threads {
     }
   }
 
+  async authenticate(): Promise<void> {
+    const record = isNonEmpty(this.selectedId)
+      ? this.findRecord(this.selectedId)
+      : undefined;
+    if (!record?.authentication || !("methodId" in record.authentication)) {
+      return;
+    }
+    const runtime = this.runtime(record);
+    if (!runtime.connection.authenticate) {
+      throw new Error("This Agent does not support protocol authentication");
+    }
+    await runtime.connection.authenticate(record.authentication.methodId);
+    record.authentication = undefined;
+    if (record.retryText !== undefined) {
+      if (!isNonEmpty(record.sessionId)) {
+        runtime.items = [];
+      }
+      await this.prompt(record.retryText, runtime.retryImages);
+    } else if (isNonEmpty(record.sessionId)) {
+      await this.reload(record, runtime);
+    } else {
+      await this.createSession(record, runtime);
+    }
+  }
+
   async retry(): Promise<void> {
     const record = isNonEmpty(this.selectedId)
       ? this.findRecord(this.selectedId)
@@ -589,11 +649,14 @@ export class Threads {
       runtime?.connection.dispose();
       if (!isNonEmpty(record.sessionId) && runtime) {
         runtime.items = [];
+        this.runtimes.delete(record.id);
       }
       await this.prompt(record.retryText, runtime?.retryImages);
       return;
     }
     if (!isNonEmpty(record.sessionId)) {
+      this.runtimes.get(record.id)?.connection.dispose();
+      this.runtimes.delete(record.id);
       await this.createSession(record, this.runtime(record));
       return;
     }
@@ -734,6 +797,7 @@ export class Threads {
       );
       const now = new Date().toISOString();
       const fork: StoredThread = {
+        agentId: record.agentId,
         createdAt: now,
         id: randomUUID(),
         name: `${record.name} (fork)`,
@@ -926,6 +990,7 @@ export class Threads {
         const status = this.runtimes.get(record.id)?.status ?? record.status;
         const indicator = indicatorFor(status, Boolean(record.unread));
         return {
+          agentId: record.agentId,
           id: record.id,
           indicator,
           name: record.name,
@@ -952,6 +1017,7 @@ export class Threads {
       : undefined;
     if (this.draft || !record) {
       return {
+        agentId: this.draftAgentId,
         commands: [],
         configOptions: [],
         drafts: this.draftMessages,
@@ -984,12 +1050,15 @@ export class Threads {
       configOptions: runtime?.configOptions ?? [],
       ...(isNonEmpty(record.error) ? { error: record.error } : {}),
       drafts: runtime?.drafts ?? [],
-      ...(runtime?.operations.forkMessage === true
+      ...(record.agentId === DEFAULT_AGENT &&
+      runtime?.operations.forkMessage === true
         ? { forkSupported: true }
         : {}),
-      ...(runtime?.operations.treeNavigation === true
+      ...(record.agentId === DEFAULT_AGENT &&
+      runtime?.operations.treeNavigation === true
         ? { treeNavigationSupported: true }
         : {}),
+      agentId: record.agentId,
       id: record.id,
       ...(runtime?.sessionOperation
         ? { sessionOperation: runtime.sessionOperation }
@@ -1125,26 +1194,29 @@ export class Threads {
     runtime = {
       commands: [],
       configOptions: [],
-      connection: this.createConnection({
-        elicitation: async (request) =>
-          await this.handleElicitation(record, request),
-        error: (error) => {
-          record.error = errorMessage(error);
-          record.authentication = error.authentication;
-          const active = this.runtimes.get(record.id);
-          if (active) {
-            stopStreaming(active);
-            active.status = "error";
-          }
-          void this.persist(record);
-          this.emit();
+      connection: this.createConnection(
+        {
+          elicitation: async (request) =>
+            await this.handleElicitation(record, request),
+          error: (error) => {
+            record.error = errorMessage(error);
+            record.authentication = error.authentication;
+            const active = this.runtimes.get(record.id);
+            if (active) {
+              stopStreaming(active);
+              active.status = "error";
+            }
+            void this.persist(record);
+            this.emit();
+          },
+          permission: async (request) =>
+            await this.handlePermission(record, request),
+          update: (update) => {
+            this.handleUpdate(record, update);
+          },
         },
-        permission: async (request) =>
-          await this.handlePermission(record, request),
-        update: (update) => {
-          this.handleUpdate(record, update);
-        },
-      }),
+        record.agentId
+      ),
       drafts: [],
       items: [],
       operations: {
@@ -1377,7 +1449,7 @@ export class Threads {
       operation === "fork"
         ? runtime.operations.forkMessage
         : runtime.operations.treeNavigation;
-    if (!supported) {
+    if (!supported || record.agentId !== DEFAULT_AGENT) {
       throw new Error(`This Agent does not support ${title}`);
     }
     if (runtime.sessionOperation) {
@@ -1397,15 +1469,19 @@ export class Threads {
   private static copyRecord(record: DatabaseThread): StoredThread {
     return {
       ...record,
+      agentId: isAgentId(record.agentId) ? record.agentId : DEFAULT_AGENT,
       ...(record.authentication
         ? {
-            authentication: {
-              ...record.authentication,
-              args: [...record.authentication.args],
-              ...(record.authentication.env
-                ? { env: { ...record.authentication.env } }
-                : {}),
-            },
+            authentication:
+              "methodId" in record.authentication
+                ? { ...record.authentication }
+                : {
+                    ...record.authentication,
+                    args: [...record.authentication.args],
+                    ...(record.authentication.env
+                      ? { env: { ...record.authentication.env } }
+                      : {}),
+                  },
           }
         : {}),
       ...(record.usage ? { usage: { ...record.usage } } : {}),

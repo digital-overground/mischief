@@ -8,6 +8,7 @@ import {
 } from "react";
 import type { ClipboardEvent, KeyboardEvent } from "react";
 
+import { AGENTS, DEFAULT_AGENT } from "../../../../agents/update";
 import { isDefined, isNonEmpty } from "../../../../present";
 import type { PromptImage, ThreadCommand } from "../../../../threads/model";
 import { postMessage } from "../../../bridge";
@@ -348,7 +349,7 @@ const ComposerView = ({
         placeholder={
           setup
             ? "Press Enter to continue"
-            : "Message magpi-acp — @ to include context, / for commands"
+            : `Message ${AGENTS[selected?.agentId ?? DEFAULT_AGENT].name} — @ to include context, / for commands`
         }
         autoComplete="off"
         disabled={!selected && !setup}

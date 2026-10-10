@@ -1,15 +1,17 @@
+import type { AgentId } from "../../agents/update";
 import type {
+  AgentAuthentication,
   AgentToolKind,
   ElicitationField,
   PlanEntry,
   PromptImage,
-  TerminalAuthentication,
   ThreadCommand,
   ThreadConfigOption,
   ThreadUsage,
 } from "../model";
 
 export interface ThreadHistoryEntry {
+  agentId?: AgentId;
   sessionId: string;
   title: string;
   updatedAt?: string;
@@ -53,6 +55,7 @@ export interface TranscriptItem {
 }
 
 export interface ThreadSummary {
+  agentId?: AgentId;
   id: string;
   workspace: string;
   name: string;
@@ -87,6 +90,7 @@ export interface SteeringMessage {
 }
 
 export interface ThreadDetail {
+  agentId?: AgentId;
   id: string | null;
   name: string;
   status: ThreadStatus;
@@ -96,7 +100,7 @@ export interface ThreadDetail {
   commands: ThreadCommand[];
   configOptions: ThreadConfigOption[];
   interaction?: ThreadInteraction;
-  authentication?: TerminalAuthentication;
+  authentication?: AgentAuthentication;
   error?: string;
   drafts: string[];
   forkSupported?: boolean;

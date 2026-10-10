@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
 
 import {
+  authenticationFor,
   decodeTreeNavigationResult,
   elicitationRequest,
   promptContent,
@@ -194,6 +195,40 @@ describe("ACP adapter", () => {
     });
   });
 
+  test("offers standard Agent authentication but not MagPi's private terminal metadata to Codex", () => {
+    const launch = { args: ["/codex/dist/index.js"], command: "node" };
+    const required = {
+      code: -32_000,
+      data: { authMethods: [{ id: "chatgpt", name: "Log in with ChatGPT" }] },
+    };
+    expect(authenticationFor(required, launch, [], "codex-acp")).toStrictEqual({
+      label: "Log in with ChatGPT",
+      methodId: "chatgpt",
+    });
+    expect(
+      authenticationFor(
+        { code: -32_001 },
+        launch,
+        required.data.authMethods,
+        "codex-acp"
+      )
+    ).toBeUndefined();
+    expect(
+      authenticationFor(
+        { code: -32_000 },
+        launch,
+        [
+          {
+            _meta: { "terminal-auth": { args: [], command: "untrusted" } },
+            id: "legacy",
+            name: "MagPi login",
+          },
+        ],
+        "codex-acp"
+      )
+    ).toStrictEqual({ label: "MagPi login", methodId: "legacy" });
+  });
+
   test("embeds referenced Workspace files without allowing path escapes", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "mischief-context-"));
     const workspace = path.join(root, "workspace");
@@ -205,6 +240,16 @@ describe("ACP adapter", () => {
         writeFile(path.join(root, "secret.txt"), "do not attach\n"),
       ]);
 
+      await expect(
+        promptContent(
+          workspace,
+          "@src/projects.ts testing @../secret.txt",
+          [],
+          false
+        )
+      ).resolves.toStrictEqual([
+        { text: "@src/projects.ts testing @../secret.txt", type: "text" },
+      ]);
       await expect(
         promptContent(workspace, "@src/projects.ts testing @../secret.txt", [])
       ).resolves.toStrictEqual([

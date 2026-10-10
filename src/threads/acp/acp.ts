@@ -28,8 +28,11 @@ import type {
 } from "@agentclientprotocol/sdk";
 
 import { version } from "../../../package.json";
+import { DEFAULT_AGENT } from "../../agents/update";
+import type { AgentId } from "../../agents/update";
 import { isNonEmpty, isRecord } from "../../present";
 import type {
+  AgentAuthentication,
   AgentConnection,
   AgentConnectionFactory,
   AgentError,
@@ -47,6 +50,7 @@ import type {
   ThreadConfigOption,
 } from "../model";
 import type {
+  AgentImplementation,
   AgentLaunch,
   AgentSessionOperations,
   AgentTreeNavigationOptions,
@@ -77,14 +81,15 @@ const referencedPaths = (text: string): string[] => [
 export const promptContent = async (
   cwd: string | undefined,
   text: string,
-  images: PromptImage[]
+  images: PromptImage[],
+  attachFiles = true
 ): Promise<ContentBlock[]> => {
   const blocks: ContentBlock[] = [
     ...(text ? [{ text, type: "text" as const }] : []),
     ...images.map((image) => ({ ...image, type: "image" as const })),
   ];
   const references = referencedPaths(text);
-  if (!isNonEmpty(cwd) || !references.length) {
+  if (!attachFiles || !isNonEmpty(cwd) || !references.length) {
     return blocks;
   }
   if (references.length > MAX_CONTEXT_FILES) {
@@ -779,10 +784,58 @@ export const terminalAuthentication = (
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const toAgentError = (error: unknown, launch?: AgentLaunch): AgentError =>
+export const authenticationFor = (
+  error: unknown,
+  launch: AgentLaunch,
+  advertised: unknown[],
+  agentId: AgentId = DEFAULT_AGENT
+): AgentAuthentication | undefined => {
+  if (!isRecord(error) || error.code !== -32_000) {
+    return undefined;
+  }
+  const data = isRecord(error.data) ? error.data : undefined;
+  const availableMethods = Array.isArray(data?.authMethods)
+    ? data.authMethods
+    : advertised;
+  const standard = availableMethods
+    .map((method) => standardTerminalAuthentication(method, launch))
+    .find((method) => method !== undefined);
+  if (standard !== undefined) {
+    return standard;
+  }
+  if (agentId === DEFAULT_AGENT) {
+    const legacy = terminalAuthentication({
+      data: { authMethods: availableMethods },
+    });
+    if (legacy !== undefined) {
+      return legacy;
+    }
+  }
+  for (const method of availableMethods) {
+    if (
+      isRecord(method) &&
+      (method.type === undefined || method.type === "agent") &&
+      typeof method.id === "string" &&
+      isNonEmpty(method.id)
+    ) {
+      return {
+        label: typeof method.name === "string" ? method.name : "Authenticate",
+        methodId: method.id,
+      };
+    }
+  }
+  return undefined;
+};
+
+const toAgentError = (
+  error: unknown,
+  launch: AgentLaunch,
+  advertised: unknown[],
+  agentId: AgentId
+): AgentError =>
   Object.assign(
     error instanceof Error ? error : new Error(errorMessage(error)),
-    { authentication: terminalAuthentication(error, launch) }
+    { authentication: authenticationFor(error, launch, advertised, agentId) }
   );
 
 const invalidResponse = (name: string): Error =>
@@ -835,17 +888,34 @@ class AcpConnection implements AgentConnection {
   private readonly handlers: AgentHandlers;
   private readonly log: (message: string) => void;
   private readonly onMissingCapability: (capability: string) => void;
+  private readonly onInitialized?: (info?: AgentImplementation) => void;
+  private implementation?: AgentImplementation;
+  private authMethods: unknown[] = [];
+  private supportsLoad = true;
+  private supportsHistory = true;
+  private supportsImages = true;
+  private supportsEmbeddedContext = true;
+  private readonly agentId: AgentId;
 
   constructor(
     launch: AgentLaunch,
     handlers: AgentHandlers,
     log: (message: string) => void,
-    onMissingCapability: (capability: string) => void
+    onMissingCapability: (capability: string) => void,
+    onInitialized?: (info?: AgentImplementation) => void,
+    agentId: AgentId = DEFAULT_AGENT
   ) {
     this.launch = launch;
     this.handlers = handlers;
     this.log = log;
     this.onMissingCapability = onMissingCapability;
+    this.onInitialized = onInitialized;
+    this.agentId = agentId;
+  }
+
+  async inspect(): Promise<AgentImplementation | undefined> {
+    await this.start();
+    return this.implementation;
   }
 
   async create(cwd: string) {
@@ -890,6 +960,9 @@ class AcpConnection implements AgentConnection {
   async history(cwd: string) {
     return await this.call(async () => {
       await this.start();
+      if (!this.supportsHistory) {
+        throw new Error("This Agent does not support Thread History");
+      }
       const sessions = [];
       let cursor: string | undefined;
       do {
@@ -926,6 +999,9 @@ class AcpConnection implements AgentConnection {
     this.cwd = cwd;
     return await this.call(async () => {
       await this.start();
+      if (!this.supportsLoad) {
+        throw new Error("This Agent does not support restoring Threads");
+      }
       const session = await this.requireAgent().request(
         methods.agent.session.load,
         {
@@ -960,10 +1036,18 @@ class AcpConnection implements AgentConnection {
   async prompt(sessionId: string, text: string, images: PromptImage[]) {
     return await this.call(async () => {
       await this.start();
+      if (images.length > 0 && !this.supportsImages) {
+        throw new Error("This Agent does not support pasted images");
+      }
       const response = await this.requireAgent().request(
         methods.agent.session.prompt,
         {
-          prompt: await promptContent(this.cwd, text, images),
+          prompt: await promptContent(
+            this.cwd,
+            text,
+            images,
+            this.supportsEmbeddedContext
+          ),
           sessionId,
         }
       );
@@ -971,6 +1055,25 @@ class AcpConnection implements AgentConnection {
         stopReason:
           response.stopReason === "cancelled" ? "cancelled" : "completed",
       } as const;
+    });
+  }
+
+  async authenticate(methodId: string): Promise<void> {
+    await this.call(async () => {
+      await this.start();
+      if (
+        !this.authMethods.some(
+          (method) =>
+            isRecord(method) &&
+            method.id === methodId &&
+            (method.type === undefined || method.type === "agent")
+        )
+      ) {
+        throw new Error("Unknown Agent authentication method");
+      }
+      await this.requireAgent().request(methods.agent.authenticate, {
+        methodId,
+      });
     });
   }
 
@@ -1014,7 +1117,7 @@ class AcpConnection implements AgentConnection {
     try {
       return await operation();
     } catch (error) {
-      throw toAgentError(error, this.launch);
+      throw toAgentError(error, this.launch, this.authMethods, this.agentId);
     }
   }
 
@@ -1058,9 +1161,11 @@ class AcpConnection implements AgentConnection {
         this.handlers.error(
           toAgentError(
             new Error(
-              `MagPi ACP exited${code === null ? ` (${signal ?? "unknown"})` : ` (${code})`}`
+              `Agent exited${code === null ? ` (${signal ?? "unknown"})` : ` (${code})`}`
             ),
-            this.launch
+            this.launch,
+            this.authMethods,
+            this.agentId
           )
         );
       }
@@ -1069,23 +1174,35 @@ class AcpConnection implements AgentConnection {
     const output = new WritableStream<Uint8Array>({
       write: async (chunk) => {
         if (!child.stdin.writable) {
-          throw new Error("MagPi ACP input closed");
+          throw new Error("Agent input closed");
         }
         if (!child.stdin.write(Buffer.from(chunk))) {
           await once(child.stdin, "drain");
         }
       },
     });
+    let inputClosed = false;
     const input = new ReadableStream<Uint8Array>({
+      cancel: () => {
+        inputClosed = true;
+      },
       start: (controller) => {
         child.stdout.on("data", (chunk: Buffer | string) => {
-          controller.enqueue(new Uint8Array(Buffer.from(chunk)));
+          if (!inputClosed) {
+            controller.enqueue(new Uint8Array(Buffer.from(chunk)));
+          }
         });
         child.stdout.on("end", () => {
-          controller.close();
+          if (!inputClosed) {
+            inputClosed = true;
+            controller.close();
+          }
         });
         child.stdout.on("error", (error) => {
-          controller.error(error);
+          if (!inputClosed) {
+            inputClosed = true;
+            controller.error(error);
+          }
         });
       },
     });
@@ -1137,25 +1254,123 @@ class AcpConnection implements AgentConnection {
       throw Array.isArray(errors) ? errors[0] : errors;
     };
     const response = await Promise.race([initialized, childError()]);
-    this.operations = sessionOperations(response.agentCapabilities);
-    if (!this.operations.forkMessage) {
+    this.authMethods = Array.isArray(response.authMethods)
+      ? response.authMethods
+      : [];
+    const capabilities = response.agentCapabilities;
+    if (this.agentId !== DEFAULT_AGENT) {
+      this.supportsLoad = capabilities?.loadSession === true;
+      this.supportsHistory = isRecord(capabilities?.sessionCapabilities?.list);
+      this.supportsImages = capabilities?.promptCapabilities?.image === true;
+      this.supportsEmbeddedContext =
+        capabilities?.promptCapabilities?.embeddedContext === true;
+    }
+    this.operations =
+      this.agentId === DEFAULT_AGENT
+        ? sessionOperations(capabilities)
+        : { branchSummary: false, forkMessage: false, treeNavigation: false };
+    if (this.agentId === DEFAULT_AGENT && !this.operations.forkMessage) {
       this.onMissingCapability(MESSAGE_TARGET_ACTIONS_CAPABILITY);
+    }
+    const rawInfo: unknown = response.agentInfo;
+    const info =
+      isRecord(rawInfo) &&
+      typeof rawInfo.name === "string" &&
+      isNonEmpty(rawInfo.name)
+        ? {
+            name: rawInfo.name,
+            ...(typeof rawInfo.title === "string"
+              ? { title: rawInfo.title }
+              : {}),
+            ...(typeof rawInfo.version === "string"
+              ? { version: rawInfo.version }
+              : {}),
+          }
+        : undefined;
+    this.implementation = info;
+    try {
+      this.onInitialized?.(info);
+    } catch (error) {
+      this.log(`Agent version check failed: ${errorMessage(error)}`);
     }
   }
 
   private requireAgent(): ClientContext {
     if (!this.connection) {
-      throw new Error("MagPi ACP is not connected");
+      throw new Error("Agent is not connected");
     }
     return this.connection.agent;
   }
 }
 
+const ignore = (): void => {
+  /* A probe has no live Thread. */
+};
+
+export const probeAgent = async (launch: AgentLaunch): Promise<void> => {
+  const connection = new AcpConnection(
+    launch,
+    {
+      elicitation: async () => {
+        await Promise.resolve();
+        return { action: "cancel" };
+      },
+      error: ignore,
+      permission: async () => {
+        await Promise.resolve();
+        return { cancelled: true };
+      },
+      update: ignore,
+    },
+    ignore,
+    ignore
+  );
+  try {
+    await Promise.race([
+      connection.inspect(),
+      once(AbortSignal.timeout(10_000), "abort").then(() => {
+        throw new Error("Agent initialization timed out");
+      }),
+    ]);
+  } finally {
+    connection.dispose();
+  }
+};
+
+export const unavailableAgent = (message: string): AgentConnectionFactory => {
+  const fail = async (): Promise<never> => {
+    await Promise.resolve();
+    throw new Error(message);
+  };
+  return () => ({
+    cancel: async () => {
+      await Promise.resolve();
+    },
+    create: fail,
+    dispose: ignore,
+    forkMessage: fail,
+    history: fail,
+    load: fail,
+    navigateTreeMessage: fail,
+    prompt: fail,
+    setConfig: fail,
+  });
+};
+
 export const acpConnectionFactory =
   (
     launch: AgentLaunch,
     log: (message: string) => void,
-    onMissingCapability: (capability: string) => void
+    onMissingCapability: (capability: string) => void,
+    onInitialized?: (info?: AgentImplementation) => void,
+    agentId: AgentId = DEFAULT_AGENT
   ): AgentConnectionFactory =>
   (handlers) =>
-    new AcpConnection(launch, handlers, log, onMissingCapability);
+    new AcpConnection(
+      launch,
+      handlers,
+      log,
+      onMissingCapability,
+      onInitialized,
+      agentId
+    );
