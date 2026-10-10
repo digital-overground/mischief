@@ -2148,14 +2148,18 @@ describe("React webview", () => {
     act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
     });
-    const select = document.querySelector<HTMLSelectElement>(
-      'select[aria-label="Model"]'
+    const button = document.querySelector<HTMLButtonElement>(
+      '.config-trigger[aria-label="Model"]'
     );
-    if (!select) {
-      throw new Error("Missing model select");
+    if (!button) {
+      throw new Error("Missing model dropdown");
     }
-    select.focus();
-    select.value = "provider/two";
+    act(() => {
+      button.click();
+    });
+    const option = [
+      ...document.querySelectorAll<HTMLElement>('[role="option"]'),
+    ].find((item) => item.textContent?.includes("one"));
 
     act(() => {
       window.dispatchEvent(
@@ -2187,10 +2191,12 @@ describe("React webview", () => {
 
     expect({
       active: document.activeElement,
-      value: select.value,
+      expanded: button.getAttribute("aria-expanded"),
+      selected: option?.getAttribute("aria-selected"),
     }).toStrictEqual({
-      active: select,
-      value: "provider/two",
+      active: option,
+      expanded: "true",
+      selected: "true",
     });
     await unmount();
   });

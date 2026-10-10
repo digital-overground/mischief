@@ -589,18 +589,6 @@ select:disabled {
   align-items: center;
   gap: 2px;
 }
-.config-control::after {
-  flex: none;
-  width: 5px;
-  height: 5px;
-  margin-left: 6px;
-  border-right: 1px solid currentColor;
-  border-bottom: 1px solid currentColor;
-  color: var(--vscode-descriptionForeground);
-  content: "";
-  pointer-events: none;
-  transform: translateY(-2px) rotate(45deg);
-}
 .config-icon {
   flex: none;
   display: inline-flex;
@@ -609,7 +597,10 @@ select:disabled {
   color: var(--vscode-descriptionForeground);
   pointer-events: none;
 }
-#configs select {
+.config-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
   max-width: 180px;
   height: 22px;
@@ -620,18 +611,96 @@ select:disabled {
   color: var(--vscode-foreground);
   font-size: 11px;
   text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
 }
-#configs option {
-  text-align: left;
+.config-trigger-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.config-control select {
-  appearance: none;
-  field-sizing: content;
-  padding-right: 0;
+.config-trigger::after {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  color: var(--vscode-descriptionForeground);
+  content: "";
+  transform: translateY(-2px) rotate(45deg);
 }
-#configs select:focus-visible {
+.config-trigger:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: 1px;
+}
+.config-menu {
+  position: fixed;
+  z-index: 100;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  overflow-y: auto;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 8px;
+  background: var(--vscode-editorWidget-background);
+  box-shadow: 0 4px 12px var(--vscode-widget-shadow);
+}
+.config-menu-title {
+  position: sticky;
+  top: 0;
+  width: max-content;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 6px 12px;
+  background: var(--vscode-editorWidget-background);
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.config-menu-group-label {
+  position: relative;
+  height: 24px;
+}
+.config-menu-group-label span {
+  position: absolute;
+  right: 0;
+  left: 0;
+  overflow: hidden;
+  padding: 5px 12px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.config-menu [role="option"] {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(100vw - 16px);
+  overflow: hidden;
+  border: 0;
+  border-radius: 4px;
+  padding: 5px 10px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font-size: 11px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.config-menu [role="option"]:hover,
+.config-menu [role="option"]:focus-visible {
+  background: var(--vscode-list-hoverBackground);
+  outline: none;
+}
+.config-menu [aria-selected="true"] {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+.config-menu-check {
+  display: inline-block;
+  width: 18px;
 }
 .lucide {
   width: 100%;

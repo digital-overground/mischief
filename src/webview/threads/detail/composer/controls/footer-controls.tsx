@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT } from "../../../../../agents/update";
 import { SvgIcon } from "../../../../icon";
 import type {
   RenderedThreadDetail,
@@ -51,6 +52,7 @@ export const FooterControls = ({
       <div id="configs">
         {selected?.configOptions.map((config) => (
           <ConfigControl
+            agentId={selected.agentId ?? DEFAULT_AGENT}
             config={config}
             key={`${config.id}:${config.currentValue}`}
           />

@@ -315,6 +315,197 @@ describe("Footer controls", () => {
     ).toBeTruthy();
   });
 
+  test("uses each Agent's config icons", () => {
+    const options = [
+      { id: "mode", name: "Mode" },
+      { id: "collaboration_mode", name: "Collaboration" },
+      { id: "model", name: "Model" },
+      { id: "reasoning_effort", name: "Reasoning effort" },
+      { id: "fast-mode", name: "Fast mode" },
+    ].map(({ id, name }) => ({
+      currentValue: "off",
+      id,
+      name,
+      options: [{ name: "Off", value: "off" }],
+      type: "select" as const,
+    }));
+    act(() => {
+      renderFooter({ agentId: "codex-acp", configOptions: options });
+    });
+    expect(
+      [...document.querySelectorAll("#configs .config-trigger")].map((button) =>
+        button.getAttribute("aria-label")
+      )
+    ).toStrictEqual(options.map(({ name }) => name));
+    expect(
+      [...document.querySelectorAll("#configs .config-icon")].map((icon) =>
+        icon.getAttribute("aria-label")
+      )
+    ).toStrictEqual([
+      "Mode",
+      "Collaboration",
+      "Model",
+      "Reasoning effort",
+      "Fast mode",
+    ]);
+    expect(
+      ["Mode", "Fast mode"].map((name) =>
+        document
+          .querySelector(`[aria-label="${name}"] svg path`)
+          ?.getAttribute("d")
+          ?.slice(0, 6)
+      )
+    ).toStrictEqual(["M12 22", "M4 14 "]);
+    act(() => {
+      renderFooter({
+        agentId: "magpi-acp",
+        configOptions: [
+          { ...options[2], id: "model" },
+          { ...options[2], id: "role", name: "Role" },
+          { ...options[2], id: "thought_level", name: "Thinking" },
+          { ...options[2], id: "fast-mode", name: "Other" },
+        ],
+      });
+    });
+    expect(
+      [...document.querySelectorAll("#configs .config-icon")].map((icon) =>
+        icon.getAttribute("aria-label")
+      )
+    ).toStrictEqual(["Model", "Role", "Thinking"]);
+    act(() => {
+      renderFooter({ agentId: "claude-agent-acp", configOptions: options });
+    });
+    expect(
+      [...document.querySelectorAll("#configs .config-icon")].map((icon) =>
+        icon.getAttribute("aria-label")
+      )
+    ).toStrictEqual(["Mode", "Model"]);
+  });
+
+  test("labels and bounds Claude's scrollable menu and routes choices", () => {
+    act(() => {
+      renderFooter({
+        agentId: "claude-agent-acp",
+        configOptions: ["agent", "mode", "model", "effort", "fast"].map(
+          (id) => ({
+            currentValue: "first",
+            id,
+            name: id,
+            options: Array.from({ length: 40 }, (_, index) => ({
+              name: `Choice ${index}`,
+              value: index === 0 ? "first" : `choice-${index}`,
+            })),
+            type: "select" as const,
+          })
+        ),
+      });
+    });
+    expect(document.querySelectorAll("#configs .config-icon")).toHaveLength(5);
+    const button = document.querySelector<HTMLButtonElement>(
+      '.config-trigger[aria-label="agent"]'
+    );
+    act(() => button?.click());
+    const menu = document.querySelector<HTMLElement>(
+      '.config-menu[aria-label="agent"]'
+    );
+    expect({
+      count: menu?.querySelectorAll('[role="option"]').length,
+      heading: menu?.querySelector(".config-menu-title")?.textContent,
+      height: menu?.style.maxHeight,
+    }).toStrictEqual({ count: 40, heading: "agent", height: "320px" });
+    act(() => {
+      menu?.querySelectorAll<HTMLButtonElement>('[role="option"]')[1]?.click();
+    });
+    expect(postMessage).toHaveBeenCalledWith({
+      id: "agent",
+      type: "setConfig",
+      value: "choice-1",
+    });
+  });
+
+  test("opens from the caret while keeping the full title in the popup", () => {
+    act(() => {
+      renderFooter({
+        agentId: "codex-acp",
+        configOptions: [
+          {
+            currentValue: "default",
+            id: "collaboration_mode",
+            name: "Collaboration mode",
+            options: [
+              { name: "Default", value: "default" },
+              { name: "Plan", value: "plan" },
+            ],
+            type: "select",
+          },
+        ],
+      });
+    });
+    const button = document.querySelector<HTMLButtonElement>(".config-trigger");
+    expect(button?.querySelector(".config-trigger-label")?.textContent).toBe(
+      "Default"
+    );
+    act(() => {
+      button?.dispatchEvent(
+        new MouseEvent("click", {
+          bubbles: true,
+          clientX: button.getBoundingClientRect().right,
+        })
+      );
+    });
+    expect(document.querySelector(".config-menu-title")?.textContent).toBe(
+      "Collaboration mode"
+    );
+    expect(button?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  test("supports keyboard navigation and closes on Escape", () => {
+    act(() => {
+      renderFooter({
+        configOptions: [
+          {
+            currentValue: "low",
+            id: "thought_level",
+            name: "Thinking",
+            options: [
+              { name: "Low", value: "low" },
+              { name: "High", value: "high" },
+            ],
+            type: "select",
+          },
+        ],
+      });
+    });
+    const button = document.querySelector<HTMLButtonElement>(
+      '.config-trigger[aria-label="Thinking"]'
+    );
+    act(() => button?.click());
+    expect(document.activeElement?.textContent).toContain("Low");
+    act(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })
+      );
+    });
+    expect(document.activeElement?.textContent).toContain("High");
+    act(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" })
+      );
+    });
+    expect(postMessage).toHaveBeenCalledWith({
+      id: "thought_level",
+      type: "setConfig",
+      value: "high",
+    });
+    act(() => button?.click());
+    act(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })
+      );
+    });
+    expect(button?.getAttribute("aria-expanded")).toBe("false");
+  });
+
   test("preserves the Agent's model option order", async () => {
     await Promise.resolve();
     act(() => {
@@ -338,17 +529,22 @@ describe("Footer controls", () => {
         ],
       });
     });
-    const model = document.querySelector<HTMLSelectElement>(
-      'select[aria-label="Model"]'
-    );
-    if (!model) {
-      throw new Error("Missing model select");
-    }
-
+    act(() => {
+      document
+        .querySelector<HTMLButtonElement>('.config-trigger[aria-label="Model"]')
+        ?.click();
+    });
     expect(
-      [...model.children].map(
-        (item) => item.getAttribute("label") ?? item.textContent
-      )
-    ).toStrictEqual(["provider", "Recommended", "Standalone"]);
+      [...document.querySelectorAll(".config-menu-group")].map((group) => [
+        group.querySelector(".config-menu-group-label")?.textContent ?? "",
+        [...group.querySelectorAll('[role="option"]')].map((option) =>
+          option.textContent?.trim()
+        ),
+      ])
+    ).toStrictEqual([
+      ["provider", ["✓one", "two"]],
+      ["Recommended", ["Curated"]],
+      ["", ["Standalone"]],
+    ]);
   });
 });
