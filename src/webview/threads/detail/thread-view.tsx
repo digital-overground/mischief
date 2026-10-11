@@ -145,24 +145,40 @@ export const ThreadView = ({
               : undefined
           }
         >
-          <button
-            className="icon"
-            id="rename-thread"
-            title="Rename Thread"
-            aria-label="Rename Thread"
-            disabled={!isNonEmpty(selected?.id)}
-            onClick={() => {
-              if (isNonEmpty(selected?.id)) {
-                postMessage({ id: selected.id, type: "renameThread" });
-              }
-            }}
-          >
-            <SvgIcon className="thread-action-icon" kind="pencil" />
-          </button>
-          <span className="heading" id="thread-title">
-            {setup ? "Setup" : (selected?.name ?? "Thread")}
-          </span>
+          <div className="thread-title-group">
+            <button
+              className="icon"
+              id="rename-thread"
+              title="Rename Thread"
+              aria-label="Rename Thread"
+              disabled={!isNonEmpty(selected?.id)}
+              onClick={() => {
+                if (isNonEmpty(selected?.id)) {
+                  postMessage({ id: selected.id, type: "renameThread" });
+                }
+              }}
+            >
+              <SvgIcon className="thread-action-icon" kind="pencil" />
+            </button>
+            <span className="heading" id="thread-title">
+              {setup ? "Setup" : (selected?.name ?? "Thread")}
+            </span>
+          </div>
           <div className="thread-header-actions">
+            <button
+              className="icon"
+              id="close-thread"
+              title="Close Thread"
+              aria-label="Close Thread"
+              disabled={!isNonEmpty(selected?.id)}
+              onClick={() => {
+                if (isNonEmpty(selected?.id)) {
+                  postMessage({ id: selected.id, type: "removeThread" });
+                }
+              }}
+            >
+              <SvgIcon className="thread-action-icon" kind="x" />
+            </button>
             {!setup &&
               selected &&
               (selected.id === null ? (
@@ -188,20 +204,6 @@ export const ThreadView = ({
                     : "Choose Agent"}
                 </span>
               ))}
-            <button
-              className="icon"
-              id="close-thread"
-              title="Close Thread"
-              aria-label="Close Thread"
-              disabled={!isNonEmpty(selected?.id)}
-              onClick={() => {
-                if (isNonEmpty(selected?.id)) {
-                  postMessage({ id: selected.id, type: "removeThread" });
-                }
-              }}
-            >
-              <SvgIcon className="thread-action-icon" kind="x" />
-            </button>
           </div>
         </header>
         <div

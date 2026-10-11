@@ -320,7 +320,7 @@ describe("React webview", () => {
     await unmount();
   });
 
-  test("puts Rename on the left and Close on the right of the Thread title", async () => {
+  test("puts Rename beside the title and the Agent at the far right", async () => {
     const unmount = await renderApp();
     act(() => {
       window.dispatchEvent(
@@ -333,14 +333,20 @@ describe("React webview", () => {
     if (!header || !rename || !close) {
       throw new Error("Missing Thread title actions");
     }
+    expect([...header.children].map((child) => child.className)).toStrictEqual([
+      "thread-title-group",
+      "thread-header-actions",
+    ]);
     expect(
-      [...header.children].map((child) => child.id || child.className)
-    ).toStrictEqual(["rename-thread", "thread-title", "thread-header-actions"]);
+      [...(header.querySelector(".thread-title-group")?.children ?? [])].map(
+        (child) => child.id
+      )
+    ).toStrictEqual(["rename-thread", "thread-title"]);
     expect(
       [...(header.querySelector(".thread-header-actions")?.children ?? [])].map(
         (child) => child.id || child.className
       )
-    ).toStrictEqual(["thread-agent", "close-thread"]);
+    ).toStrictEqual(["close-thread", "thread-agent"]);
     postMessage.mockClear();
     act(() => {
       rename.click();

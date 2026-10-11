@@ -596,14 +596,35 @@ select:disabled {
   font-size: 13px;
   text-transform: none;
 }
+.thread-title-group {
+  grid-column: 2;
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  justify-self: center;
+}
 #rename-thread {
-  justify-self: start;
+  position: absolute;
+  top: 50%;
+  right: calc(100% + 2px);
+  transform: translateY(-50%);
+  opacity: 0;
+  pointer-events: none;
+}
+.thread-title-group:is(:hover, :focus-within) #rename-thread {
+  opacity: 1;
+  pointer-events: auto;
 }
 #thread-title {
+  display: block;
+  overflow: hidden;
   font-size: 15px;
   text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .thread-header-actions {
+  grid-column: 3;
   min-width: 0;
   display: flex;
   align-items: center;
