@@ -320,7 +320,7 @@ describe("React webview", () => {
     await unmount();
   });
 
-  test("puts Rename beside the title and the Agent at the far right", async () => {
+  test("puts the Agent on the left and makes the full title Rename", async () => {
     const unmount = await renderApp();
     act(() => {
       window.dispatchEvent(
@@ -329,27 +329,37 @@ describe("React webview", () => {
     });
     const header = document.querySelector("#thread-header");
     const rename = document.querySelector<HTMLButtonElement>("#rename-thread");
+    const title = document.querySelector<HTMLElement>("#thread-title");
     const close = document.querySelector<HTMLButtonElement>("#close-thread");
-    if (!header || !rename || !close) {
+    if (!header || !rename || !title || !close) {
       throw new Error("Missing Thread title actions");
     }
-    expect([...header.children].map((child) => child.className)).toStrictEqual([
-      "thread-title-group",
-      "thread-header-actions",
-    ]);
-    expect(
-      [...(header.querySelector(".thread-title-group")?.children ?? [])].map(
-        (child) => child.id
-      )
-    ).toStrictEqual(["rename-thread", "thread-title"]);
-    expect(
-      [...(header.querySelector(".thread-header-actions")?.children ?? [])].map(
-        (child) => child.id || child.className
-      )
-    ).toStrictEqual(["close-thread", "thread-agent"]);
+    expect({
+      actions: [
+        ...(header.querySelector(".thread-header-actions")?.children ?? []),
+      ].map((child) => child.id),
+      agent: [
+        ...(header.querySelector(".thread-header-agent")?.children ?? []),
+      ].map((child) => child.className),
+      header: [...header.children].map((child) => child.className),
+      titleClickable: rename.contains(title),
+      titleContents: [...rename.children].map(
+        (child) => child.id || child.getAttribute("class")
+      ),
+    }).toStrictEqual({
+      actions: ["close-thread"],
+      agent: ["thread-agent"],
+      header: [
+        "thread-header-agent",
+        "thread-title-group",
+        "thread-header-actions",
+      ],
+      titleClickable: true,
+      titleContents: ["thread-title", "lucide thread-action-icon"],
+    });
     postMessage.mockClear();
     act(() => {
-      rename.click();
+      title.click();
       close.click();
     });
     expect(postMessage.mock.calls).toStrictEqual([

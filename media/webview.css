@@ -587,7 +587,6 @@ select:disabled {
   padding: 7px 10px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
-  border-bottom: 1px solid var(--vscode-focusBorder);
   color: var(--vscode-titleBar-activeForeground, var(--vscode-foreground));
   background: var(
     --vscode-titleBar-activeBackground,
@@ -596,22 +595,46 @@ select:disabled {
   font-size: 13px;
   text-transform: none;
 }
+.thread-header-agent {
+  grid-column: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
 .thread-title-group {
   grid-column: 2;
-  position: relative;
   min-width: 0;
   max-width: 100%;
   justify-self: center;
 }
 #rename-thread {
+  position: relative;
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  opacity: 1;
+}
+#rename-thread:disabled {
+  cursor: default;
+}
+#rename-thread:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+#rename-thread .thread-action-icon {
   position: absolute;
   top: 50%;
-  right: calc(100% + 2px);
+  left: calc(100% + 4px);
   transform: translateY(-50%);
   opacity: 0;
   pointer-events: none;
 }
-.thread-title-group:is(:hover, :focus-within) #rename-thread {
+#rename-thread:not(:disabled):is(:hover, :focus-visible) .thread-action-icon {
   opacity: 1;
   pointer-events: auto;
 }
