@@ -1,0 +1,36 @@
+{
+  "magpi-acp": {
+    "bin": "dist/index.js",
+    "icons": {
+      "model": "bot",
+      "role": "user",
+      "thought_level": "brain"
+    },
+    "name": "MagPi",
+    "package": "magpi-acp"
+  },
+  "claude-agent-acp": {
+    "bin": "dist/index.js",
+    "icons": {
+      "agent": "user",
+      "effort": "brain",
+      "fast": "zap",
+      "mode": "plan",
+      "model": "bot"
+    },
+    "name": "Claude Agent",
+    "package": "@agentclientprotocol/claude-agent-acp"
+  },
+  "codex-acp": {
+    "bin": "dist/index.js",
+    "icons": {
+      "mode": "shieldCheck",
+      "collaboration_mode": "plan",
+      "model": "bot",
+      "reasoning_effort": "brain",
+      "fast-mode": "zap"
+    },
+    "name": "Codex",
+    "package": "@agentclientprotocol/codex-acp"
+  }
+}

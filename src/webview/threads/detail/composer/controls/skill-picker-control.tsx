@@ -26,8 +26,9 @@ export const SkillPickerControl = ({
     [commands, query]
   );
   const flatEntries = groups.flatMap((group) => group.entries);
-  const hasSkills = commands.some(
-    ({ name }) => name.startsWith("skill:") && name.length > "skill:".length
+  const hasCommands = commands.some(
+    ({ name, skill }) =>
+      skill !== false && name.length > (skill === true ? "skill:".length : 0)
   );
 
   useLayoutEffect(() => {
@@ -87,10 +88,10 @@ export const SkillPickerControl = ({
   }, [open]);
 
   useEffect(() => {
-    if (!hasSkills) {
+    if (!hasCommands) {
       setOpen(false);
     }
-  }, [hasSkills]);
+  }, [hasCommands]);
 
   return (
     <div id="skill-picker-control" ref={control}>
@@ -104,7 +105,7 @@ export const SkillPickerControl = ({
         aria-controls="skill-picker-popup"
         aria-haspopup="dialog"
         aria-expanded={open}
-        disabled={!hasSkills}
+        disabled={!hasCommands}
         onClick={(event) => {
           if (open) {
             setOpen(false);

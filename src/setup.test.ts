@@ -7,7 +7,6 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
   addOnInstallCommand,
   missingRecommendedAddons,
-  missingSoftware,
   nextSoftwareRequirement,
   RECOMMENDED_ADDONS,
 } from "./setup";
@@ -59,25 +58,41 @@ describe("setup", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "mischief-setup-"));
     directories.push(directory);
     const extension = process.platform === "win32" ? ".CMD" : "";
-    for (const command of ["node", "pi"]) {
-      const executable = path.join(directory, `${command}${extension}`);
-      writeFileSync(executable, "");
-      chmodSync(executable, 0o755);
-    }
+    const node = path.join(directory, `node${extension}`);
+    writeFileSync(
+      node,
+      process.platform === "win32"
+        ? "@echo v22.19.0\r\n"
+        : "#!/bin/sh\necho v22.19.0\n"
+    );
+    chmodSync(node, 0o755);
     process.env.PATH = directory;
     process.env.PATHEXT = ".CMD";
 
-    const launch = { args: [], command: "magpi-acp", env: {} };
-    expect(missingSoftware(launch)).toStrictEqual(["Git", "MagPi ACP"]);
-    expect(nextSoftwareRequirement(launch)).toBe("node");
+    expect(nextSoftwareRequirement(false)).toBe("node");
+
+    writeFileSync(
+      path.join(directory, `node${extension}`),
+      process.platform === "win32"
+        ? "@echo v22.18.0\r\n"
+        : "#!/bin/sh\necho v22.18.0\n"
+    );
+    expect(nextSoftwareRequirement(false)).toBe("node");
+    writeFileSync(
+      path.join(directory, `node${extension}`),
+      process.platform === "win32"
+        ? "@echo v22.19.0\r\n"
+        : "#!/bin/sh\necho v22.19.0\n"
+    );
 
     for (const command of ["npm", "git"]) {
       const executable = path.join(directory, `${command}${extension}`);
       writeFileSync(executable, "");
       chmodSync(executable, 0o755);
-      expect(nextSoftwareRequirement(launch)).toBe(
+      expect(nextSoftwareRequirement(false)).toBe(
         command === "npm" ? "git" : "agents"
       );
     }
+    expect(nextSoftwareRequirement(true)).toBeUndefined();
   });
 });

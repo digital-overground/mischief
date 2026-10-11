@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import { AGENTS } from "../../../agents/update";
 import { isNonEmpty } from "../../../present";
 import { postMessage } from "../../bridge";
 import { SvgIcon } from "../../icon";
@@ -54,18 +55,25 @@ export const ThreadView = ({
     []
   );
   const shouldStick = useRef(true);
+  const [visibleCount, setVisibleCount] = useState(100);
+  const [visibleThread, setVisibleThread] = useState<string | null>(null);
+  const prependHeight = useRef<number | null>(null);
   const selected = setup ? undefined : snapshot.selected;
+  if (visibleThread !== (selected?.id ?? null)) {
+    setVisibleThread(selected?.id ?? null);
+    setVisibleCount(100);
+  }
   useEffect(() => {
     setSelectedSetupOptions(setup?.options?.map(({ id }) => id) ?? []);
   }, [setup?.id, setup?.options]);
   const transcriptItems =
     transcript.threadId === selected?.id ? transcript.items : noTranscriptItems;
   const historyItems = [...(selected?.items ?? [])];
+  const indices = new Map(historyItems.map((item, index) => [item.id, index]));
   for (const item of transcriptItems) {
-    const index = historyItems.findIndex(
-      (candidate) => candidate.id === item.id
-    );
-    if (index === -1) {
+    const index = indices.get(item.id);
+    if (index === undefined) {
+      indices.set(item.id, historyItems.length);
       historyItems.push(item);
     } else {
       historyItems[index] = item;
@@ -80,11 +88,14 @@ export const ThreadView = ({
     if (changed) {
       shouldStick.current = true;
     }
-    if (container && shouldStick.current) {
+    if (container && prependHeight.current !== null) {
+      container.scrollTop += container.scrollHeight - prependHeight.current;
+      prependHeight.current = null;
+    } else if (container && shouldStick.current) {
       container.scrollTop = container.scrollHeight;
     }
     previousThread.current = selected?.id ?? null;
-  }, [changed, selected, transcriptItems]);
+  }, [changed, selected, transcriptItems, visibleCount]);
   useEffect(() => {
     const container = chat.current;
     const content = chatContent.current;
@@ -135,6 +146,31 @@ export const ThreadView = ({
           <span className="heading" id="thread-title">
             {setup ? "Setup" : (selected?.name ?? "Thread")}
           </span>
+          {!setup &&
+            selected &&
+            (selected.id === null ? (
+              <button
+                type="button"
+                className="thread-agent"
+                title="Choose Agent for new Thread"
+                onClick={() => {
+                  postMessage({ type: "chooseAgent" });
+                }}
+              >
+                {selected.agentId
+                  ? `${AGENTS[selected.agentId].name} ▾`
+                  : "Choose Agent ▾"}
+              </button>
+            ) : (
+              <span
+                className="thread-agent"
+                title="This Thread's Agent cannot be changed"
+              >
+                {selected.agentId
+                  ? AGENTS[selected.agentId].name
+                  : "Choose Agent"}
+              </span>
+            ))}
           <button
             className="icon"
             id="maximize-thread"
@@ -170,6 +206,13 @@ export const ThreadView = ({
                 container.scrollTop -
                 container.clientHeight <
               48;
+            if (
+              container.scrollTop < 100 &&
+              visibleCount < historyItems.length
+            ) {
+              prependHeight.current = container.scrollHeight;
+              setVisibleCount((count) => count + 100);
+            }
           }}
         >
           <div id="chat-content" ref={chatContent}>
@@ -188,6 +231,7 @@ export const ThreadView = ({
               selectedSetupOptions={selectedSetupOptions}
               setup={setup}
               streamedItems={transcriptItems}
+              visibleCount={visibleCount}
               key={setup ? "setup" : (selected?.id ?? "none")}
             />
             <div id="notice">{selected?.error ?? ""}</div>
@@ -223,6 +267,25 @@ export const ThreadView = ({
         <Composer
           historyItems={visibleMessages}
           onJumpMessage={(id) => {
+            const index = historyItems.findIndex((item) => item.id === id);
+            if (index !== -1 && index < historyItems.length - visibleCount) {
+              shouldStick.current = false;
+              setVisibleCount(historyItems.length);
+              requestAnimationFrame(() => {
+                const container = chat.current;
+                const target = [
+                  ...(container?.querySelectorAll<HTMLElement>(
+                    "[data-message-id]"
+                  ) ?? []),
+                ].find((element) => element.dataset.messageId === id);
+                if (container && target) {
+                  container.scrollTop +=
+                    target.getBoundingClientRect().top -
+                    container.getBoundingClientRect().top;
+                }
+              });
+              return;
+            }
             const container = chat.current;
             const target = [
               ...(container?.querySelectorAll<HTMLElement>(

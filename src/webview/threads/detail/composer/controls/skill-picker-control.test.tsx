@@ -15,15 +15,22 @@ const commands = [
   {
     description: "Main skill",
     name: "skill:ponytail",
+    skill: true,
     source: "git:github.com/DietrichGebert/ponytail",
   },
   {
     description: "Review changes",
     name: "skill:ponytail-review",
+    skill: true,
     source: "git:github.com/DietrichGebert/ponytail",
   },
-  { description: "Standalone", name: "skill:solo", source: "local" },
-  { description: "Not a skill", name: "review" },
+  {
+    description: "Standalone",
+    name: "skill:solo",
+    skill: true,
+    source: "local",
+  },
+  { description: "Not a skill", name: "review", skill: false },
 ];
 
 let root: Root;
@@ -174,7 +181,9 @@ describe("Skill picker control", () => {
     act(() => {
       root.render(
         <SkillPickerControl
-          commands={[{ description: "New skill", name: "skill:updated" }]}
+          commands={[
+            { description: "New skill", name: "skill:updated", skill: true },
+          ]}
           onSelect={() => {}}
         />
       );
@@ -193,7 +202,7 @@ describe("Skill picker control", () => {
     act(() => {
       root.render(
         <SkillPickerControl
-          commands={[{ description: "Command", name: "review" }]}
+          commands={[{ description: "Command", name: "review", skill: false }]}
           onSelect={() => {}}
         />
       );

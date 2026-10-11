@@ -5,6 +5,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import MarkdownIt from "markdown-it";
 import * as vscode from "vscode";
 
+import { requestAgentInstall } from "./agents/install";
+import type { AgentManager } from "./agents/manager";
+import { AGENTS, AGENT_IDS, isAgentId } from "./agents/update";
+import type { AgentId } from "./agents/update";
 import { isDefined, isNonEmpty, isNonZero, isRecord } from "./present";
 import type { ProfileDatabase } from "./profile-database/profile-database";
 import {
@@ -34,7 +38,11 @@ import type {
 } from "./threads/threads/models";
 import type { Threads } from "./threads/threads/threads";
 import { webviewHtml } from "./webview";
-import type { HostToWebviewMessage, SetupStep } from "./webview/protocol";
+import type {
+  AgentSetting,
+  HostToWebviewMessage,
+  SetupStep,
+} from "./webview/protocol";
 import {
   assignWorkspaceColors,
   ensureWorkspaceColors,
@@ -66,6 +74,81 @@ const markdown = new MarkdownIt({ breaks: true, html: false, linkify: true });
 const validateMarkdownLink = markdown.validateLink.bind(markdown);
 markdown.validateLink = (href) =>
   /^file:/iu.test(href) || validateMarkdownLink(href);
+const fileReference =
+  /^(?<file>[A-Za-z0-9_@.+~-]+(?:[/][A-Za-z0-9_@.+~-]+)*[.][A-Za-z0-9_+-]+):(?<line>[1-9][0-9]*)(?:[-–—][1-9][0-9]*)?$/u;
+const resolveTranscriptFile = async (
+  workspace: string,
+  root: string,
+  requestedPath: string
+): Promise<string | undefined> => {
+  try {
+    return await realpath(requestedPath);
+  } catch {
+    const basename = path.basename(requestedPath);
+    if (
+      path.relative(workspace, requestedPath) !== basename ||
+      !/^[A-Za-z0-9_.-]+$/u.test(basename)
+    ) {
+      return undefined;
+    }
+    let matches: vscode.Uri[];
+    try {
+      matches = await vscode.workspace.findFiles(
+        new vscode.RelativePattern(workspace, `**/${basename}`),
+        "**/{.git,node_modules,dist,build}/**",
+        100
+      );
+    } catch {
+      return undefined;
+    }
+    let selectedPath: string | undefined;
+    if (matches.length === 1) {
+      selectedPath = matches[0]?.fsPath;
+    } else if (matches.length > 1) {
+      const selected = await vscode.window.showQuickPick(
+        matches.map((file) => ({
+          label: path.relative(root, file.fsPath),
+          path: file.fsPath,
+        })),
+        { placeHolder: `Choose a file named ${basename}` }
+      );
+      selectedPath = selected?.path;
+    }
+    if (selectedPath === undefined || selectedPath.length === 0) {
+      return undefined;
+    }
+    try {
+      return await realpath(selectedPath);
+    } catch {
+      return undefined;
+    }
+  }
+};
+const defaultCodeInline = markdown.renderer.rules.code_inline;
+markdown.renderer.rules.code_inline = (
+  tokens,
+  index,
+  options,
+  env,
+  renderer
+) => {
+  const token = tokens[index];
+  if (token === undefined) {
+    return "";
+  }
+  const rendered =
+    defaultCodeInline?.(tokens, index, options, env, renderer) ??
+    `<code>${markdown.utils.escapeHtml(token.content)}</code>`;
+  const match = fileReference.exec(token.content);
+  if (match?.groups === undefined) {
+    return rendered;
+  }
+  const href = `${match.groups.file
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/")}#L${match.groups.line}`;
+  return `<a href="${href}">${rendered}</a>`;
+};
 
 const renderTranscriptItem = (
   item: TranscriptItem
@@ -189,7 +272,7 @@ const interactionResponse = (
 
 export interface ThreadSetup {
   advance: (selected: string[]) => Promise<SetupStep | undefined>;
-  prompt: () => SetupStep | undefined;
+  prompt: (agentId?: AgentId) => SetupStep | undefined;
 }
 
 export class MischiefView implements vscode.WebviewViewProvider {
@@ -200,11 +283,14 @@ export class MischiefView implements vscode.WebviewViewProvider {
   private profileRefresh = Promise.resolve();
   private setupPrompt?: string;
   private setupStep?: SetupStep;
+  private setupAgentId?: AgentId;
   private readonly extensionUri: vscode.Uri;
   private readonly setup?: ThreadSetup;
   private readonly projects: Projects;
   private readonly storage: Pick<vscode.Memento, "get" | "update">;
   private readonly threads: Threads;
+  private agents: AgentSetting[];
+  private readonly agentManager?: AgentManager;
 
   constructor(
     projects: Projects,
@@ -212,7 +298,9 @@ export class MischiefView implements vscode.WebviewViewProvider {
     extensionUri: vscode.Uri,
     storage: Pick<vscode.Memento, "get" | "update">,
     database: ProfileDatabase,
-    setup?: ThreadSetup
+    setup?: ThreadSetup,
+    agents: AgentSetting[] = [],
+    agentManager?: AgentManager
   ) {
     this.projects = projects;
     this.threads = threads;
@@ -224,6 +312,8 @@ export class MischiefView implements vscode.WebviewViewProvider {
       this.databaseChanged();
     });
     this.setup = setup;
+    this.agents = agents;
+    this.agentManager = agentManager;
     threads.onChange((change) => {
       if (change?.type === "transcript") {
         this.renderTranscript(change);
@@ -240,6 +330,12 @@ export class MischiefView implements vscode.WebviewViewProvider {
       isNonEmpty(folder) ? this.projects.open(folder) : this.projects.refresh()
     );
     await this.syncThreads();
+    if (
+      this.threads.snapshot().selected?.id === null &&
+      this.agentManager?.availableAgents().length === 0
+    ) {
+      this.setupStep = this.setup?.prompt();
+    }
     this.render();
     await this.startPendingWorkspace();
   }
@@ -526,16 +622,57 @@ export class MischiefView implements vscode.WebviewViewProvider {
     await this.openWorkspace(workspace);
   }
 
-  async newThread(preserveFocus = true, initialPrompt?: string): Promise<void> {
-    const setupStep = this.setup?.prompt();
+  async newThread(
+    preserveFocus = true,
+    initialPrompt?: string
+  ): Promise<boolean> {
+    const available = this.agentManager?.availableAgents() ?? [];
+    let agentId = this.threads.preferredAgentId?.();
+    if (agentId === undefined && (available.length > 0 || !this.setup)) {
+      agentId = await this.pickAgent();
+    }
+    const setupStep = this.setup?.prompt(agentId);
     if (setupStep) {
+      this.setupAgentId = agentId;
       this.setupPrompt = initialPrompt;
       this.setupStep = setupStep;
       this.view?.show(preserveFocus);
       this.render();
-      return;
+      return true;
     }
-    await this.startThread(preserveFocus, initialPrompt);
+    if (agentId === undefined) {
+      return false;
+    }
+    await this.startThread(agentId, preserveFocus, initialPrompt);
+    return true;
+  }
+
+  private async pickAgent(): Promise<AgentId | undefined> {
+    if (!this.agentManager) {
+      return this.threads.preferredAgentId?.();
+    }
+    const available = this.agentManager.availableAgents();
+    const selected = await vscode.window.showQuickPick(
+      AGENT_IDS.map((id) => ({
+        description: available.includes(id) ? undefined : "Install required",
+        id,
+        label: AGENTS[id].name,
+      })),
+      {
+        placeHolder: "This Agent is fixed for the Thread",
+        title: "Choose Agent",
+      }
+    );
+    if (!selected) {
+      return undefined;
+    }
+    if (
+      !available.includes(selected.id) &&
+      !(await requestAgentInstall(this.agentManager, selected.id))
+    ) {
+      return undefined;
+    }
+    return selected.id;
   }
 
   async stageEditorSelection(target: "current" | "new"): Promise<void> {
@@ -570,8 +707,8 @@ export class MischiefView implements vscode.WebviewViewProvider {
     const lastLine =
       selection.end.line + (selection.end.character === 0 ? 0 : 1);
     const prompt = `Discuss this selection in @${relative.split(path.sep).join("/")} lines ${firstLine}-${Math.max(firstLine, lastLine)}.\n\n\`\`\`${document.languageId}\n${document.getText(selection)}\n\`\`\``;
-    if (target === "new") {
-      await this.threads.newThread();
+    if (target === "new" && !(await this.newThread())) {
+      return;
     }
     this.threads.stageDraft(prompt);
     await vscode.commands.executeCommand("workbench.view.extension.mischief");
@@ -592,9 +729,25 @@ export class MischiefView implements vscode.WebviewViewProvider {
 
   showSettings(): void {
     const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
+    const defaultAgent = vscode.workspace
+      .getConfiguration("mischief")
+      .get<unknown>("defaultAgent");
     void postMessage?.({
+      agents: this.agents,
       assignWorkspaceColors: workspaceColorsEnabled(),
+      defaultAgent: isAgentId(defaultAgent) ? defaultAgent : "",
       type: "showSettings",
+    } satisfies HostToWebviewMessage);
+  }
+
+  setAgentStatus(status: AgentSetting): void {
+    this.agents = this.agents.map((agent) =>
+      agent.id === status.id ? status : agent
+    );
+    const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
+    void postMessage?.({
+      agents: this.agents,
+      type: "agents",
     } satisfies HostToWebviewMessage);
   }
 
@@ -702,6 +855,9 @@ export class MischiefView implements vscode.WebviewViewProvider {
       if (await this.handleWorkspaceMessage(data)) {
         return;
       }
+      if (await this.handleAgentMessage(data)) {
+        return;
+      }
       if (await this.handleThreadMessage(data)) {
         return;
       }
@@ -783,6 +939,47 @@ export class MischiefView implements vscode.WebviewViewProvider {
       return true;
     }
     return false;
+  }
+
+  private async handleAgentMessage(
+    data: Record<string, unknown>
+  ): Promise<boolean> {
+    if (data.type === "setDefaultAgent") {
+      if (
+        typeof data.id !== "string" ||
+        (data.id !== "" && !isAgentId(data.id))
+      ) {
+        return false;
+      }
+      await vscode.workspace
+        .getConfiguration("mischief")
+        .update(
+          "defaultAgent",
+          data.id || undefined,
+          vscode.ConfigurationTarget.Global
+        );
+      return true;
+    }
+    if (data.type === "chooseAgent") {
+      if (this.threads.snapshot().selected?.id === null) {
+        const agentId = await this.pickAgent();
+        if (agentId !== undefined) {
+          this.threads.selectDraftAgent(agentId);
+        }
+      }
+      return true;
+    }
+    if (
+      (data.type !== "installAgent" && data.type !== "checkAgent") ||
+      !isAgentId(data.id) ||
+      !this.agentManager
+    ) {
+      return false;
+    }
+    await (data.type === "installAgent"
+      ? requestAgentInstall(this.agentManager, data.id)
+      : this.agentManager.check(data.id, true));
+    return true;
   }
 
   // oxlint-disable-next-line complexity -- message routing is intentionally flat
@@ -892,7 +1089,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
       return;
     }
     if (data.type === "authenticate") {
-      this.authenticate();
+      await this.authenticate();
       return;
     }
     if (data.type === "openLocation" && typeof data.path === "string") {
@@ -955,10 +1152,14 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   private async showThreadHistory(): Promise<void> {
+    const agentId = await this.pickAgent();
+    if (agentId === undefined) {
+      return;
+    }
     const entries = await loadWithQuickPick(
       "Thread History",
       "Loading previous Threads…",
-      async () => await this.threads.history()
+      async () => await this.threads.history(agentId)
     );
     if (!entries) {
       return;
@@ -1002,17 +1203,27 @@ export class MischiefView implements vscode.WebviewViewProvider {
       this.render();
     } else {
       const prompt = this.setupPrompt;
+      const available = this.agentManager?.availableAgents() ?? [];
+      const agentId =
+        this.setupAgentId !== undefined && available.includes(this.setupAgentId)
+          ? this.setupAgentId
+          : (this.threads.preferredAgentId?.() ??
+            (available.length === 1 ? available[0] : undefined));
       this.setupPrompt = undefined;
-      await this.startThread(true, prompt);
+      this.setupAgentId = undefined;
+      await (agentId === undefined
+        ? this.newThread(true, prompt)
+        : this.startThread(agentId, true, prompt));
     }
   }
 
   private async startThread(
+    agentId: AgentId,
     preserveFocus = true,
     initialPrompt?: string
   ): Promise<void> {
     this.setupStep = undefined;
-    const creating = this.threads.newThread();
+    const creating = this.threads.newThread(agentId);
     this.view?.show(preserveFocus);
     await creating;
     if (isNonEmpty(initialPrompt)) {
@@ -1101,9 +1312,13 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
   }
 
-  private authenticate(): void {
+  private async authenticate(): Promise<void> {
     const authentication = this.threads.snapshot().selected?.authentication;
     if (!authentication) {
+      return;
+    }
+    if ("methodId" in authentication) {
+      await this.threads.authenticate();
       return;
     }
     const terminal = vscode.window.createTerminal({
@@ -1162,13 +1377,17 @@ export class MischiefView implements vscode.WebviewViewProvider {
       return;
     }
     let root: string;
-    let candidate: string;
     try {
-      [root, candidate] = await Promise.all([
-        realpath(workspace),
-        realpath(fileURLToPath(target)),
-      ]);
+      root = await realpath(workspace);
     } catch {
+      return;
+    }
+    const candidate = await resolveTranscriptFile(
+      workspace,
+      root,
+      fileURLToPath(target)
+    );
+    if (candidate === undefined) {
       return;
     }
     const relative = path.relative(root, candidate);

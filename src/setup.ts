@@ -1,9 +1,9 @@
-import { accessSync, constants, existsSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { accessSync, constants, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
 import { isRecord } from "./present";
-import type { AgentLaunch } from "./threads/acp/models";
 import type { SetupOption } from "./webview/protocol";
 
 const ADDON_SOURCES: Readonly<Record<string, string>> = {
@@ -70,13 +70,24 @@ export const missingRecommendedAddons = (
   });
 };
 
-export const addOnInstallCommand = (selected: string[]): string | undefined => {
+export const addOnInstallCommand = (
+  selected: string[],
+  piCli?: string
+): string | undefined => {
   const sources = RECOMMENDED_ADDONS.flatMap(({ id }) => {
     const source = ADDON_SOURCES[id];
     return selected.includes(id) && source !== undefined ? [source] : [];
   });
+  let command = "pi";
+  if (piCli !== undefined) {
+    const quotedCli =
+      process.platform === "win32"
+        ? `"${piCli}"`
+        : `'${piCli.replaceAll("'", "'\\''")}'`;
+    command = `node ${quotedCli}`;
+  }
   return sources.length > 0
-    ? sources.map((source) => `pi install ${source}`).join(" && ")
+    ? sources.map((source) => `${command} install ${source}`).join(" && ")
     : undefined;
 };
 
@@ -109,35 +120,36 @@ export const commandExists = (command: string): boolean => {
     );
 };
 
+const supportedNode = (): boolean => {
+  if (!commandExists("node")) {
+    return false;
+  }
+  const version = spawnSync("node", ["--version"], {
+    encoding: "utf-8",
+    shell: process.platform === "win32",
+    timeout: 2000,
+  });
+  const match = /^v(?<major>\d+)\.(?<minor>\d+)\./u.exec(
+    version.stdout
+  )?.groups;
+  return (
+    match?.major !== undefined &&
+    match.minor !== undefined &&
+    (Number(match.major) > 22 ||
+      (Number(match.major) === 22 && Number(match.minor) >= 19))
+  );
+};
+
 export type SoftwareRequirement = "agents" | "git" | "node";
 
-export const missingSoftware = (launch: AgentLaunch): string[] =>
-  (
-    [
-      ["Node.js", commandExists("node")],
-      ["Git", commandExists("git")],
-      ["Pi", commandExists("pi")],
-      [
-        "MagPi ACP",
-        launch.command === "node" && launch.args[0]
-          ? existsSync(launch.args[0])
-          : commandExists(launch.command),
-      ],
-    ] satisfies [string, boolean][]
-  ).flatMap(([name, installed]) => (installed ? [] : [name]));
-
 export const nextSoftwareRequirement = (
-  launch: AgentLaunch
+  hasAgent: boolean
 ): SoftwareRequirement | undefined => {
-  const missing = missingSoftware(launch);
-  if (missing.includes("Node.js") || !commandExists("npm")) {
+  if (!supportedNode() || !commandExists("npm")) {
     return "node";
   }
-  if (missing.includes("Git")) {
+  if (!commandExists("git")) {
     return "git";
   }
-  if (missing.includes("Pi") || missing.includes("MagPi ACP")) {
-    return "agents";
-  }
-  return undefined;
+  return hasAgent ? undefined : "agents";
 };

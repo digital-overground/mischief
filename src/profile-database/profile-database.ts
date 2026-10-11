@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { LEGACY_THREAD_AGENT, isAgentId } from "../agents/update";
+import type { AgentId } from "../agents/update";
 import { isNonEmpty, isRecord } from "../present";
 
 const MAX_PATH_LENGTH = 32_768;
@@ -22,6 +24,8 @@ export interface DatabaseWorkspace extends WorkspaceLocation {
 
 export interface DatabaseThread {
   readonly id: string;
+  // Old records without an Agent belong to MagPi.
+  readonly agentId?: AgentId;
   readonly workspace: string;
   readonly sessionId?: string;
   readonly name: string;
@@ -30,12 +34,17 @@ export interface DatabaseThread {
   readonly status: "idle" | "running" | "waiting" | "error";
   readonly error?: string;
   readonly retryText?: string;
-  readonly authentication?: {
-    command: string;
-    args: string[];
-    env?: Record<string, string>;
-    label: string;
-  };
+  readonly authentication?:
+    | {
+        command: string;
+        args: string[];
+        env?: Record<string, string>;
+        label: string;
+      }
+    | {
+        methodId: string;
+        label: string;
+      };
   readonly manualName?: boolean;
   readonly unread?: boolean;
   readonly usage?: { used: number; size: number };
@@ -138,21 +147,37 @@ const isWorkspaceLocation = (value: unknown): value is WorkspaceLocation =>
 
 const isAuthentication = (
   value: unknown
-): value is NonNullable<DatabaseThread["authentication"]> =>
-  isRecord(value) &&
-  isBoundedString(value.command, MAX_PATH_LENGTH) &&
-  value.command.length > 0 &&
-  Array.isArray(value.args) &&
-  value.args.length <= 100 &&
-  value.args.every((argument) => isBoundedString(argument, MAX_PATH_LENGTH)) &&
-  isBoundedString(value.label, 200) &&
-  value.label.length > 0 &&
-  (value.env === undefined ||
-    (isRecord(value.env) &&
-      Object.entries(value.env).every(
-        ([key, candidate]) =>
-          key.length <= 1000 && isBoundedString(candidate, MAX_PATH_LENGTH)
-      )));
+): value is NonNullable<DatabaseThread["authentication"]> => {
+  if (
+    !isRecord(value) ||
+    !isBoundedString(value.label, 200) ||
+    value.label.length === 0
+  ) {
+    return false;
+  }
+  if (value.methodId !== undefined) {
+    return (
+      isBoundedString(value.methodId, 200) &&
+      value.methodId.length > 0 &&
+      value.command === undefined
+    );
+  }
+  return (
+    isBoundedString(value.command, MAX_PATH_LENGTH) &&
+    value.command.length > 0 &&
+    Array.isArray(value.args) &&
+    value.args.length <= 100 &&
+    value.args.every((argument) =>
+      isBoundedString(argument, MAX_PATH_LENGTH)
+    ) &&
+    (value.env === undefined ||
+      (isRecord(value.env) &&
+        Object.entries(value.env).every(
+          ([key, candidate]) =>
+            key.length <= 1000 && isBoundedString(candidate, MAX_PATH_LENGTH)
+        )))
+  );
+};
 
 const isUsage = (
   value: unknown
@@ -170,6 +195,7 @@ const isDatabaseThread = (value: unknown): value is DatabaseThread =>
   isRecord(value) &&
   typeof value.id === "string" &&
   UUID_PATTERN.test(value.id) &&
+  (value.agentId === undefined || isAgentId(value.agentId)) &&
   isAbsolutePath(value.workspace) &&
   (value.sessionId === undefined ||
     (isBoundedString(value.sessionId, MAX_PATH_LENGTH) &&
@@ -197,16 +223,23 @@ const copyWorkspace = (workspace: DatabaseWorkspace): DatabaseWorkspace => ({
 });
 
 const copyThread = (thread: DatabaseThread): DatabaseThread => ({
+  agentId: thread.agentId ?? LEGACY_THREAD_AGENT,
   ...(thread.authentication
     ? {
-        authentication: {
-          args: [...thread.authentication.args],
-          command: thread.authentication.command,
-          ...(thread.authentication.env
-            ? { env: { ...thread.authentication.env } }
-            : {}),
-          label: thread.authentication.label,
-        },
+        authentication:
+          "methodId" in thread.authentication
+            ? {
+                label: thread.authentication.label,
+                methodId: thread.authentication.methodId,
+              }
+            : {
+                args: [...thread.authentication.args],
+                command: thread.authentication.command,
+                ...(thread.authentication.env
+                  ? { env: { ...thread.authentication.env } }
+                  : {}),
+                label: thread.authentication.label,
+              },
       }
     : {}),
   createdAt: thread.createdAt,
@@ -353,9 +386,11 @@ const pathKey = (value: string): string =>
 const freezeThread = (thread: DatabaseThread): DatabaseThread => {
   const copy = copyThread(thread);
   if (copy.authentication) {
-    Object.freeze(copy.authentication.args);
-    if (copy.authentication.env) {
-      Object.freeze(copy.authentication.env);
+    if ("command" in copy.authentication) {
+      Object.freeze(copy.authentication.args);
+      if (copy.authentication.env) {
+        Object.freeze(copy.authentication.env);
+      }
     }
     Object.freeze(copy.authentication);
   }
