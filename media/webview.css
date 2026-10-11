@@ -166,7 +166,12 @@ main > section {
   min-height: 72px;
   flex: 1 0 72px;
   overflow: hidden;
-  border-bottom: 0;
+  border: 1px solid
+    var(
+      --vscode-titleBar-border,
+      var(--vscode-window-activeBorder, var(--vscode-widget-border))
+    );
+  border-radius: 8px;
   overflow-wrap: anywhere;
 }
 #thread-content {
@@ -583,11 +588,11 @@ select:disabled {
   line-height: 1.5;
 }
 #thread-header {
-  min-height: 38px;
-  padding: 7px 10px;
+  min-height: 30px;
+  padding: 4px 8px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
-  color: var(--vscode-titleBar-activeForeground, var(--vscode-foreground));
+  color: var(--vscode-statusBar-foreground, var(--vscode-foreground));
   background: var(
     --vscode-titleBar-activeBackground,
     var(--vscode-sideBarSectionHeader-background)
@@ -641,7 +646,7 @@ select:disabled {
 #thread-title {
   display: block;
   overflow: hidden;
-  font-size: 15px;
+  font-size: 13px;
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -657,7 +662,7 @@ select:disabled {
   min-width: 0;
   overflow: hidden;
   color: inherit;
-  font-size: 12px;
+  font-size: 11px;
   text-overflow: ellipsis;
 }
 #thread-header .thread-agent:hover {
