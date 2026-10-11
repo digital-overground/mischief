@@ -584,28 +584,29 @@ select:disabled {
   line-height: 1.5;
 }
 #thread-header {
-  min-height: 30px;
-  padding: 4px 8px;
+  --thread-frame-border: var(
+    --vscode-modernPanel-border,
+    var(--vscode-editor-border, var(--vscode-widget-border))
+  );
+  min-height: 32px;
+  margin: 0;
+  padding: 3px 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
-  border: 1px solid
-    var(
-      --vscode-window-activeBorder,
-      var(--vscode-titleBar-border, var(--vscode-widget-border))
-    );
-  border-left: 0;
-  border-radius: 0 8px 8px 0;
+  border-block: 1px solid var(--thread-frame-border);
   color: var(--vscode-statusBar-foreground, var(--vscode-foreground));
   background: var(
     --vscode-titleBar-activeBackground,
     var(--vscode-sideBarSectionHeader-background)
   );
-  font-size: 13px;
+  font-size: var(--vscode-font-size, 13px);
+  font-weight: normal;
   text-transform: none;
 }
 .thread-header-agent {
   grid-column: 1;
   min-width: 0;
+  padding-left: 6px;
   display: flex;
   align-items: center;
 }
@@ -649,7 +650,7 @@ select:disabled {
 #thread-title {
   display: block;
   overflow: hidden;
-  font-size: 13px;
+  font-size: inherit;
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -665,7 +666,7 @@ select:disabled {
   min-width: 0;
   overflow: hidden;
   color: inherit;
-  font-size: 11px;
+  font-size: inherit;
   text-overflow: ellipsis;
 }
 #thread-header .thread-agent:hover {
