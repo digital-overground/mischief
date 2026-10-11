@@ -1,11 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react";
 
 import { isNonEmpty } from "../present";
-import type {
-  Project,
-  ProjectsSnapshot,
-  Workspace,
-} from "../projects/projects";
+import type { ProjectsSnapshot, Workspace } from "../projects/projects";
 import type { ThreadIndicator, ThreadSummary } from "../threads/threads/models";
 import { postMessage } from "./bridge";
 import { SvgIcon } from "./icon";
@@ -69,10 +65,129 @@ const compactTime = (value: string, now: number): string => {
   return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
 };
 
+const menuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") {
+    return;
+  }
+  event.preventDefault();
+  const items = [
+    ...event.currentTarget.querySelectorAll<HTMLButtonElement>("button"),
+  ];
+  const index = items.findIndex((item) =>
+    item.contains(document.activeElement)
+  );
+  items[
+    (index + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length
+  ]?.focus();
+};
+
+const WorkspaceMenu = ({
+  close,
+  dismiss,
+  position,
+  projectRoot,
+}: {
+  close: () => void;
+  dismiss: () => void;
+  position: { left: number; top: number };
+  projectRoot?: string;
+}): React.JSX.Element => (
+  <div
+    className="workspace-menu"
+    role="menu"
+    aria-label="Workspace actions"
+    style={position}
+    onKeyDown={menuKeyDown}
+  >
+    {isNonEmpty(projectRoot) ? (
+      <>
+        <button
+          autoFocus
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            postMessage({ path: projectRoot, type: "openIssues" });
+            dismiss();
+          }}
+        >
+          <SvgIcon kind="folderGit2" /> Start work on issue
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            postMessage({ path: projectRoot, type: "newWorkspace" });
+            dismiss();
+          }}
+        >
+          <SvgIcon kind="plus" /> Add Workspace
+        </button>
+      </>
+    ) : null}
+    <button
+      autoFocus={!isNonEmpty(projectRoot)}
+      type="button"
+      role="menuitem"
+      onClick={() => {
+        postMessage({ type: "threadHistory" });
+        dismiss();
+      }}
+    >
+      <SvgIcon kind="history" /> Thread History
+    </button>
+    <hr />
+    <button type="button" role="menuitem" onClick={close}>
+      <SvgIcon kind="x" /> Close Workspace
+    </button>
+  </div>
+);
+
+const ThreadMenu = ({
+  dismiss,
+  id,
+  position,
+}: {
+  dismiss: () => void;
+  id: string;
+  position: { left: number; top: number };
+}): React.JSX.Element => (
+  <div
+    className="workspace-menu"
+    role="menu"
+    aria-label="Thread actions"
+    style={position}
+    onKeyDown={menuKeyDown}
+  >
+    <button
+      autoFocus
+      type="button"
+      role="menuitem"
+      onClick={() => {
+        postMessage({ id, type: "renameThread" });
+        dismiss();
+      }}
+    >
+      <SvgIcon kind="pencil" /> Rename Thread
+    </button>
+    <button
+      type="button"
+      role="menuitem"
+      onClick={() => {
+        postMessage({ id, type: "removeThread" });
+        dismiss();
+      }}
+    >
+      <SvgIcon kind="archive" /> Close Thread
+    </button>
+  </div>
+);
+
+// oxlint-disable-next-line complexity -- Workspace and Thread row actions share the menu state
 const WorkspaceNode = ({
   expanded,
   now,
   onToggle,
+  projectRoot,
   selectedId,
   threads,
   workspace,
@@ -80,35 +195,97 @@ const WorkspaceNode = ({
   expanded: boolean;
   now: number;
   onToggle: () => void;
+  projectRoot?: string;
   selectedId?: string | null;
   threads: ThreadSummary[];
   workspace: Workspace;
 }): React.JSX.Element => {
+  const [closing, setClosing] = useState(false);
+  const [menu, setMenu] = useState<{
+    left: number;
+    top: number;
+    threadId?: string;
+  } | null>(null);
+  useEffect(() => {
+    const dismiss = (): void => {
+      setMenu(null);
+    };
+    const escape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        dismiss();
+      }
+    };
+    document.addEventListener("click", dismiss);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("click", dismiss);
+      document.removeEventListener("keydown", escape);
+    };
+  }, []);
+  const showMenu = (x: number, y: number, threadId?: string): void => {
+    setMenu({
+      left: Math.max(4, Math.min(x, window.innerWidth - 216)),
+      top: Math.max(4, Math.min(y, window.innerHeight - 152)),
+      ...(isNonEmpty(threadId) ? { threadId } : {}),
+    });
+  };
+  const closeWorkspace = (): void => {
+    setMenu(null);
+    setClosing(true);
+    postMessage({ path: workspace.path, type: "closeWorkspace" });
+  };
   const attention = (["waiting", "error", "completed"] as const).filter(
     (indicator) => threads.some((thread) => thread.indicator === indicator)
   );
-  const workspaceAction = `${expanded ? "Collapse" : "Expand"} ${workspace.name}`;
+  const workspaceAction = workspace.current
+    ? `${expanded ? "Collapse" : "Expand"} ${workspace.name}`
+    : `Open ${workspace.name} Window`;
+  const threadCountLabel = `Agent Threads: ${threads.length}`;
   return (
-    <div className={`workspace-node${workspace.current ? " current" : ""}`}>
+    <div
+      className={`workspace-node${workspace.current ? " current" : ""}${closing ? " closing" : ""}`}
+    >
       <div
-        className={`row workspace-row${workspace.current && !expanded ? " selected" : ""}`}
+        aria-busy={closing}
+        className={`row workspace-row${workspace.current && !expanded ? " selected" : ""}${closing ? " closing" : ""}`}
+        onContextMenu={(event) => {
+          if (workspace.current && !closing) {
+            event.preventDefault();
+            showMenu(event.clientX, event.clientY);
+          }
+        }}
       >
-        <button
-          className="workspace-disclosure workspace-toggle"
-          type="button"
-          title={`${expanded ? "Collapse" : "Expand"} ${workspace.name}`}
-          aria-label={`${expanded ? "Collapse" : "Expand"} ${workspace.name}`}
-          aria-expanded={expanded}
-          onClick={onToggle}
-        >
-          {expanded ? "▾" : "▸"}
-        </button>
+        {workspace.current ? (
+          <button
+            className="workspace-disclosure workspace-toggle"
+            type="button"
+            disabled={closing}
+            title={workspaceAction}
+            aria-label={workspaceAction}
+            aria-expanded={expanded}
+            onClick={onToggle}
+          >
+            {expanded ? "▾" : "▸"}
+          </button>
+        ) : (
+          <span
+            aria-hidden="true"
+            className="workspace-disclosure workspace-disclosure-placeholder"
+          />
+        )}
         <button
           className="row-open workspace-open"
           type="button"
+          disabled={closing}
           title={workspaceAction}
           aria-label={workspaceAction}
-          onClick={onToggle}
+          onClick={() => {
+            if (workspace.current) {
+              onToggle();
+            } else {
+              postMessage({ path: workspace.path, type: "openWorkspace" });
+            }
+          }}
         >
           {isNonEmpty(workspace.color) ? (
             <span
@@ -132,6 +309,15 @@ const WorkspaceNode = ({
             ))}
           </span>
         </button>
+        <span
+          className="workspace-thread-count"
+          title={threadCountLabel}
+          role="img"
+          aria-label={threadCountLabel}
+        >
+          <SvgIcon className="workspace-thread-icon" kind="botMessageSquare" />
+          <span>{threads.length}</span>
+        </span>
         {workspace.current ? null : (
           <IconButton
             title={`Open ${workspace.name} Window`}
@@ -143,43 +329,84 @@ const WorkspaceNode = ({
           </IconButton>
         )}
         {workspace.current ? (
-          <>
-            <IconButton
-              title="Thread History"
-              onClick={() => {
-                postMessage({ type: "threadHistory" });
-              }}
-            >
-              <SvgIcon className="thread-action-icon" kind="history" />
-            </IconButton>
-            <IconButton
-              title="New Thread"
-              onClick={() => {
-                postMessage({ type: "newThread" });
-              }}
-            >
-              <SvgIcon className="thread-action-icon" kind="chat" />
-            </IconButton>
-          </>
+          <IconButton
+            title="New Thread"
+            onClick={() => {
+              postMessage({ type: "newThread" });
+            }}
+          >
+            <SvgIcon className="thread-action-icon" kind="chat" />
+          </IconButton>
         ) : null}
-        <IconButton
-          title="Close Workspace"
-          onClick={() => {
-            postMessage({ path: workspace.path, type: "deactivateWorkspace" });
-          }}
-        >
-          <SvgIcon className="thread-action-icon" kind="x" />
-        </IconButton>
+        {closing ? (
+          <span
+            className="workspace-close-spinner"
+            title="Closing Workspace"
+            role="status"
+            aria-label="Closing Workspace"
+          >
+            <span className="thread-status active" aria-hidden="true" />
+          </span>
+        ) : null}
+        {workspace.current ? (
+          <button
+            className="icon workspace-menu-trigger"
+            type="button"
+            title="Workspace actions"
+            aria-label="Workspace actions"
+            aria-haspopup="menu"
+            aria-expanded={menu !== null && menu.threadId === undefined}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (menu && menu.threadId === undefined) {
+                setMenu(null);
+              } else {
+                const rect = event.currentTarget.getBoundingClientRect();
+                showMenu(rect.right - 208, rect.bottom);
+              }
+            }}
+          >
+            <SvgIcon className="thread-action-icon" kind="moreVertical" />
+          </button>
+        ) : (
+          <IconButton title="Close Workspace" onClick={closeWorkspace}>
+            <SvgIcon className="thread-action-icon" kind="x" />
+          </IconButton>
+        )}
       </div>
-      {expanded ? (
+      {menu && menu.threadId === undefined ? (
+        <WorkspaceMenu
+          close={closeWorkspace}
+          dismiss={() => {
+            setMenu(null);
+          }}
+          position={menu}
+          projectRoot={projectRoot}
+        />
+      ) : null}
+      {isNonEmpty(menu?.threadId) ? (
+        <ThreadMenu
+          dismiss={() => {
+            setMenu(null);
+          }}
+          id={menu.threadId}
+          position={menu}
+        />
+      ) : null}
+      {workspace.current && expanded ? (
         <div className="workspace-threads">
           {threads.map((thread) => (
             <div
               className={`row thread-row${selectedId === thread.id ? " selected" : ""}`}
               key={thread.id}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                showMenu(event.clientX, event.clientY, thread.id);
+              }}
             >
               <button
                 className="row-open"
+                type="button"
                 title="Open Thread"
                 onClick={() => {
                   postMessage({ id: thread.id, type: "selectThread" });
@@ -191,26 +418,25 @@ const WorkspaceNode = ({
                   {compactTime(thread.updatedAt, now)}
                 </span>
               </button>
-              {workspace.current ? (
-                <>
-                  <IconButton
-                    title="Rename Thread"
-                    onClick={() => {
-                      postMessage({ id: thread.id, type: "renameThread" });
-                    }}
-                  >
-                    <SvgIcon className="thread-action-icon" kind="pencil" />
-                  </IconButton>
-                  <IconButton
-                    title="Remove Thread"
-                    onClick={() => {
-                      postMessage({ id: thread.id, type: "removeThread" });
-                    }}
-                  >
-                    <SvgIcon className="thread-action-icon" kind="archive" />
-                  </IconButton>
-                </>
-              ) : null}
+              <button
+                className="icon"
+                type="button"
+                title="Thread actions"
+                aria-label="Thread actions"
+                aria-haspopup="menu"
+                aria-expanded={menu?.threadId === thread.id}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (menu?.threadId === thread.id) {
+                    setMenu(null);
+                  } else {
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    showMenu(rect.right - 208, rect.bottom, thread.id);
+                  }
+                }}
+              >
+                <SvgIcon className="thread-action-icon" kind="moreVertical" />
+              </button>
             </div>
           ))}
         </div>
@@ -218,62 +444,6 @@ const WorkspaceNode = ({
     </div>
   );
 };
-
-const ProjectGroup = ({
-  expanded,
-  onToggle,
-  project,
-  renderWorkspace,
-}: {
-  expanded: boolean;
-  onToggle: () => void;
-  project: Project;
-  renderWorkspace: (workspace: Workspace) => React.ReactNode;
-}): React.JSX.Element => (
-  <div className="navigator-group">
-    <div className="group-row">
-      <button
-        className="workspace-disclosure project-toggle"
-        type="button"
-        title={`${expanded ? "Collapse" : "Expand"} ${project.name}`}
-        aria-label={`${expanded ? "Collapse" : "Expand"} ${project.name}`}
-        aria-expanded={expanded}
-        onClick={onToggle}
-      >
-        {expanded ? "▾" : "▸"}
-      </button>
-      <button
-        className="row-open project-title"
-        type="button"
-        title={`${expanded ? "Collapse" : "Expand"} ${project.name}`}
-        aria-label={`${expanded ? "Collapse" : "Expand"} ${project.name}`}
-        onClick={onToggle}
-      >
-        <span className="name">{project.name}</span>
-      </button>
-      <IconButton
-        title="Open GitHub Issues"
-        onClick={() => {
-          postMessage({ path: project.root, type: "openIssues" });
-        }}
-      >
-        <SvgIcon className="project-action-icon" kind="folderGit2" />
-      </IconButton>
-      <IconButton
-        title="New Workspace"
-        onClick={() => {
-          postMessage({ path: project.root, type: "newWorkspace" });
-        }}
-      >
-        <SvgIcon className="thread-action-icon" kind="plus" />
-      </IconButton>
-    </div>
-    {expanded ? project.workspaces.map(renderWorkspace) : null}
-  </div>
-);
-
-const UNGROUPED_GROUP = "ungrouped";
-const projectGroup = (root: string): string => `project:${root}`;
 
 const NavigatorPaneView = ({
   collapseAll,
@@ -288,74 +458,36 @@ const NavigatorPaneView = ({
   projects: ProjectsSnapshot;
   threads: RenderedThreadsSnapshot;
 }): React.JSX.Element => {
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
-    new Set()
-  );
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState(false);
   const [now, setNow] = useState(Date.now());
   const previousCurrent = useRef<string | null>(null);
   const previousExpandAllRequest = useRef(expandAllRequest);
   const workspaces = [
     ...projects.projects.flatMap((project) => project.workspaces),
     ...projects.ungrouped,
-  ];
+  ].toSorted((left, right) => left.name.localeCompare(right.name));
   const currentPath = workspaces.find((workspace) => workspace.current)?.path;
-  const currentProject = projects.projects.find((project) =>
+  const currentProjectRoot = projects.projects.find((project) =>
     project.workspaces.some((workspace) => workspace.path === currentPath)
-  );
-  let currentGroup: string | undefined;
-  if (isNonEmpty(currentPath)) {
-    currentGroup = currentProject
-      ? projectGroup(currentProject.root)
-      : UNGROUPED_GROUP;
-  }
-  const currentSelection =
-    isNonEmpty(currentGroup) && isNonEmpty(currentPath)
-      ? `${currentGroup}\0${currentPath}`
-      : null;
+  )?.root;
   useEffect(() => {
-    if (
-      isNonEmpty(currentPath) &&
-      currentSelection !== previousCurrent.current
-    ) {
-      setExpanded((paths) => new Set(paths).add(currentPath));
-      setCollapsedGroups((groups) => {
-        if (!isNonEmpty(currentGroup) || !groups.has(currentGroup)) {
-          return groups;
-        }
-        const next = new Set(groups);
-        next.delete(currentGroup);
-        return next;
-      });
+    if (currentPath !== previousCurrent.current) {
+      previousCurrent.current = currentPath ?? null;
+      setExpanded(isNonEmpty(currentPath) && !collapseAll);
     }
-    previousCurrent.current = currentSelection;
-  }, [currentGroup, currentPath, currentSelection]);
+  }, [collapseAll, currentPath]);
   useEffect(() => {
     if (collapseAll) {
-      setCollapsedGroups(
-        new Set([
-          ...projects.projects.map((project) => projectGroup(project.root)),
-          ...(projects.ungrouped.length ? [UNGROUPED_GROUP] : []),
-        ])
-      );
-      setExpanded(new Set());
+      setExpanded(false);
     }
-  }, [collapseAll, projects]);
+  }, [collapseAll]);
   useEffect(() => {
     if (expandAllRequest === previousExpandAllRequest.current) {
       return;
     }
     previousExpandAllRequest.current = expandAllRequest;
-    setCollapsedGroups(new Set());
-    setExpanded(
-      new Set(
-        [
-          ...projects.projects.flatMap((project) => project.workspaces),
-          ...projects.ungrouped,
-        ].map((workspace) => workspace.path)
-      )
-    );
-  }, [expandAllRequest, projects]);
+    setExpanded(isNonEmpty(currentPath));
+  }, [currentPath, expandAllRequest]);
   useEffect(() => {
     const clock = window.setInterval(() => {
       setNow(Date.now());
@@ -364,101 +496,37 @@ const NavigatorPaneView = ({
       window.clearInterval(clock);
     };
   }, []);
-  const toggleGroup = (group: string, groupExpanded: boolean): void => {
-    if (!groupExpanded) {
-      onExpand();
-    }
-    setCollapsedGroups((groups) => {
-      const next = new Set(groups);
-      if (groupExpanded) {
-        next.add(group);
-      } else {
-        next.delete(group);
-      }
-      return next;
-    });
-  };
-  const renderWorkspace = (workspace: Workspace): React.ReactNode => {
-    const workspaceExpanded = expanded.has(workspace.path);
-    return (
-      <WorkspaceNode
-        expanded={workspaceExpanded}
-        key={workspace.path}
-        now={now}
-        onToggle={() => {
-          if (!workspaceExpanded) {
-            onExpand();
-          }
-          setExpanded((paths) => {
-            const next = new Set(paths);
-            if (workspaceExpanded) {
-              next.delete(workspace.path);
-            } else {
-              next.add(workspace.path);
-            }
-            return next;
-          });
-        }}
-        selectedId={threads.selected?.id}
-        threads={threads.threads.filter(
-          (thread) => thread.workspace === workspace.path
-        )}
-        workspace={workspace}
-      />
-    );
-  };
-  const ungroupedExpanded = !collapsedGroups.has(UNGROUPED_GROUP);
-  const allExpanded =
-    Boolean(projects.projects.length || projects.ungrouped.length) &&
-    projects.projects.every(
-      (project) => !collapsedGroups.has(projectGroup(project.root))
-    ) &&
-    (projects.ungrouped.length === 0 || ungroupedExpanded) &&
-    workspaces.every((workspace) => expanded.has(workspace.path));
+  const currentExpanded = isNonEmpty(currentPath) && expanded;
   useEffect(() => {
-    postMessage({ expanded: allExpanded, type: "navigatorExpanded" });
-  }, [allExpanded]);
+    postMessage({ expanded: currentExpanded, type: "navigatorExpanded" });
+  }, [currentExpanded]);
   return (
     <section id="navigator">
       <div className="content" id="navigator-list">
-        {projects.projects.map((project) => {
-          const group = projectGroup(project.root);
-          const groupExpanded = !collapsedGroups.has(group);
-          return (
-            <ProjectGroup
-              expanded={groupExpanded}
-              key={project.root}
-              onToggle={() => {
-                toggleGroup(group, groupExpanded);
-              }}
-              project={project}
-              renderWorkspace={renderWorkspace}
-            />
-          );
-        })}
-        {projects.ungrouped.length ? (
-          <div className="navigator-group">
-            <div className="group-row">
-              <button
-                className="workspace-disclosure project-toggle"
-                type="button"
-                title={`${ungroupedExpanded ? "Collapse" : "Expand"} Ungrouped`}
-                aria-label={`${ungroupedExpanded ? "Collapse" : "Expand"} Ungrouped`}
-                aria-expanded={ungroupedExpanded}
-                onClick={() => {
-                  toggleGroup(UNGROUPED_GROUP, ungroupedExpanded);
-                }}
-              >
-                {ungroupedExpanded ? "▾" : "▸"}
-              </button>
-              <span className="name">Ungrouped</span>
-            </div>
-            {ungroupedExpanded ? projects.ungrouped.map(renderWorkspace) : null}
-          </div>
-        ) : null}
-        {!projects.projects.length && !projects.ungrouped.length ? (
+        {workspaces.map((workspace) => (
+          <WorkspaceNode
+            expanded={workspace.current && expanded}
+            key={workspace.path}
+            now={now}
+            onToggle={() => {
+              if (expanded) {
+                setExpanded(false);
+                return;
+              }
+              onExpand();
+              setExpanded(true);
+            }}
+            projectRoot={workspace.current ? currentProjectRoot : undefined}
+            selectedId={threads.selected?.id}
+            threads={threads.threads.filter(
+              (thread) => thread.workspace === workspace.path
+            )}
+            workspace={workspace}
+          />
+        ))}
+        {workspaces.length ? null : (
           <div className="empty">No active Workspaces. Add one with ＋.</div>
-        ) : null}
+        )}
       </div>
     </section>
   );

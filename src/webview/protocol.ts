@@ -72,11 +72,7 @@ export type WebviewToHostMessage =
       messageId: string;
     }
   | {
-      type:
-        | "deactivateWorkspace"
-        | "newWorkspace"
-        | "openIssues"
-        | "openWorkspace";
+      type: "closeWorkspace" | "newWorkspace" | "openIssues" | "openWorkspace";
       path: string;
     }
   | {

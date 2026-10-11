@@ -92,12 +92,12 @@
       },
       {
         "command": "mischief.expandAll",
-        "title": "Mischief: Expand All",
+        "title": "Mischief: Expand Current Workspace",
         "icon": "$(expand-all)"
       },
       {
         "command": "mischief.collapseAll",
-        "title": "Mischief: Collapse All",
+        "title": "Mischief: Collapse Current Workspace",
         "icon": "$(collapse-all)"
       },
       {
@@ -144,12 +144,12 @@
         },
         {
           "command": "mischief.expandAll",
-          "when": "view == mischief.view && !mischief.navigatorAllExpanded",
+          "when": "view == mischief.view && !mischief.navigatorCurrentWorkspaceExpanded",
           "group": "navigation@3"
         },
         {
           "command": "mischief.collapseAll",
-          "when": "view == mischief.view && mischief.navigatorAllExpanded",
+          "when": "view == mischief.view && mischief.navigatorCurrentWorkspaceExpanded",
           "group": "navigation@3"
         },
         {

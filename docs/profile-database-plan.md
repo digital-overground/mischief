@@ -228,7 +228,7 @@ Move durable Thread registrations and per-Workspace selections behind the databa
 
 Subscribe MischiefView to database changes and render the same active Workspaces and profile-wide Thread summaries in every open Instance. Keep `Workspace.current` local to each window and Agent/transcript ownership scoped to that current Workspace.
 
-Navigator nests Threads under visible Workspaces. Each Workspace row shows distinct waiting, error, and unread-completed indicators, and the Activity Bar badge counts all visible attention-needing Threads. Serialize Workspace refreshes so overlapping polls cannot render an older snapshot last.
+Navigator lists visible Workspaces alphabetically regardless of Project association. Only the current Workspace expands to show Threads; other rows show distinct waiting, error, and unread-completed indicators and open their VS Code window when clicked. The Activity Bar badge counts all visible attention-needing Threads. Serialize Workspace refreshes so overlapping polls cannot render an older snapshot last.
 
 ### Phase 6: Final verification
 
@@ -239,7 +239,7 @@ Run focused tests after every slice, then `pnpm check`. Review the complete diff
 - Every running Instance reads the same Workspace and Thread records within two seconds.
 - Active Workspaces are shown; inactive Workspaces are hidden.
 - Projects are derived by grouping active Git Workspaces by canonical Project root.
-- Untracked Workspaces remain under `Ungrouped`.
+- Untracked Workspaces have no Project association and appear alphabetically with other Workspaces.
 - Any Instance can mark an active Workspace inactive or update a valid Workspace selection; only the current Workspace's Instance can mutate its Thread records.
 - Thread status remains `idle`, `running`, `waiting`, or `error`, and Navigator renders synchronized profile-wide summaries.
 - No Instance overwrites another Workspace's Threads.

@@ -662,7 +662,16 @@ export class MischiefView implements vscode.WebviewViewProvider {
     if (current && active !== current.path) {
       await this.threads.openWorkspace(current.path);
     } else if (!current && isNonEmpty(active)) {
+      const closing = this.database
+        .snapshot()
+        .workspaces.some(
+          (workspace) =>
+            workspace.path === active && workspace.status === "inactive"
+        );
       await this.threads.closeWorkspace();
+      if (closing) {
+        await vscode.commands.executeCommand("workbench.action.closeWindow");
+      }
     }
   }
 
@@ -735,7 +744,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     ) {
       await vscode.commands.executeCommand(
         "setContext",
-        "mischief.navigatorAllExpanded",
+        "mischief.navigatorCurrentWorkspaceExpanded",
         data.expanded
       );
       return true;
@@ -769,8 +778,8 @@ export class MischiefView implements vscode.WebviewViewProvider {
       await this.openWorkspace(data.path);
       return true;
     }
-    if (data.type === "deactivateWorkspace" && typeof data.path === "string") {
-      await this.deactivateWorkspace(data.path);
+    if (data.type === "closeWorkspace" && typeof data.path === "string") {
+      await this.closeWorkspace(data.path);
       return true;
     }
     return false;
@@ -1066,15 +1075,11 @@ export class MischiefView implements vscode.WebviewViewProvider {
     );
   }
 
-  private async deactivateWorkspace(candidate: string): Promise<void> {
-    const workspace = this.workspaces().find((item) => item.path === candidate);
-    if (!workspace) {
+  private async closeWorkspace(candidate: string): Promise<void> {
+    if (!this.workspaces().some((workspace) => workspace.path === candidate)) {
       return;
     }
     await this.setProjects(this.projects.remove(candidate));
-    if (workspace.current) {
-      await this.threads.closeWorkspace();
-    }
     this.render();
   }
 

@@ -1,6 +1,6 @@
 # Mischief
 
-Mischief is a VS Code extension for managing code Projects and graphical Agent Threads powered by MagPi ACP. It replaces the old Herdr terminal integration with a focused Project → Workspace → Thread experience.
+Mischief is a VS Code extension for managing code Projects and graphical Agent Threads powered by MagPi ACP. It replaces the old Herdr terminal integration with a focused Workspace → Thread experience.
 
 ## Language
 
@@ -19,8 +19,8 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 ## Relationships
 
 - A Project is the conceptual grouping of Git Workspaces with the same canonical Git root.
-- An untracked Workspace belongs to the non-selectable `Ungrouped` section rather than a Project.
-- Projects themselves are not selectable in Navigator. They are labeled by their root folder name and sorted alphabetically.
+- An untracked Workspace has no Project association.
+- Projects remain a domain grouping but are not displayed in Navigator. Navigator lists active Workspaces alphabetically across Projects and untracked Workspaces.
 - A Workspace contains zero or more Threads.
 - A Thread runs through exactly one Agent and one Workspace.
 - ACP executes and persists protocol sessions; Mischief owns the Project and Thread index.
@@ -31,11 +31,11 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 
 - Opening or adding a folder activates that exact Workspace. Git discovery associates it with its canonical-root Project; a non-Git folder becomes an untracked Workspace under `Ungrouped`.
 - Projects are derived from their Workspaces rather than activated or removed independently. A Project is shown while it has at least one active Workspace.
-- Any Mischief Instance may make an active Workspace inactive. Making one Workspace inactive does not affect its siblings.
+- Any Mischief Instance may close an active Workspace. This marks the Workspace inactive and closes its owning VS Code window; sibling Workspaces remain active.
 - Active Workspaces are shown; inactive Workspaces are hidden. Changing status does not delete Threads or ACP/Pi history.
 - A Project is keyed by its exact canonical Git-root path; an untracked Workspace is keyed by its exact canonical folder path. Separate clones never join the same Project based on GitHub or another remote origin.
 - Newly-created linked worktrees are associated with the same Project when discovered. Deleted or missing folders are omitted from the UI without another Instance rewriting their status.
-- Workspace headers expand or collapse their Threads. They use the folder name as their primary label and show the Git branch plus synchronized aggregate Thread attention.
+- The current VS Code Workspace row expands or collapses its Threads. Other Workspace rows show aggregate Thread attention and open their VS Code window when clicked. Workspace rows use the folder name as their primary label and show the Git branch plus synchronized aggregate Thread attention.
 - Workspace records are global per VS Code profile, persist across restarts, and are shared by every open Mischief window in that profile.
 
 ## Thread behavior
@@ -47,9 +47,9 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 - Threads in the selected Workspace are ordered newest-first by creation time. Each Thread row shows its name, a running/idle/waiting/error indicator, and time since its last message using compact units such as `13min`, `2h`, or `4d`. Waiting means the Agent needs a permission or elicitation response. MagPi requests that interaction through ACP; Mischief renders it inline in the Thread transcript and returns the user’s response through ACP. V1 relies on Thread-row indicators for waiting and errors.
 - Thread history is restored through ACP load using the Agent-owned protocol session. If the fixed Agent or ACP session is unavailable, Mischief keeps the Thread visible with an error and retry action. If MagPi reports that Pi authentication is required, Mischief launches ACP Terminal Auth in a VS Code integrated terminal and then allows retry.
 - ACP streams assistant messages, thoughts, tool calls, plans, usage, permissions, and elicitation into the graphical transcript. Thinking remains visible by default; tool output is compact by default and can be expanded, matching Pi’s display posture. Tool file locations and structured diffs open in VS Code’s native editor/diff view. Mischief does not summarize Agent-provided thoughts. Cancelling a turn preserves already-streamed output and activity, marked as cancelled.
-- The first version uses one stable Activity Bar Webview rather than native TreeViews or proposed Chat Session APIs. It renders a profile-wide `Project → Workspace → Thread` Navigator above the selected Thread transcript/composer. The whole view can use a Mischief-specific font. Domain state and actions stay outside webview JavaScript so the sections can become separate native views later without changing Projects or Threads.
+- The first version uses one stable Activity Bar Webview rather than native TreeViews or proposed Chat Session APIs. It renders a flat, alphabetical, profile-wide Workspace list above the selected Thread transcript/composer. Only the current Workspace expands to show Threads; other rows show rolled-up attention and open their VS Code window. The whole view can use a Mischief-specific font. Domain state and actions stay outside webview JavaScript so the sections can become separate native views later without changing Projects or Threads.
 - Multiple Thread turns may run concurrently, including within one Workspace. A running Thread’s composer remains enabled; additional messages are shown as queued with their position and run in order. Stopping the active turn clears the Agent’s queue but restores the queued message text as editable drafts. Navigating away from a Thread does not cancel its turn; it continues in its Workspace’s VS Code window and remains visible when the Thread is reopened.
-- Open Mischief windows in one VS Code profile share registered Threads, selection, and Thread attention state. Navigator nests all registered Threads beneath visible active Workspaces. Workspace rows show one indicator for each present attention state (waiting, error, or unread completed), while the Activity Bar badge counts individual attention-needing Threads. Each Workspace window’s extension host still owns its running Threads; closing that window stops its in-flight turns.
+- Open Mischief windows in one VS Code profile share registered Threads, selection, and Thread attention state. Navigator shows Threads only beneath the current active Workspace; other Workspace rows show one indicator for each present attention state (waiting, error, or unread completed). The Activity Bar badge counts individual attention-needing Threads. Each Workspace window’s extension host still owns its running Threads; closing that window stops its in-flight turns.
 - MagPi ACP is the only Agent in v1. The selected Thread header renders its ACP-provided Role, Model, and Thinking configuration controls. These settings belong to that Thread. An Agent is fixed for the lifetime of a Thread; future support for additional ACP Agents may use the same `{ command, args, env }` shape.
 - Mischief does not require Herdr, a Herdr server, terminal mirroring, or TUI interaction.
 

@@ -99,6 +99,7 @@ interface Runtime {
     echoedId?: string;
   }[];
   activePrompt?: Runtime["pending"][number];
+  closing?: boolean;
   retryImages?: PromptImage[];
   sessionOperation?: ThreadSessionOperation;
   setup?: Promise<string>;
@@ -544,12 +545,14 @@ export class Threads {
       record.updatedAt = new Date().toISOString();
     } catch (error) {
       runtime.registration = undefined;
-      runtime.status = "error";
-      record.error = errorMessage(error);
-      record.retryText = pending.text;
-      runtime.retryImages = pending.images;
-      record.authentication =
-        agentAuthentication(error) ?? record.authentication;
+      if (runtime.closing !== true) {
+        runtime.status = "error";
+        record.error = errorMessage(error);
+        record.retryText = pending.text;
+        runtime.retryImages = pending.images;
+        record.authentication =
+          agentAuthentication(error) ?? record.authentication;
+      }
     } finally {
       runtime.activePrompt = undefined;
       runtime.pending = runtime.pending.filter(
@@ -856,7 +859,8 @@ export class Threads {
         if (!runtime) {
           return;
         }
-        await Threads.cancelRuntime(record, runtime);
+        runtime.closing = true;
+        await Threads.cancelRuntime(record, runtime, false);
         await this.persist(record);
         runtime.connection.dispose();
         this.runtimes.delete(record.id);
@@ -1029,7 +1033,8 @@ export class Threads {
 
   private static async cancelRuntime(
     record: StoredThread,
-    runtime: Runtime
+    runtime: Runtime,
+    sendAgentCancel = true
   ): Promise<void> {
     stopStreaming(runtime);
     runtime.resolvePermission?.({ cancelled: true });
@@ -1049,7 +1054,7 @@ export class Threads {
     if (isDefined(activeItem)) {
       activeItem.cancelled = true;
     }
-    if (isNonEmpty(record.sessionId)) {
+    if (sendAgentCancel && isNonEmpty(record.sessionId)) {
       await runtime.connection.cancel(record.sessionId);
     }
     runtime.status = "idle";
@@ -1129,9 +1134,12 @@ export class Threads {
         elicitation: async (request) =>
           await this.handleElicitation(record, request),
         error: (error) => {
+          const active = this.runtimes.get(record.id);
+          if (active?.closing === true) {
+            return;
+          }
           record.error = errorMessage(error);
           record.authentication = error.authentication;
-          const active = this.runtimes.get(record.id);
           if (active) {
             stopStreaming(active);
             active.status = "error";

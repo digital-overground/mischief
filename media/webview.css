@@ -264,41 +264,38 @@ select:disabled {
   overflow: auto;
   padding: 4px 0;
 }
-.group-row,
 .row {
   width: 100%;
   min-height: 25px;
   display: flex;
   align-items: center;
 }
-.group-row {
-  padding: 2px 6px 2px 8px;
-  font-weight: 600;
-}
-#navigator-list > .navigator-group:not(:first-child) > .group-row {
-  margin-top: 8px;
-  border-top: 1px solid var(--vscode-panel-border);
-  padding-top: 10px;
-}
-.group-row .name,
 .workspace-label .name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.group-row .name,
 .workspace-label {
   min-width: 0;
   flex: 1;
 }
-#navigator :is(.group-row, .row) > .icon {
+#navigator .row > .icon {
   opacity: 0;
 }
-#navigator :is(.group-row, .row):is(:hover, :focus-within) > .icon {
+#navigator .row:is(:hover, :focus-within) > .icon,
+#navigator .workspace-node.current > .workspace-row > .icon {
   opacity: 1;
 }
 .workspace-row {
   padding-left: 10px;
+}
+#navigator-list
+  > .workspace-node:nth-child(even)
+  > .workspace-row:not(.selected):not(:hover):not(:focus-within) {
+  background: var(
+    --vscode-sideBarSectionHeader-background,
+    var(--vscode-sideBar-background)
+  );
 }
 .workspace-disclosure {
   width: 20px;
@@ -312,7 +309,9 @@ select:disabled {
   line-height: 1;
   text-align: center;
 }
-.project-toggle:focus-visible,
+.workspace-disclosure-placeholder {
+  cursor: default;
+}
 .workspace-toggle:focus-visible,
 .row-open:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
@@ -324,6 +323,24 @@ select:disabled {
 .row.selected {
   background: var(--vscode-list-activeSelectionBackground);
   color: var(--vscode-list-activeSelectionForeground);
+}
+#navigator-list > .workspace-node > .workspace-row.closing {
+  background: var(--vscode-sideBar-background);
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.65;
+}
+.workspace-row.closing > .icon,
+#navigator .workspace-row.closing > .icon {
+  display: none;
+}
+.workspace-row.closing .workspace-toggle {
+  visibility: hidden;
+}
+.workspace-node.closing .workspace-threads {
+  display: none;
+}
+.workspace-row.closing .workspace-open:disabled {
+  opacity: 1;
 }
 .row-open {
   min-width: 0;
@@ -387,6 +404,72 @@ select:disabled {
   align-items: center;
   gap: 3px;
   padding-left: 5px;
+}
+.workspace-close-spinner {
+  width: 24px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.workspace-close-spinner .thread-status.active {
+  color: var(--vscode-descriptionForeground);
+}
+.workspace-thread-count {
+  width: 52px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  padding-right: 5px;
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--mischief-mono-font);
+  font-size: 11px;
+}
+.workspace-menu {
+  position: fixed;
+  z-index: 20;
+  width: 208px;
+  padding: 4px;
+  border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border));
+  border-radius: 4px;
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  background: var(
+    --vscode-menu-background,
+    var(--vscode-editorWidget-background)
+  );
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+}
+.workspace-menu button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  padding: 5px 8px;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+.workspace-menu button:hover,
+.workspace-menu button:focus-visible {
+  background: var(
+    --vscode-menu-selectionBackground,
+    var(--vscode-list-hoverBackground)
+  );
+  color: var(--vscode-menu-selectionForeground, inherit);
+}
+.workspace-menu svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.workspace-menu hr {
+  border: 0;
+  border-top: 1px solid
+    var(--vscode-menu-separatorBackground, var(--vscode-panel-border));
+  margin: 4px 0;
 }
 .thread-status {
   flex: none;
@@ -627,6 +710,10 @@ select:disabled {
   max-height: 11px;
   margin-right: 3px;
   vertical-align: -1px;
+}
+.workspace-thread-icon {
+  width: 14px;
+  height: 14px;
 }
 .thread-action-icon {
   width: 14px;

@@ -56,6 +56,8 @@ class FakeAgent {
   richUpdates = false;
   completePlan = false;
   holdPrompts = false;
+  cancelCalls = 0;
+  cancelGate?: Deferred;
   permissionResponse?: unknown;
   elicitationResponse?: unknown;
   configChange?: {
@@ -120,6 +122,8 @@ class FakeAgent {
     this.update = handlers.update;
     return {
       cancel: async () => {
+        this.cancelCalls += 1;
+        await this.cancelGate?.promise;
         await Promise.resolve();
         for (const resolve of this.promptResolvers.splice(0)) {
           resolve({ stopReason: "cancelled" });
@@ -142,6 +146,9 @@ class FakeAgent {
       },
       dispose: () => {
         this.disposed = true;
+        for (const resolve of this.promptResolvers.splice(0)) {
+          resolve({ stopReason: "cancelled" });
+        }
       },
       forkMessage: async (sessionId, cwd, messageId) => {
         this.forkCalls.push({ cwd, messageId, sessionId });
@@ -538,6 +545,38 @@ describe("threads module", () => {
     await threads.prompt("Keep the name");
 
     expect(threads.snapshot().selected?.name).toBe("My Thread");
+  });
+
+  test("Workspace shutdown terminates the Agent without waiting for cancellation", async () => {
+    const agent = new FakeAgent();
+    agent.cancelGate = deferred();
+    agent.holdPrompts = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    const prompting = threads.prompt("Keep running");
+    await agent.firstPromptStarted;
+
+    const closing = threads.closeWorkspace();
+    const disposedBeforeCancelRelease = await vi
+      .waitFor(() => {
+        expect(agent.disposed).toBeTruthy();
+      })
+      .then(
+        () => true,
+        () => false
+      );
+    agent.cancelGate.resolve();
+    await Promise.all([closing, prompting]);
+
+    expect({
+      cancelCalls: agent.cancelCalls,
+      disposedBeforeCancelRelease,
+      indicator: threads.snapshot().threads[0]?.indicator,
+    }).toStrictEqual({
+      cancelCalls: 0,
+      disposedBeforeCancelRelease: true,
+      indicator: "idle",
+    });
   });
 
   test("closing a Workspace cancels its running Threads and hides them", async () => {

@@ -1455,12 +1455,12 @@ describe("view provider", () => {
         {
           command: "mischief.expandAll",
           icon: "$(expand-all)",
-          title: "Mischief: Expand All",
+          title: "Mischief: Expand Current Workspace",
         },
         {
           command: "mischief.collapseAll",
           icon: "$(collapse-all)",
-          title: "Mischief: Collapse All",
+          title: "Mischief: Collapse Current Workspace",
         },
       ])
     );
@@ -1469,12 +1469,12 @@ describe("view provider", () => {
         {
           command: "mischief.expandAll",
           group: "navigation@3",
-          when: "view == mischief.view && !mischief.navigatorAllExpanded",
+          when: "view == mischief.view && !mischief.navigatorCurrentWorkspaceExpanded",
         },
         {
           command: "mischief.collapseAll",
           group: "navigation@3",
-          when: "view == mischief.view && mischief.navigatorAllExpanded",
+          when: "view == mischief.view && mischief.navigatorCurrentWorkspaceExpanded",
         },
       ])
     );
@@ -1507,6 +1507,22 @@ describe("view provider", () => {
     const composerRule = /#composer \{[\s\S]*?\n\}/u.exec(css)?.[0];
 
     expect(composerRule).toContain("max-height: min(400px, 45vh);");
+  });
+
+  test("greys the Workspace row and hides its actions while closing", () => {
+    const css = readFileSync("media/webview.css", "utf-8");
+    expect({
+      actionsHidden:
+        /\.workspace-row\.closing > \.icon\s*\{\s*display: none;/u.test(css),
+      rowGreyed: /\.workspace-row\.closing\s*\{[\s\S]*?opacity: 0\.65;/u.test(
+        css
+      ),
+      spinner: css.includes(".workspace-close-spinner"),
+    }).toStrictEqual({
+      actionsHidden: true,
+      rowGreyed: true,
+      spinner: true,
+    });
   });
 
   test("sends only the changed transcript item while streaming", async () => {
@@ -1746,7 +1762,81 @@ describe("view provider", () => {
     });
   });
 
-  test("posts Expand All and Collapse All requests to the Navigator", async () => {
+  test("closes the owning VS Code window when another Instance closes its Workspace", async () => {
+    let databaseChanged: (() => void) | undefined;
+    let workspaces: { path: string; status: "active" | "inactive" }[] = [
+      { path: "/workspace", status: "active" },
+    ];
+    let currentWorkspace: string | undefined = "/workspace";
+    const snapshot = {
+      projects: [],
+      ungrouped: [
+        {
+          ahead: 0,
+          behind: 0,
+          changes: 0,
+          current: true,
+          linked: false,
+          name: "workspace",
+          path: "/workspace",
+        },
+      ],
+    };
+    const closeWorkspace = vi.fn<() => Promise<void>>(async () => {
+      await Promise.resolve();
+      currentWorkspace = undefined;
+    });
+    const provider = new MischiefView(
+      testValue<never>({
+        open: async () => {
+          await Promise.resolve();
+          return snapshot;
+        },
+        refresh: async () => {
+          await Promise.resolve();
+          return workspaces.some((workspace) => workspace.status === "active")
+            ? snapshot
+            : { projects: [], ungrouped: [] };
+        },
+      }),
+      testValue<never>({
+        closeWorkspace,
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({
+          ...(isNonEmpty(currentWorkspace)
+            ? { workspace: currentWorkspace }
+            : {}),
+          threads: [],
+        }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({
+        get: (_key: string, fallback: unknown) => fallback,
+      }),
+      testValue<never>({
+        onChange: (listener: () => void) => {
+          databaseChanged = listener;
+        },
+        snapshot: () => ({ workspaces }),
+      })
+    );
+    await provider.initialize("/workspace");
+    vscode.executeCommand.mockClear();
+    workspaces = [{ path: "/workspace", status: "inactive" }];
+    databaseChanged?.();
+
+    await vi.waitFor(() => {
+      expect({
+        closes: closeWorkspace.mock.calls,
+        commands: vscode.executeCommand.mock.calls,
+      }).toStrictEqual({
+        closes: [[]],
+        commands: [["workbench.action.closeWindow"]],
+      });
+    });
+  });
+
+  test("posts current Workspace expansion requests to the Navigator", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     const provider = new MischiefView(
       testValue<never>({}),
@@ -1820,8 +1910,8 @@ describe("view provider", () => {
 
     await vi.waitFor(() => {
       expect(vscode.executeCommand.mock.calls).toStrictEqual([
-        ["setContext", "mischief.navigatorAllExpanded", true],
-        ["setContext", "mischief.navigatorAllExpanded", false],
+        ["setContext", "mischief.navigatorCurrentWorkspaceExpanded", true],
+        ["setContext", "mischief.navigatorCurrentWorkspaceExpanded", false],
       ]);
     });
   });
