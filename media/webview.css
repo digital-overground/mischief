@@ -159,6 +159,7 @@ main > section {
 #navigator {
   min-height: 0;
   flex: 0 1 auto;
+  border-bottom: 0;
 }
 #thread {
   position: relative;
@@ -166,12 +167,7 @@ main > section {
   min-height: 72px;
   flex: 1 0 72px;
   overflow: hidden;
-  border: 1px solid
-    var(
-      --vscode-titleBar-border,
-      var(--vscode-window-activeBorder, var(--vscode-widget-border))
-    );
-  border-radius: 8px;
+  border: 0;
   overflow-wrap: anywhere;
 }
 #thread-content {
@@ -592,6 +588,13 @@ select:disabled {
   padding: 4px 8px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
+  border: 1px solid
+    var(
+      --vscode-window-activeBorder,
+      var(--vscode-titleBar-border, var(--vscode-widget-border))
+    );
+  border-left: 0;
+  border-radius: 0 8px 8px 0;
   color: var(--vscode-statusBar-foreground, var(--vscode-foreground));
   background: var(
     --vscode-titleBar-activeBackground,
