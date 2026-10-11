@@ -156,14 +156,7 @@ export const App = (): React.JSX.Element => {
           contextItems={contextItems}
           setup={snapshot.setup}
           snapshot={snapshot.threads}
-          threadMaximized={threadMaximized}
           transcript={transcript}
-          onToggleMaximized={() => {
-            if (threadMaximized) {
-              setExpandAllRequest((request) => request + 1);
-            }
-            setThreadMaximized(!threadMaximized);
-          }}
         />
       </main>
       <dialog

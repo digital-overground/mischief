@@ -30,17 +30,13 @@ const Processing = ({ hidden }: { hidden: boolean }): React.JSX.Element => (
 // oxlint-disable-next-line complexity -- the component renders Thread state branches
 export const ThreadView = ({
   contextItems,
-  onToggleMaximized,
   setup,
   snapshot,
-  threadMaximized,
   transcript,
 }: {
   contextItems: string[];
-  onToggleMaximized: () => void;
   setup?: RenderedSetupStep;
   snapshot: RenderedThreadsSnapshot;
-  threadMaximized: boolean;
   transcript: {
     items: RenderedTranscriptItem[];
     streaming: boolean;
@@ -127,9 +123,6 @@ export const ThreadView = ({
     selected?.items.find(
       (item) => item.kind === "plan" && isNonEmpty(item.text)
     );
-  const maximizeLabel = threadMaximized
-    ? "Expand Navigator"
-    : "Maximize Current Thread";
   const processingLabel =
     selected?.sessionOperation === "branchSummary"
       ? "Generating branch summary…"
@@ -143,6 +136,20 @@ export const ThreadView = ({
         inert={blocked || Boolean(selected?.interaction)}
       >
         <header id="thread-header">
+          <button
+            className="icon"
+            id="rename-thread"
+            title="Rename Thread"
+            aria-label="Rename Thread"
+            disabled={!isNonEmpty(selected?.id)}
+            onClick={() => {
+              if (isNonEmpty(selected?.id)) {
+                postMessage({ id: selected.id, type: "renameThread" });
+              }
+            }}
+          >
+            <SvgIcon className="thread-action-icon" kind="pencil" />
+          </button>
           <span className="heading" id="thread-title">
             {setup ? "Setup" : (selected?.name ?? "Thread")}
           </span>
@@ -173,27 +180,17 @@ export const ThreadView = ({
             ))}
           <button
             className="icon"
-            id="maximize-thread"
-            title={maximizeLabel}
-            aria-label={maximizeLabel}
-            aria-pressed={threadMaximized}
-            onClick={onToggleMaximized}
-          >
-            <SvgIcon kind={threadMaximized ? "minimize" : "maximize"} />
-          </button>
-          <button
-            className="icon"
-            id="rename-thread"
-            title="Rename Thread"
-            aria-label="Rename Thread"
+            id="close-thread"
+            title="Close Thread"
+            aria-label="Close Thread"
             disabled={!isNonEmpty(selected?.id)}
             onClick={() => {
               if (isNonEmpty(selected?.id)) {
-                postMessage({ id: selected.id, type: "renameThread" });
+                postMessage({ id: selected.id, type: "removeThread" });
               }
             }}
           >
-            <SvgIcon className="thread-action-icon" kind="pencil" />
+            <SvgIcon className="thread-action-icon" kind="x" />
           </button>
         </header>
         <div

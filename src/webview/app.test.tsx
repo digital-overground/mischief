@@ -228,7 +228,7 @@ describe("React webview", () => {
     await unmount();
   });
 
-  test("maximizing the current Thread collapses only the current Workspace", async () => {
+  test("Workspace expansion still works without a Thread title-bar toggle", async () => {
     const unmount = await renderApp();
     act(() => {
       window.dispatchEvent(
@@ -270,60 +270,15 @@ describe("React webview", () => {
         })
       );
     });
-    const navigator = document.querySelector<HTMLElement>("#navigator");
-    const thread = document.querySelector<HTMLElement>("#thread");
-    const maximize =
-      document.querySelector<HTMLButtonElement>("#maximize-thread");
-    if (!navigator || !thread || !maximize) {
-      throw new Error("Missing pane controls");
+    const toggle = document.querySelector<HTMLButtonElement>(
+      ".workspace-node.current .workspace-toggle"
+    );
+    if (!toggle) {
+      throw new Error("Missing Workspace toggle");
     }
-    const maximizeIcon = maximize.innerHTML;
+    expect(document.querySelector("#maximize-thread")).toBeNull();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
 
-    act(() => {
-      maximize.click();
-    });
-    expect({
-      currentExpanded: document
-        .querySelector(".workspace-node.current .workspace-toggle")
-        ?.getAttribute("aria-expanded"),
-      iconChanged: maximize.innerHTML !== maximizeIcon,
-      maximized: maximize.getAttribute("aria-pressed"),
-      navigatorHidden: navigator.classList.contains("collapsed"),
-      projectRows: document.querySelectorAll(".group-row").length,
-      resizer: document.querySelector(".resizer"),
-      threadHidden: thread.classList.contains("collapsed"),
-      workspaceNames: [
-        ...document.querySelectorAll(".workspace-open .name"),
-      ].map((name) => name.textContent),
-      workspaces: document.querySelectorAll(".workspace-node").length,
-    }).toStrictEqual({
-      currentExpanded: "false",
-      iconChanged: true,
-      maximized: "true",
-      navigatorHidden: false,
-      projectRows: 0,
-      resizer: null,
-      threadHidden: false,
-      workspaceNames: ["remote", "workspace"],
-      workspaces: 2,
-    });
-
-    act(() => {
-      maximize.click();
-    });
-    expect({
-      currentExpanded: document
-        .querySelector(".workspace-node.current .workspace-toggle")
-        ?.getAttribute("aria-expanded"),
-      expandableRows: document.querySelectorAll(".workspace-toggle").length,
-      maximized: maximize.getAttribute("aria-pressed"),
-    }).toStrictEqual({
-      currentExpanded: "true",
-      expandableRows: 1,
-      maximized: "false",
-    });
-
-    postMessage.mockClear();
     act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
@@ -331,41 +286,44 @@ describe("React webview", () => {
         })
       );
     });
-    expect({
-      currentExpanded: document
-        .querySelector(".workspace-node.current .workspace-toggle")
-        ?.getAttribute("aria-expanded"),
-      expandableRows: document.querySelectorAll(".workspace-toggle").length,
-      maximized: maximize.getAttribute("aria-pressed"),
-      navigatorState: postMessage.mock.calls,
-    }).toStrictEqual({
-      currentExpanded: "false",
-      expandableRows: 1,
-      maximized: "true",
-      navigatorState: [],
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    act(() => {
+      toggle.click();
     });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    await unmount();
+  });
 
-    postMessage.mockClear();
+  test("puts Rename on the left and Close on the right of the Thread title", async () => {
+    const unmount = await renderApp();
     act(() => {
       window.dispatchEvent(
-        new MessageEvent("message", {
-          data: { expanded: true, type: "setAllExpanded" },
-        })
+        new MessageEvent("message", { data: threadState("selected", []) })
       );
     });
-    expect({
-      currentExpanded: document
-        .querySelector(".workspace-node.current .workspace-toggle")
-        ?.getAttribute("aria-expanded"),
-      expandableRows: document.querySelectorAll(".workspace-toggle").length,
-      maximized: maximize.getAttribute("aria-pressed"),
-      navigatorState: postMessage.mock.calls,
-    }).toStrictEqual({
-      currentExpanded: "true",
-      expandableRows: 1,
-      maximized: "false",
-      navigatorState: [],
+    const header = document.querySelector("#thread-header");
+    const rename = document.querySelector<HTMLButtonElement>("#rename-thread");
+    const close = document.querySelector<HTMLButtonElement>("#close-thread");
+    if (!header || !rename || !close) {
+      throw new Error("Missing Thread title actions");
+    }
+    expect(
+      [...header.children].map((child) => child.id || child.className)
+    ).toStrictEqual([
+      "rename-thread",
+      "thread-title",
+      "thread-agent",
+      "close-thread",
+    ]);
+    postMessage.mockClear();
+    act(() => {
+      rename.click();
+      close.click();
     });
+    expect(postMessage.mock.calls).toStrictEqual([
+      [{ id: "selected", type: "renameThread" }],
+      [{ id: "selected", type: "removeThread" }],
+    ]);
     await unmount();
   });
 
@@ -373,14 +331,18 @@ describe("React webview", () => {
     vi.useFakeTimers();
     const unmount = await renderApp();
     try {
-      const maximize =
-        document.querySelector<HTMLButtonElement>("#maximize-thread");
-      if (!maximize) {
-        throw new Error("Missing maximize button");
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent("message", { data: threadState("selected", []) })
+        );
+      });
+      const close = document.querySelector<HTMLButtonElement>("#close-thread");
+      if (!close) {
+        throw new Error("Missing Close Thread button");
       }
 
       void act(() =>
-        maximize.dispatchEvent(
+        close.dispatchEvent(
           new MouseEvent("mouseover", {
             bubbles: true,
             clientX: 20,
@@ -392,19 +354,19 @@ describe("React webview", () => {
       expect(document.querySelector('[role="tooltip"]')).toBeNull();
       void act(() => vi.advanceTimersByTime(350));
       expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(
-        "Maximize Current Thread"
+        "Close Thread"
       );
       void act(() =>
-        maximize.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }))
+        close.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }))
       );
       expect(document.querySelector('[role="tooltip"]')).toBeNull();
       act(() => {
-        maximize.focus();
+        close.focus();
       });
       expect(document.querySelector('[role="tooltip"]')).toBeNull();
       void act(() => vi.advanceTimersByTime(350));
       expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(
-        "Maximize Current Thread"
+        "Close Thread"
       );
     } finally {
       await unmount();
