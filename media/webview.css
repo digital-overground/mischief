@@ -583,9 +583,21 @@ select:disabled {
   line-height: 1.5;
 }
 #thread-header {
+  min-height: 38px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--vscode-focusBorder);
+  background: color-mix(
+    in srgb,
+    var(--vscode-sideBarSectionHeader-background) 90%,
+    var(--vscode-focusBorder) 10%
+  );
+  font-size: 13px;
   text-transform: none;
 }
 #thread-title {
+  font-size: 15px;
+}
+#thread-header .thread-agent {
   font-size: 12px;
 }
 #usage-control {
