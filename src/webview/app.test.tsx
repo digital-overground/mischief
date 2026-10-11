@@ -994,6 +994,9 @@ describe("React webview", () => {
       menuSections: [
         ...(document.querySelector(".projects-menu")?.children ?? []),
       ].map((child) => child.className || child.tagName),
+      newThreadButtons: document.querySelectorAll(
+        '#navigator-flyout-list [aria-label="New Thread"]'
+      ).length,
       remoteMenus: document.querySelectorAll(
         '#navigator-flyout-list .workspace-node:not(.current) [aria-label="Workspace actions"]'
       ).length,
@@ -1017,9 +1020,10 @@ describe("React webview", () => {
       main: ["alpha"],
       menu: "Workspaces and Threads",
       menuSections: ["projects-menu-actions", "HR", "content workspace-list"],
+      newThreadButtons: 0,
       remoteMenus: 0,
       sameListControl: true,
-      statusIcons: 4,
+      statusIcons: 0,
       threadRows: [
         "Alpha Thread",
         "Linked Thread",
@@ -1156,6 +1160,68 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("shows the Workspace header attention rollup across Workspaces", async () => {
+    const unmount = await renderApp();
+    const sendState = (
+      needsAttention: boolean,
+      indicator: "completed" | "waiting" = "completed"
+    ): void => {
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent<HostToWebviewMessage>("message", {
+            data: {
+              font: "Test Mono",
+              projects: { projects: [], ungrouped: [] },
+              threads: {
+                threads: [
+                  threadSummary("idle", "Idle", "/current"),
+                  {
+                    ...threadSummary("remote", "Remote", "/remote"),
+                    indicator,
+                    needsAttention,
+                  },
+                ],
+              },
+              type: "state",
+            },
+          })
+        );
+      });
+    };
+
+    sendState(true);
+    const indicator = document.querySelector<HTMLElement>(
+      ".workspace-attention-indicator"
+    );
+    expect({
+      beforeDots: indicator?.nextElementSibling?.classList.contains(
+        "workspace-header-more"
+      ),
+      label: indicator?.getAttribute("aria-label"),
+    }).toStrictEqual({
+      beforeDots: true,
+      label: "Threads need attention",
+    });
+
+    sendState(true, "waiting");
+    const pendingQuestion = document.querySelector<HTMLElement>(
+      ".workspace-attention-indicator"
+    );
+    expect({
+      icon: Boolean(pendingQuestion?.querySelector(".thread-status-question")),
+      label: pendingQuestion?.getAttribute("aria-label"),
+      waiting: pendingQuestion?.classList.contains("waiting"),
+    }).toStrictEqual({
+      icon: true,
+      label: "A Thread is waiting for your response",
+      waiting: true,
+    });
+
+    sendState(false);
+    expect(document.querySelector(".workspace-attention-indicator")).toBeNull();
+    await unmount();
+  });
+
   test("opens Workspace actions without preselecting a menu item", async () => {
     const unmount = await renderApp();
     toggleProjectsMenu();
@@ -1280,7 +1346,12 @@ describe("React webview", () => {
           ?.classList.contains("selected"),
         threads: [...node.querySelectorAll(".thread-row")].map((thread) => ({
           activity: thread.querySelector(".thread-activity")?.textContent,
+          indicatorAtEnd:
+            thread.lastElementChild?.classList.contains("thread-status") ??
+            false,
           name: thread.querySelector(".name")?.textContent,
+          questionIcon:
+            thread.querySelector(".thread-status-question") !== null,
           selected: thread.classList.contains("selected"),
           status: thread
             .querySelector(".thread-status")
@@ -1300,7 +1371,9 @@ describe("React webview", () => {
             activity: testValue<unknown>(
               expect.stringMatching(/^(?:now|\d+(?:min|h|d))$/u)
             ),
+            indicatorAtEnd: true,
             name: "Current",
+            questionIcon: true,
             selected: true,
             status: "Waiting for user input",
           },
@@ -1308,7 +1381,9 @@ describe("React webview", () => {
             activity: testValue<unknown>(
               expect.stringMatching(/^(?:now|\d+(?:min|h|d))$/u)
             ),
+            indicatorAtEnd: true,
             name: "Error",
+            questionIcon: false,
             selected: false,
             status: "Agent error — needs attention",
           },

@@ -56,7 +56,14 @@ export const StatusIndicator = ({
     title={label}
     role="img"
     aria-label={label}
-  />
+  >
+    {kind === "waiting" ? (
+      <SvgIcon
+        className="thread-status-question"
+        kind="messageCircleQuestionMark"
+      />
+    ) : null}
+  </span>
 );
 
 const compactTime = (value: string, now: number): string => {
@@ -338,7 +345,7 @@ const WorkspaceNode = ({
             ) : null}
           </span>
         </button>
-        {workspace.current ? (
+        {workspace.current && !flyout ? (
           <IconButton
             title="New Thread"
             onClick={() => {
@@ -423,7 +430,6 @@ const WorkspaceNode = ({
                   onNavigate?.();
                 }}
               >
-                <StatusIndicator kind={thread.indicator} />
                 <span className="name">{thread.name}</span>
                 <span className="meta thread-activity">
                   {compactTime(thread.updatedAt, now)}
@@ -450,6 +456,9 @@ const WorkspaceNode = ({
                   <SvgIcon className="thread-action-icon" kind="moreVertical" />
                 </button>
               ) : null}
+              {thread.indicator === "idle" ? null : (
+                <StatusIndicator kind={thread.indicator} />
+              )}
             </div>
           ))}
         </div>
@@ -556,6 +565,15 @@ const NavigatorPaneView = ({
   const visibleGroups = groups
     .map((group) => group.filter((workspace) => workspace.current))
     .filter((group) => group.length > 0);
+  const needsAttention = threads.threads.some(
+    (thread) => thread.needsAttention
+  );
+  const pendingQuestion = threads.threads.some(
+    (thread) => thread.indicator === "waiting"
+  );
+  const attentionLabel = pendingQuestion
+    ? "A Thread is waiting for your response"
+    : "Threads need attention";
   useEffect(() => {
     if (currentPath !== previousCurrent.current) {
       previousCurrent.current = currentPath ?? null;
@@ -656,6 +674,21 @@ const NavigatorPaneView = ({
           }}
         >
           <span id="workspace-title">Workspaces</span>
+          {needsAttention ? (
+            <span
+              className={`thread-status ${pendingQuestion ? "waiting" : "needs-attention"} workspace-attention-indicator`}
+              title={attentionLabel}
+              role="img"
+              aria-label={attentionLabel}
+            >
+              {pendingQuestion ? (
+                <SvgIcon
+                  className="thread-status-question"
+                  kind="messageCircleQuestionMark"
+                />
+              ) : null}
+            </span>
+          ) : null}
           <SvgIcon
             className="thread-action-icon workspace-header-more"
             kind="moreVertical"

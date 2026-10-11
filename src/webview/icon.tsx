@@ -10,6 +10,7 @@ export type IconKind =
   | "draftingCompass"
   | "history"
   | "moreVertical"
+  | "messageCircleQuestionMark"
   | "fork"
   | "circleCheck"
   | "eye"
@@ -164,6 +165,13 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
       <path d="M3 3v5h5" />
       <path d="M12 7v5l4 2" />
+    </>
+  ),
+  messageCircleQuestionMark: (
+    <>
+      <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" />
+      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+      <path d="M12 17h.01" />
     </>
   ),
   moreVertical: (

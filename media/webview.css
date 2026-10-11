@@ -355,6 +355,9 @@ select:disabled {
 .thread-row {
   padding-left: 32px;
 }
+.thread-row > .row-open {
+  padding-left: 18px;
+}
 .workspace-list .row.selected {
   background: color-mix(
     in srgb,
@@ -560,16 +563,28 @@ select:disabled {
     content: "⠏";
   }
 }
-.thread-status.waiting,
 .thread-status.error {
   color: var(--vscode-errorForeground);
+}
+.thread-status.waiting {
+  width: 14px;
+  height: 14px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--vscode-textLink-foreground);
 }
 .thread-status.completed {
   color: var(--vscode-charts-green);
 }
+.thread-status.needs-attention {
+  color: var(--vscode-charts-orange);
+}
 .thread-status.idle {
   color: var(--vscode-descriptionForeground);
   opacity: 0.75;
+}
+.thread-row > .thread-status {
+  margin: 0 10px 0 6px;
 }
 .empty {
   margin: 0;
@@ -627,6 +642,10 @@ select:disabled {
 #workspace-header-trigger .workspace-header-more {
   position: absolute;
   right: 8px;
+}
+#workspace-header-trigger .workspace-attention-indicator {
+  position: absolute;
+  right: 30px;
 }
 #workspace-header-trigger:hover {
   background: var(--vscode-list-hoverBackground);
