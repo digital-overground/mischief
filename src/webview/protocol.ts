@@ -78,6 +78,7 @@ export type HostToWebviewMessage =
     }
   | { type: "contextItems"; items: string[] }
   | { type: "setAllExpanded"; expanded: boolean }
+  | { type: "toggleActionsMenu" }
   | {
       type: "showSettings";
       assignWorkspaceColors: boolean;
@@ -91,6 +92,9 @@ export type WebviewToHostMessage =
       type:
         | "ready"
         | "contextItems"
+        | "addWorkspace"
+        | "refresh"
+        | "showSettings"
         | "newThread"
         | "threadHistory"
         | "chooseAgent";
@@ -119,7 +123,6 @@ export type WebviewToHostMessage =
     }
   | { type: "prompt"; text: string; images: PromptImage[] }
   | { type: "setupContinue"; selected: string[] }
-  | { type: "navigatorExpanded"; expanded: boolean }
   | { type: "setAssignWorkspaceColors"; value: boolean }
   | { type: "setDefaultAgent"; id: string }
   | { type: "installAgent" | "checkAgent"; id: string }

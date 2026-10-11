@@ -273,6 +273,9 @@ export const activate = async (
     vscode.commands.registerCommand("mischief.refresh", async () => {
       await view.refresh();
     }),
+    vscode.commands.registerCommand("mischief.actions", () => {
+      view.toggleActionsMenu();
+    }),
     vscode.commands.registerCommand("mischief.expandAll", () => {
       view.setAllExpanded(true);
     }),

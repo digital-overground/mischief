@@ -59,6 +59,16 @@ const workspaceSummary = (name: string, current = false) => ({
   path: `/${name}`,
 });
 
+const toggleActionsMenu = (): void => {
+  act(() => {
+    window.dispatchEvent(
+      new MessageEvent<HostToWebviewMessage>("message", {
+        data: { type: "toggleActionsMenu" },
+      })
+    );
+  });
+};
+
 const renderApp = async (): Promise<() => Promise<void>> => {
   await Promise.resolve();
   const container = document.querySelector("#root");
@@ -332,7 +342,7 @@ describe("React webview", () => {
       currentExpanded: "false",
       expandableRows: 1,
       maximized: "true",
-      navigatorState: [[{ expanded: false, type: "navigatorExpanded" }]],
+      navigatorState: [],
     });
 
     postMessage.mockClear();
@@ -354,7 +364,7 @@ describe("React webview", () => {
       currentExpanded: "true",
       expandableRows: 1,
       maximized: "false",
-      navigatorState: [[{ expanded: true, type: "navigatorExpanded" }]],
+      navigatorState: [],
     });
     await unmount();
   });
@@ -735,6 +745,163 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("keeps only one Workspace menu open and dismisses it on outside clicks", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent<HostToWebviewMessage>("message", {
+          data: {
+            font: "Test Mono",
+            projects: {
+              projects: [],
+              ungrouped: [workspaceSummary("Alpha"), workspaceSummary("Bravo")],
+            },
+            threads: { threads: [] },
+            type: "state",
+          },
+        })
+      );
+    });
+    const [alpha, bravo] =
+      document.querySelectorAll<HTMLElement>(".workspace-row");
+    if (!isDefined(alpha) || !isDefined(bravo)) {
+      throw new Error("Missing Workspace rows");
+    }
+    act(() => {
+      alpha.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true })
+      );
+    });
+    act(() => {
+      bravo.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true })
+      );
+    });
+    expect(document.querySelectorAll(".workspace-menu")).toHaveLength(1);
+    const alphaTrigger = alpha.querySelector<HTMLButtonElement>(
+      '[aria-label="Workspace actions"]'
+    );
+    const bravoTrigger = bravo.querySelector<HTMLButtonElement>(
+      '[aria-label="Workspace actions"]'
+    );
+    if (!alphaTrigger || !bravoTrigger) {
+      throw new Error("Missing Workspace action triggers");
+    }
+    act(() => {
+      alphaTrigger.click();
+    });
+    act(() => {
+      bravoTrigger.click();
+    });
+    expect({
+      alphaExpanded: alphaTrigger.getAttribute("aria-expanded"),
+      bravoExpanded: bravoTrigger.getAttribute("aria-expanded"),
+      menus: document.querySelectorAll(".workspace-menu").length,
+    }).toStrictEqual({
+      alphaExpanded: "false",
+      bravoExpanded: "true",
+      menus: 1,
+    });
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    outside.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+    act(() => {
+      outside.click();
+    });
+    expect(document.querySelectorAll(".workspace-menu")).toHaveLength(0);
+    outside.remove();
+    await unmount();
+  });
+
+  test("shows the custom Mischief menu and routes its actions", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent<HostToWebviewMessage>("message", {
+          data: {
+            font: "Test Mono",
+            projects: { projects: [], ungrouped: [workspaceSummary("Alpha")] },
+            threads: { threads: [] },
+            type: "state",
+          },
+        })
+      );
+    });
+    const workspaceTrigger = document.querySelector<HTMLButtonElement>(
+      '.workspace-row [aria-label="Workspace actions"]'
+    );
+    if (!workspaceTrigger) {
+      throw new Error("Missing Workspace action trigger");
+    }
+    postMessage.mockClear();
+    act(() => {
+      workspaceTrigger.click();
+    });
+    toggleActionsMenu();
+    expect({
+      header: document.querySelector("#navigator > header"),
+      menu:
+        document.querySelector(
+          ".mischief-menu[aria-label='Mischief actions']"
+        ) !== null,
+      menus: document.querySelectorAll(".workspace-menu").length,
+    }).toStrictEqual({ header: null, menu: true, menus: 1 });
+    toggleActionsMenu();
+    expect(document.querySelector(".mischief-menu")).toBeNull();
+    const actions = [
+      ["Add Workspace…", "addWorkspace"],
+      ["Refresh", "refresh"],
+      ["Settings", "showSettings"],
+    ] as const;
+    for (const [label, type] of actions) {
+      toggleActionsMenu();
+      const action = [
+        ...document.querySelectorAll<HTMLButtonElement>(
+          '.mischief-menu [role="menuitem"]'
+        ),
+      ].find((item) => item.textContent?.trim() === label);
+      if (!action) {
+        throw new Error(`Missing ${label} action`);
+      }
+      act(() => {
+        action.click();
+      });
+      expect(document.querySelector(".mischief-menu")).toBeNull();
+      expect(postMessage).toHaveBeenLastCalledWith({ type });
+    }
+    toggleActionsMenu();
+    act(() => {
+      document.body.click();
+    });
+    expect(document.querySelector(".mischief-menu")).toBeNull();
+    await unmount();
+  });
+
+  test("opens Mischief actions without preselecting a menu item", async () => {
+    const unmount = await renderApp();
+    toggleActionsMenu();
+    const menu = document.querySelector<HTMLElement>(".mischief-menu");
+    if (!menu) {
+      throw new Error("Missing Mischief menu");
+    }
+    expect(document.activeElement).toBe(menu);
+    act(() => {
+      menu.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })
+      );
+    });
+    expect(document.activeElement?.textContent).toContain("Add Workspace");
+    act(() => {
+      menu.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" })
+      );
+    });
+    expect(document.activeElement?.textContent).toContain("Settings");
+    await unmount();
+  });
+
   test("shows current Workspace Threads and rolled-up attention elsewhere", async () => {
     const unmount = await renderApp();
     act(() => {
@@ -899,9 +1066,6 @@ describe("React webview", () => {
       },
     ]);
     expect({
-      closeIcons: document.querySelectorAll(
-        '[aria-label="Close Workspace"] .thread-action-icon'
-      ).length,
       expandableRows: document.querySelectorAll(".workspace-toggle").length,
       menuTriggers: document.querySelectorAll(
         '.workspace-node.current [aria-label="Workspace actions"]'
@@ -913,6 +1077,9 @@ describe("React webview", () => {
         '.workspace-node:not(.current) .workspace-open[aria-label="Open remote Window"]'
       ).length,
       projectRows: document.querySelectorAll(".group-row").length,
+      remoteMenuTriggers: document.querySelectorAll(
+        '.workspace-node:not(.current) [aria-label="Workspace actions"]'
+      ).length,
       remoteThreads: document.querySelectorAll(
         ".workspace-node:not(.current) .thread-row"
       ).length,
@@ -921,12 +1088,12 @@ describe("React webview", () => {
       ).length,
       untitledButtons: document.querySelectorAll("button:not([title])").length,
     }).toStrictEqual({
-      closeIcons: 1,
       expandableRows: 1,
       menuTriggers: 1,
       newThread: 1,
       openWorkspaceRow: 1,
       projectRows: 0,
+      remoteMenuTriggers: 1,
       remoteThreads: 0,
       threadActions: 2,
       untitledButtons: 0,
@@ -947,8 +1114,8 @@ describe("React webview", () => {
     const remoteWorkspaceRow = document.querySelector<HTMLButtonElement>(
       ".workspace-node:not(.current) .workspace-open"
     );
-    const remoteCloseButton = document.querySelector<HTMLButtonElement>(
-      '.workspace-node:not(.current) [aria-label="Close Workspace"]'
+    const remoteTrigger = document.querySelector<HTMLButtonElement>(
+      '.workspace-node:not(.current) [aria-label="Workspace actions"]'
     );
     if (
       !trigger ||
@@ -957,7 +1124,7 @@ describe("React webview", () => {
       !currentToggle ||
       !currentWorkspaceRow ||
       !remoteWorkspaceRow ||
-      !remoteCloseButton
+      !remoteTrigger
     ) {
       throw new Error("Missing Workspace controls");
     }
@@ -1054,13 +1221,13 @@ describe("React webview", () => {
     expect({ collapsed, reexpanded }).toStrictEqual({
       collapsed: {
         expanded: "false",
-        messages: [[{ expanded: false, type: "navigatorExpanded" }]],
+        messages: [],
         selected: true,
         selectedThread: null,
       },
       reexpanded: {
         expanded: "true",
-        messages: [[{ expanded: true, type: "navigatorExpanded" }]],
+        messages: [],
         selectedThread: "Current",
       },
     });
@@ -1070,9 +1237,48 @@ describe("React webview", () => {
       remoteWorkspaceRow.click();
     });
     const openMessages = [...postMessage.mock.calls];
+    act(() => {
+      remoteTrigger.click();
+    });
+    const remoteOptions = [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        '.workspace-node:not(.current) .workspace-menu [role="menuitem"]'
+      ),
+    ];
+    const remoteLabels = remoteOptions.map((option) =>
+      option.textContent?.trim()
+    );
     postMessage.mockClear();
     act(() => {
-      remoteCloseButton.click();
+      remoteOptions[1]?.click();
+    });
+    const threadLinkMessages = [...postMessage.mock.calls];
+    const remoteContext = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      remoteWorkspaceRow.dispatchEvent(remoteContext);
+    });
+    const goToWindow = document.querySelector<HTMLButtonElement>(
+      '.workspace-node:not(.current) .workspace-menu [role="menuitem"]'
+    );
+    postMessage.mockClear();
+    act(() => {
+      goToWindow?.click();
+    });
+    const goToWindowMessages = [...postMessage.mock.calls];
+    act(() => {
+      remoteTrigger.click();
+    });
+    const removeWorkspace = [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        '.workspace-node:not(.current) .workspace-menu [role="menuitem"]'
+      ),
+    ].at(-1);
+    postMessage.mockClear();
+    act(() => {
+      removeWorkspace?.click();
     });
     const closingRow = document.querySelector(
       ".workspace-node:not(.current) .workspace-row"
@@ -1089,7 +1295,11 @@ describe("React webview", () => {
           ?.querySelector(".workspace-close-spinner")
           ?.getAttribute("aria-label"),
       },
+      goToWindowMessages,
       openMessages,
+      remoteContextPrevented: remoteContext.defaultPrevented,
+      remoteLabels,
+      threadLinkMessages,
     }).toStrictEqual({
       closeMessages: [[{ path: "/remote", type: "closeWorkspace" }]],
       closing: {
@@ -1098,7 +1308,11 @@ describe("React webview", () => {
         greyed: true,
         spinner: "Closing Workspace",
       },
+      goToWindowMessages: [[{ path: "/remote", type: "openWorkspace" }]],
       openMessages: [[{ path: "/remote", type: "openWorkspace" }]],
+      remoteContextPrevented: true,
+      remoteLabels: ["Go to Window", "Remote", "Remove Workspace"],
+      threadLinkMessages: [[{ id: "remote-thread", type: "selectThread" }]],
     });
     await unmount();
   });

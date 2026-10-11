@@ -76,6 +76,10 @@ const menuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
   const index = items.findIndex((item) =>
     item.contains(document.activeElement)
   );
+  if (index === -1) {
+    items[event.key === "ArrowDown" ? 0 : items.length - 1]?.focus();
+    return;
+  }
   items[
     (index + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length
   ]?.focus();
@@ -142,6 +146,59 @@ const WorkspaceMenu = ({
   </div>
 );
 
+const RemoteWorkspaceMenu = ({
+  close,
+  dismiss,
+  path,
+  position,
+  threads,
+}: {
+  close: () => void;
+  dismiss: () => void;
+  path: string;
+  position: { left: number; top: number };
+  threads: ThreadSummary[];
+}): React.JSX.Element => (
+  <div
+    className="workspace-menu"
+    role="menu"
+    aria-label="Workspace actions"
+    style={position}
+    onKeyDown={menuKeyDown}
+  >
+    <button
+      autoFocus
+      type="button"
+      role="menuitem"
+      onClick={() => {
+        postMessage({ path, type: "openWorkspace" });
+        dismiss();
+      }}
+    >
+      <SvgIcon kind="externalLink" /> Go to Window
+    </button>
+    <hr />
+    {threads.map((thread) => (
+      <button
+        key={thread.id}
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          postMessage({ id: thread.id, type: "selectThread" });
+          dismiss();
+        }}
+      >
+        <SvgIcon kind="botMessageSquare" />{" "}
+        <span className="workspace-menu-title">{thread.name}</span>
+      </button>
+    ))}
+    {threads.length ? <hr /> : null}
+    <button type="button" role="menuitem" onClick={close}>
+      <SvgIcon kind="x" /> Remove Workspace
+    </button>
+  </div>
+);
+
 const ThreadMenu = ({
   dismiss,
   id,
@@ -184,6 +241,7 @@ const ThreadMenu = ({
 
 // oxlint-disable-next-line complexity -- Workspace and Thread row actions share the menu state
 const WorkspaceNode = ({
+  actionsMenuOpen,
   expanded,
   now,
   onToggle,
@@ -192,6 +250,7 @@ const WorkspaceNode = ({
   threads,
   workspace,
 }: {
+  actionsMenuOpen: boolean;
   expanded: boolean;
   now: number;
   onToggle: () => void;
@@ -201,31 +260,58 @@ const WorkspaceNode = ({
   workspace: Workspace;
 }): React.JSX.Element => {
   const [closing, setClosing] = useState(false);
+  const nodeRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{
     left: number;
     top: number;
     threadId?: string;
   } | null>(null);
   useEffect(() => {
-    const dismiss = (): void => {
+    if (actionsMenuOpen) {
+      setMenu(null);
+    }
+  }, [actionsMenuOpen]);
+  useEffect(() => {
+    const dismissOutside = (event: MouseEvent): void => {
+      if (
+        menu === null ||
+        (event.target instanceof Element &&
+          event.target
+            .closest('.workspace-menu, [aria-haspopup="menu"]')
+            ?.closest(".workspace-node") === nodeRef.current)
+      ) {
+        return;
+      }
       setMenu(null);
     };
     const escape = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
-        dismiss();
+        setMenu(null);
       }
     };
-    document.addEventListener("click", dismiss);
+    document.addEventListener("click", dismissOutside, true);
+    document.addEventListener("contextmenu", dismissOutside, true);
     document.addEventListener("keydown", escape);
     return () => {
-      document.removeEventListener("click", dismiss);
+      document.removeEventListener("click", dismissOutside, true);
+      document.removeEventListener("contextmenu", dismissOutside, true);
       document.removeEventListener("keydown", escape);
     };
-  }, []);
+  }, [menu]);
   const showMenu = (x: number, y: number, threadId?: string): void => {
     setMenu({
       left: Math.max(4, Math.min(x, window.innerWidth - 216)),
-      top: Math.max(4, Math.min(y, window.innerHeight - 152)),
+      top: Math.max(
+        4,
+        Math.min(
+          y,
+          window.innerHeight -
+            Math.min(
+              window.innerHeight - 8,
+              workspace.current ? 152 : (threads.length + 3) * 29
+            )
+        )
+      ),
       ...(isNonEmpty(threadId) ? { threadId } : {}),
     });
   };
@@ -243,13 +329,14 @@ const WorkspaceNode = ({
   const threadCountLabel = `Agent Threads: ${threads.length}`;
   return (
     <div
+      ref={nodeRef}
       className={`workspace-node${workspace.current ? " current" : ""}${closing ? " closing" : ""}`}
     >
       <div
         aria-busy={closing}
         className={`row workspace-row${workspace.current && !expanded ? " selected" : ""}${closing ? " closing" : ""}`}
         onContextMenu={(event) => {
-          if (workspace.current && !closing) {
+          if (!closing) {
             event.preventDefault();
             showMenu(event.clientX, event.clientY);
           }
@@ -318,16 +405,6 @@ const WorkspaceNode = ({
           <SvgIcon className="workspace-thread-icon" kind="botMessageSquare" />
           <span>{threads.length}</span>
         </span>
-        {workspace.current ? null : (
-          <IconButton
-            title={`Open ${workspace.name} Window`}
-            onClick={() => {
-              postMessage({ path: workspace.path, type: "openWorkspace" });
-            }}
-          >
-            <SvgIcon className="thread-action-icon" kind="externalLink" />
-          </IconButton>
-        )}
         {workspace.current ? (
           <IconButton
             title="New Thread"
@@ -369,12 +446,28 @@ const WorkspaceNode = ({
             <SvgIcon className="thread-action-icon" kind="moreVertical" />
           </button>
         ) : (
-          <IconButton title="Close Workspace" onClick={closeWorkspace}>
-            <SvgIcon className="thread-action-icon" kind="x" />
-          </IconButton>
+          <button
+            className="icon workspace-menu-trigger"
+            type="button"
+            title="Workspace actions"
+            aria-label="Workspace actions"
+            aria-haspopup="menu"
+            aria-expanded={menu !== null}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (menu) {
+                setMenu(null);
+              } else {
+                const rect = event.currentTarget.getBoundingClientRect();
+                showMenu(rect.right - 208, rect.bottom);
+              }
+            }}
+          >
+            <SvgIcon className="thread-action-icon" kind="moreVertical" />
+          </button>
         )}
       </div>
-      {menu && menu.threadId === undefined ? (
+      {menu && menu.threadId === undefined && workspace.current ? (
         <WorkspaceMenu
           close={closeWorkspace}
           dismiss={() => {
@@ -382,6 +475,17 @@ const WorkspaceNode = ({
           }}
           position={menu}
           projectRoot={projectRoot}
+        />
+      ) : null}
+      {menu && menu.threadId === undefined && !workspace.current ? (
+        <RemoteWorkspaceMenu
+          close={closeWorkspace}
+          dismiss={() => {
+            setMenu(null);
+          }}
+          path={workspace.path}
+          position={menu}
+          threads={threads}
         />
       ) : null}
       {isNonEmpty(menu?.threadId) ? (
@@ -446,19 +550,24 @@ const WorkspaceNode = ({
 };
 
 const NavigatorPaneView = ({
+  actionsMenuOpen,
   collapseAll,
   expandAllRequest,
+  onDismissActionsMenu,
   onExpand,
   projects,
   threads,
 }: {
+  actionsMenuOpen: boolean;
   collapseAll: boolean;
   expandAllRequest: number;
+  onDismissActionsMenu: () => void;
   onExpand: () => void;
   projects: ProjectsSnapshot;
   threads: RenderedThreadsSnapshot;
 }): React.JSX.Element => {
   const [expanded, setExpanded] = useState(false);
+  const actionsMenuRef = useRef<HTMLDivElement>(null);
   const [now, setNow] = useState(Date.now());
   const previousCurrent = useRef<string | null>(null);
   const previousExpandAllRequest = useRef(expandAllRequest);
@@ -496,15 +605,82 @@ const NavigatorPaneView = ({
       window.clearInterval(clock);
     };
   }, []);
-  const currentExpanded = isNonEmpty(currentPath) && expanded;
   useEffect(() => {
-    postMessage({ expanded: currentExpanded, type: "navigatorExpanded" });
-  }, [currentExpanded]);
+    if (actionsMenuOpen) {
+      actionsMenuRef.current?.focus();
+    }
+  }, [actionsMenuOpen]);
+  useEffect(() => {
+    const dismissOutside = (event: MouseEvent): void => {
+      if (
+        actionsMenuOpen &&
+        event.target instanceof Node &&
+        actionsMenuRef.current?.contains(event.target) === false
+      ) {
+        onDismissActionsMenu();
+      }
+    };
+    const escape = (event: KeyboardEvent): void => {
+      if (actionsMenuOpen && event.key === "Escape") {
+        onDismissActionsMenu();
+      }
+    };
+    document.addEventListener("click", dismissOutside, true);
+    document.addEventListener("contextmenu", dismissOutside, true);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("click", dismissOutside, true);
+      document.removeEventListener("contextmenu", dismissOutside, true);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [actionsMenuOpen, onDismissActionsMenu]);
   return (
     <section id="navigator">
+      {actionsMenuOpen ? (
+        <div
+          ref={actionsMenuRef}
+          className="workspace-menu mischief-menu"
+          role="menu"
+          aria-label="Mischief actions"
+          tabIndex={-1}
+          onKeyDown={menuKeyDown}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              postMessage({ type: "addWorkspace" });
+              onDismissActionsMenu();
+            }}
+          >
+            <SvgIcon kind="plus" /> Add Workspace…
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              postMessage({ type: "refresh" });
+              onDismissActionsMenu();
+            }}
+          >
+            <SvgIcon kind="history" /> Refresh
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              postMessage({ type: "showSettings" });
+              onDismissActionsMenu();
+            }}
+          >
+            <SvgIcon kind="tool" /> Settings
+          </button>
+        </div>
+      ) : null}
       <div className="content" id="navigator-list">
         {workspaces.map((workspace) => (
           <WorkspaceNode
+            actionsMenuOpen={actionsMenuOpen}
             expanded={workspace.current && expanded}
             key={workspace.path}
             now={now}

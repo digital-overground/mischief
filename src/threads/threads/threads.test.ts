@@ -42,6 +42,7 @@ class FakeAgent {
   createCalls = 0;
   authenticatedMethods: string[] = [];
   loadCalls = 0;
+  loadGate?: Deferred;
   loadRequests: { sessionId: string; cwd: string }[] = [];
   initialConfigOptions: ThreadConfigOption[] = [];
   operations = {
@@ -176,6 +177,7 @@ class FakeAgent {
         await Promise.resolve();
         this.loadCalls += 1;
         this.loadRequests.push({ cwd, sessionId });
+        await this.loadGate?.promise;
         if (this.failLoad) {
           throw new Error("Load failed");
         }
@@ -442,6 +444,9 @@ describe("threads module", () => {
     const owner = new Threads(remoteDatabase, ownerAgent.factory);
     instances.push(owner);
     await owner.openWorkspace("/remote");
+    const ownerChanges = vi.fn<(change?: ThreadsChange) => void>();
+    owner.onChange(ownerChanges);
+    ownerAgent.loadGate = deferred();
 
     await expect(source.select(secondId)).resolves.toBe("/remote");
     await vi.waitFor(
@@ -450,16 +455,29 @@ describe("threads module", () => {
       },
       { timeout: 2000 }
     );
-    await vi.waitFor(
-      () => {
-        expect(ownerAgent.loadCalls).toBe(2);
-      },
-      { timeout: 2000 }
-    );
+    try {
+      await vi.waitFor(
+        () => {
+          expect(ownerAgent.loadCalls).toBe(2);
+          expect(ownerChanges).toHaveBeenCalledWith({
+            type: "remoteSelection",
+          });
+        },
+        { timeout: 2000 }
+      );
+    } finally {
+      ownerAgent.loadGate.resolve();
+    }
 
     expect(sourceAgent.loadCalls).toBe(0);
     expect(sourceAgent.createCalls).toBe(0);
     expect(ownerAgent.loadCalls).toBe(2);
+    expect(ownerChanges).toHaveBeenCalledWith({ type: "remoteSelection" });
+    ownerChanges.mockClear();
+    await source.select(secondId);
+    await vi.waitFor(() => {
+      expect(ownerChanges).toHaveBeenCalledWith({ type: "remoteSelection" });
+    });
     await remoteDatabase.dispose();
   });
 

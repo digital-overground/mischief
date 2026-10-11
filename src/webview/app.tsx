@@ -36,6 +36,7 @@ export const App = (): React.JSX.Element => {
   const [agents, setAgents] = useState<AgentSetting[]>([]);
   const [contextItems, setContextItems] = useState<string[]>([]);
   const [expandAllRequest, setExpandAllRequest] = useState(0);
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [threadMaximized, setThreadMaximized] = useState(false);
   const [transcript, setTranscript] = useState<{
     items: RenderedTranscriptItem[];
@@ -59,6 +60,8 @@ export const App = (): React.JSX.Element => {
         setAgents(event.data.agents);
       } else if (event.data.type === "contextItems") {
         setContextItems(event.data.items);
+      } else if (event.data.type === "toggleActionsMenu") {
+        setActionsMenuOpen((open) => !open);
       } else if (event.data.type === "setAllExpanded") {
         if (event.data.expanded) {
           setExpandAllRequest((request) => request + 1);
@@ -137,8 +140,12 @@ export const App = (): React.JSX.Element => {
     <>
       <main>
         <NavigatorPane
+          actionsMenuOpen={actionsMenuOpen}
           collapseAll={threadMaximized}
           expandAllRequest={expandAllRequest}
+          onDismissActionsMenu={() => {
+            setActionsMenuOpen(false);
+          }}
           projects={snapshot.projects}
           threads={snapshot.threads}
           onExpand={() => {

@@ -154,6 +154,7 @@ export class Threads {
   private stored: StoredThread[];
   private persistence = Promise.resolve();
   private selectionSync = Promise.resolve();
+  private lastFocusRequest?: string;
   private readonly runtimes = new Map<string, Runtime>();
   private readonly listeners = new Set<(change?: ThreadsChange) => void>();
   private readonly stopDatabaseListener: () => void;
@@ -213,11 +214,11 @@ export class Threads {
         await this.persist(record);
       })
     );
-    const selected = this.database
+    const selection = this.database
       .snapshot()
-      .selections.find(
-        (selection) => selection.workspace === workspace
-      )?.threadId;
+      .selections.find((candidate) => candidate.workspace === workspace);
+    const selected = selection?.threadId;
+    this.lastFocusRequest = selection?.focusRequest;
     this.selectedId = records.some((record) => record.id === selected)
       ? selected
       : records[0]?.id;
@@ -394,7 +395,7 @@ export class Threads {
       return undefined;
     }
     if (record.workspace !== this.workspace) {
-      await this.selectThread(record.workspace, id);
+      await this.selectThread(record.workspace, id, randomUUID());
       return record.workspace;
     }
     this.selectedId = id;
@@ -1403,22 +1404,34 @@ export class Threads {
       if (!isNonEmpty(workspace)) {
         return;
       }
-      const selected = this.database
+      const selection = this.database
         .snapshot()
-        .selections.find(
-          (selection) => selection.workspace === workspace
-        )?.threadId;
-      if (!isNonEmpty(selected) || selected === this.selectedId) {
+        .selections.find((candidate) => candidate.workspace === workspace);
+      if (!selection || !isNonEmpty(selection.threadId)) {
         return;
       }
+      const selected = selection.threadId;
       const record = this.findRecord(selected);
       if (!record || record.workspace !== workspace) {
+        return;
+      }
+      const focus =
+        isNonEmpty(selection.focusRequest) &&
+        selection.focusRequest !== this.lastFocusRequest;
+      this.lastFocusRequest = selection.focusRequest;
+      if (selected === this.selectedId) {
+        if (focus) {
+          this.emit({ type: "remoteSelection" });
+        }
         return;
       }
       this.selectedId = selected;
       this.viewedId = selected;
       this.draft = false;
       record.unread = false;
+      if (focus) {
+        this.emit({ type: "remoteSelection" });
+      }
       await this.persist(record);
       await this.load(record);
       this.emit();
@@ -1549,10 +1562,12 @@ export class Threads {
 
   private async selectThread(
     workspace: string,
-    threadId?: string
+    threadId?: string,
+    focusRequest?: string
   ): Promise<void> {
     await this.apply({
       ...(isNonEmpty(threadId) ? { threadId } : {}),
+      ...(isNonEmpty(focusRequest) ? { focusRequest } : {}),
       type: "selectThread",
       workspace,
     });

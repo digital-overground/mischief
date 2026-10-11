@@ -58,7 +58,7 @@ Mischief is a VS Code extension for managing code Projects and graphical Agent T
 
 - Start a fresh project rather than continue the Herdex/Merdr fork. Only the useful behavior is carried forward.
 - Organize by domain, not by a symmetric `view/model/service/repository` template.
-- `ProfileDatabase` is one deep synchronization module. It hides profile files, validation, polling, and write ordering.
+- `ProfileDatabase` is one deep synchronization module. It hides profile files, validation, file notifications with polling fallback, and write ordering.
 - `Projects` is one deep domain module. It hides path canonicalization, Git worktree discovery, Git status, and Project grouping.
 - `Threads` is one deep domain module. It hides Thread records, transcript state, ACP lifecycle, and prompt/cancel behavior.
 - The combined Webview is a thin VS Code adapter over `Projects` and `Threads`; it owns no domain state.

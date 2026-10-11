@@ -6,7 +6,7 @@
 
 Give every Mischief window in one VS Code profile the same Project, Workspace, and Thread data without a broker process.
 
-Each window opens the same small file database beneath `ExtensionContext.globalStorageUri`. Any window may update Workspace visibility or select a registered Thread for its owning Workspace. The window using a Workspace alone writes its Thread records; other windows poll and read.
+Each window opens the same small file database beneath `ExtensionContext.globalStorageUri`. Any window may update Workspace visibility or select a registered Thread for its owning Workspace. The window using a Workspace alone writes its Thread records; other windows watch and read, with polling as a fallback.
 
 Agent processes still belong to the VS Code window where their Workspace is open. Closing that window stops its running turns.
 
@@ -120,7 +120,7 @@ interface SelectionRecord {
 
 ## Database interface
 
-Keep file layout, validation, polling, and write ordering behind one deep module:
+Keep file layout, validation, file notifications, polling, and write ordering behind one deep module:
 
 ```ts
 const database = await ProfileDatabase.open({
@@ -160,15 +160,9 @@ Readers validate every file and keep their previous snapshot after an I/O failur
 
 For the same record, a reader accepts the greatest `writtenAt`. Equal timestamps accept the file currently on disk. Millisecond timestamps are sufficient: Workspace status uses last-write-wins, and Threads have one logical owner. Add stronger revision numbers only if real conflicts appear.
 
-## Polling
+## Change detection
 
-Each Instance scans the database once per second and emits only when its observable snapshot changes.
-
-```ts
-// ponytail: profile-local polling is enough; add IPC or indexing only when scan cost or latency is measurable
-```
-
-Do not add `fs.watch`, sockets, a server, a daemon, a database dependency, or a lock manager.
+Each Instance watches the profile record directories for prompt updates and scans once per second as a fallback for missed notifications. It emits only when its observable snapshot changes. File notifications are coalesced after atomic replacement so temporary files do not trigger partial reads. No broker, socket, daemon, database dependency, or lock manager is needed.
 
 ## Ownership rules
 
@@ -204,9 +198,9 @@ Paths that were already absent from the old visible lists need no new record.
 
 ### Phase 1: Workspace records
 
-Through a real temporary directory, prove that one Instance activating a Workspace becomes visible to another Instance after polling.
+Through a real temporary directory, prove that one Instance activating a Workspace becomes visible to another Instance after a file notification or fallback poll.
 
-Implement only Workspace files, validation, atomic replacement, timestamps, immutable snapshots, polling, and change emission.
+Implement only Workspace files, validation, atomic replacement, timestamps, immutable snapshots, and change emission.
 
 ### Phase 2: Projects integration
 
@@ -224,15 +218,15 @@ Remove the old aggregate Projects storage after migration is ready.
 
 Move durable Thread registrations and per-Workspace selections behind the database. Preserve every existing durable field, selection behavior, ACP restoration, and the current Thread status values. Enforce that only the owning Workspace Instance writes Thread records while any Instance may write a valid selection.
 
-### Phase 5: UI polling
+### Phase 5: UI synchronization
 
 Subscribe MischiefView to database changes and render the same active Workspaces and profile-wide Thread summaries in every open Instance. Keep `Workspace.current` local to each window and Agent/transcript ownership scoped to that current Workspace.
 
-Navigator lists visible Workspaces alphabetically regardless of Project association. Only the current Workspace expands to show Threads; other rows show distinct waiting, error, and unread-completed indicators and open their VS Code window when clicked. The Activity Bar badge counts all visible attention-needing Threads. Serialize Workspace refreshes so overlapping polls cannot render an older snapshot last.
+Navigator lists visible Workspaces alphabetically regardless of Project association. Only the current Workspace expands to show Threads; other rows show distinct waiting, error, and unread-completed indicators and open their VS Code window when clicked. The Activity Bar badge counts all visible attention-needing Threads. Serialize Workspace refreshes so overlapping notifications and polls cannot render an older snapshot last.
 
 ### Phase 6: Final verification
 
-Run focused tests after every slice, then `pnpm check`. Review the complete diff for duplicate storage layers, pass-through wrappers, unnecessary configuration, watchers, locks, and invented infrastructure.
+Run focused tests after every slice, then `pnpm check`. Review the complete diff for duplicate storage layers, pass-through wrappers, unnecessary configuration, locks, and invented infrastructure.
 
 ## Acceptance criteria
 
@@ -245,4 +239,4 @@ Run focused tests after every slice, then `pnpm check`. Review the complete diff
 - No Instance overwrites another Workspace's Threads.
 - ACP transcript history is not copied into the database.
 - Profile Database imports no `vscode` module.
-- No runtime dependency, broker, socket, watcher, daemon, or lock manager is added.
+- No runtime dependency, broker, socket, daemon, or lock manager is added.

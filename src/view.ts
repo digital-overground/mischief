@@ -319,6 +319,16 @@ export class MischiefView implements vscode.WebviewViewProvider {
         this.renderTranscript(change);
       } else if (change?.type === "sessionOperation") {
         this.renderSessionOperation(change);
+      } else if (change?.type === "remoteSelection") {
+        this.render();
+        void MischiefView.run(
+          (async () => {
+            await vscode.commands.executeCommand(
+              "workbench.view.extension.mischief"
+            );
+            this.view?.show(false);
+          })()
+        );
       } else {
         this.render();
       }
@@ -727,6 +737,13 @@ export class MischiefView implements vscode.WebviewViewProvider {
     } satisfies HostToWebviewMessage);
   }
 
+  toggleActionsMenu(): void {
+    const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
+    void postMessage?.({
+      type: "toggleActionsMenu",
+    } satisfies HostToWebviewMessage);
+  }
+
   showSettings(): void {
     const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
     const defaultAgent = vscode.workspace
@@ -894,15 +911,16 @@ export class MischiefView implements vscode.WebviewViewProvider {
       await this.sendContextItems();
       return true;
     }
-    if (
-      data.type === "navigatorExpanded" &&
-      typeof data.expanded === "boolean"
-    ) {
-      await vscode.commands.executeCommand(
-        "setContext",
-        "mischief.navigatorCurrentWorkspaceExpanded",
-        data.expanded
-      );
+    if (data.type === "addWorkspace") {
+      await this.addWorkspace();
+      return true;
+    }
+    if (data.type === "refresh") {
+      await this.refresh();
+      return true;
+    }
+    if (data.type === "showSettings") {
+      this.showSettings();
       return true;
     }
     if (data.type === "newThread") {
@@ -987,11 +1005,14 @@ export class MischiefView implements vscode.WebviewViewProvider {
     data: Record<string, unknown>
   ): Promise<boolean> {
     if (data.type === "selectThread" && typeof data.id === "string") {
-      const workspace = await this.threads.select(data.id);
+      const workspace = this.threads
+        .snapshot()
+        .threads.find((thread) => thread.id === data.id)?.workspace;
       const current = this.workspaces().find((candidate) => candidate.current);
       if (isNonEmpty(workspace) && workspace !== current?.path) {
         await this.openWorkspace(workspace);
       }
+      await this.threads.select(data.id);
       return true;
     }
     if (data.type === "removeThread" && typeof data.id === "string") {

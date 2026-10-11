@@ -309,8 +309,17 @@ select:disabled {
   opacity: 0;
 }
 #navigator .row:is(:hover, :focus-within) > .icon,
-#navigator .workspace-node.current > .workspace-row > .icon {
+#navigator
+  .workspace-node.current
+  > .workspace-row
+  > .icon:not(.workspace-menu-trigger) {
   opacity: 1;
+}
+#navigator
+  .workspace-node:not(.current)
+  > .workspace-row
+  > .workspace-menu-trigger {
+  margin-left: 24px;
 }
 .workspace-row {
   padding-left: 10px;
@@ -457,6 +466,8 @@ select:disabled {
   position: fixed;
   z-index: 20;
   width: 208px;
+  max-height: calc(100vh - 8px);
+  overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border));
   border-radius: 4px;
@@ -466,6 +477,11 @@ select:disabled {
     var(--vscode-editorWidget-background)
   );
   box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+}
+.mischief-menu {
+  top: 4px;
+  right: 4px;
+  outline: none;
 }
 .workspace-menu button {
   width: 100%;
@@ -485,6 +501,11 @@ select:disabled {
     var(--vscode-list-hoverBackground)
   );
   color: var(--vscode-menu-selectionForeground, inherit);
+}
+.workspace-menu-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .workspace-menu svg {
   width: 16px;
