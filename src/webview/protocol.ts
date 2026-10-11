@@ -78,7 +78,7 @@ export type HostToWebviewMessage =
     }
   | { type: "contextItems"; items: string[] }
   | { type: "setAllExpanded"; expanded: boolean }
-  | { type: "toggleActionsMenu" }
+  | { type: "toggleProjectsMenu" }
   | {
       type: "showSettings";
       assignWorkspaceColors: boolean;
@@ -105,7 +105,12 @@ export type WebviewToHostMessage =
       messageId: string;
     }
   | {
-      type: "closeWorkspace" | "newWorkspace" | "openIssues" | "openWorkspace";
+      type:
+        | "closeWorkspace"
+        | "focusWorkspace"
+        | "newWorkspace"
+        | "openIssues"
+        | "openWorkspace";
       path: string;
     }
   | {

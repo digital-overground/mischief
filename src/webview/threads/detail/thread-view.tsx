@@ -33,12 +33,10 @@ export const ThreadView = ({
   setup,
   snapshot,
   transcript,
-  workspaceColor,
 }: {
   contextItems: string[];
   setup?: RenderedSetupStep;
   snapshot: RenderedThreadsSnapshot;
-  workspaceColor?: string;
   transcript: {
     items: RenderedTranscriptItem[];
     streaming: boolean;
@@ -137,14 +135,7 @@ export const ThreadView = ({
         id="thread-content"
         inert={blocked || Boolean(selected?.interaction)}
       >
-        <header
-          id="thread-header"
-          style={
-            isNonEmpty(workspaceColor)
-              ? { backgroundColor: workspaceColor }
-              : undefined
-          }
-        >
+        <header id="thread-header">
           <div className="thread-header-agent">
             {!setup &&
               selected &&

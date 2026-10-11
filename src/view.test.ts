@@ -1398,6 +1398,120 @@ describe("view provider", () => {
     expect(newThread.mock.calls).toStrictEqual([["codex-acp"]]);
   });
 
+  test("focuses Mischief when a selected Workspace starts in a new window", async () => {
+    vscode.executeCommand.mockClear();
+    const storage = {
+      get: (key: string, fallback: unknown) =>
+        key === "mischief.focusWorkspace" ? "/remote" : fallback,
+      update: vi.fn<() => Promise<void>>(async () => {
+        await Promise.resolve();
+      }),
+    };
+    const provider = new MischiefView(
+      testValue<never>({
+        open: async () => {
+          await Promise.resolve();
+          return {
+            projects: [],
+            ungrouped: [
+              {
+                ahead: 0,
+                behind: 0,
+                changes: 0,
+                current: true,
+                linked: false,
+                name: "remote",
+                path: "/remote",
+              },
+            ],
+          };
+        },
+      }),
+      testValue<never>({
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({ threads: [], workspace: "/remote" }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>(storage),
+      testValue<never>(profileDatabase())
+    );
+
+    await provider.initialize("/remote");
+
+    expect(storage.update).toHaveBeenCalledWith(
+      "mischief.focusWorkspace",
+      undefined
+    );
+    expect(vscode.executeCommand).toHaveBeenCalledExactlyOnceWith(
+      "workbench.view.extension.mischief"
+    );
+  });
+
+  test("focuses the VS Code window selected from the Project menu", async () => {
+    vscode.executeCommand.mockClear();
+    const storage = {
+      get: (_key: string, fallback: unknown) => fallback,
+      update: vi.fn<() => Promise<void>>(async () => {
+        await Promise.resolve();
+      }),
+    };
+    const provider = new MischiefView(
+      testValue<never>({
+        refresh: async () => {
+          await Promise.resolve();
+          return {
+            projects: [],
+            ungrouped: [
+              {
+                ahead: 0,
+                behind: 0,
+                changes: 0,
+                current: true,
+                linked: false,
+                name: "current",
+                path: "/current",
+              },
+              {
+                ahead: 0,
+                behind: 0,
+                changes: 0,
+                current: false,
+                linked: false,
+                name: "remote",
+                path: "/remote",
+              },
+            ],
+          };
+        },
+      }),
+      testValue<never>({
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({ threads: [], workspace: "/current" }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>(storage),
+      testValue<never>(profileDatabase())
+    );
+    await provider.initialize();
+    const handle = testValue<{
+      handleWorkspaceMessage: (
+        data: Record<string, unknown>
+      ) => Promise<boolean>;
+    }>(testValue<unknown>(provider)).handleWorkspaceMessage.bind(provider);
+
+    await handle({ path: "/remote", type: "focusWorkspace" });
+    await handle({ path: "/current", type: "focusWorkspace" });
+
+    expect(storage.update).toHaveBeenCalledExactlyOnceWith(
+      "mischief.focusWorkspace",
+      "/remote"
+    );
+    expect(vscode.executeCommand.mock.calls).toStrictEqual([
+      ["vscode.openFolder", { fsPath: "/remote" }, { forceNewWindow: true }],
+      ["workbench.view.extension.mischief"],
+    ]);
+  });
+
   test("opens the owning Workspace before requesting its Thread focus", async () => {
     vscode.executeCommand.mockClear();
     let remoteSelectedAfterWindow = false;
@@ -1564,7 +1678,7 @@ describe("view provider", () => {
     });
   });
 
-  test("contributes one native title action for the custom Mischief menu", () => {
+  test("keeps Settings as the only native view title action", () => {
     const manifest = testValue<{
       contributes: {
         commands: { command: string; icon?: string; title: string }[];
@@ -1590,13 +1704,25 @@ describe("view provider", () => {
       ])
     );
     expect(manifest.contributes.commands).toContainEqual({
-      command: "mischief.actions",
-      icon: "$(kebab-vertical)",
-      title: "Mischief: Actions",
+      command: "mischief.settings",
+      icon: "$(gear)",
+      title: "Mischief: Settings",
     });
+    expect(
+      manifest.contributes.commands.map(({ command }) => command)
+    ).toStrictEqual([
+      "mischief.addWorkspace",
+      "mischief.refresh",
+      "mischief.expandAll",
+      "mischief.collapseAll",
+      "mischief.newThread",
+      "mischief.addSelectionToCurrentThread",
+      "mischief.addSelectionToNewThread",
+      "mischief.settings",
+    ]);
     expect(manifest.contributes.menus["view/title"]).toStrictEqual([
       {
-        command: "mischief.actions",
+        command: "mischief.settings",
         group: "navigation@1",
         when: "view == mischief.view",
       },
@@ -1623,6 +1749,51 @@ describe("view provider", () => {
     expect(html).toContain('id="root"');
     expect(html).toContain('src="{{scriptUri}}"');
     expect(html).toContain('href="{{styleUri}}"');
+  });
+
+  test("opens a content-width Workspace menu from its clickable header", () => {
+    const css = readFileSync("media/webview.css", "utf-8");
+    const flyout = /\.projects-menu \{[^}]*\}/u.exec(css)?.[0];
+
+    expect(flyout).toContain("width: max-content;");
+    expect(flyout).toContain("max-width: calc(100vw - 8px);");
+    expect(flyout).not.toContain("right: 4px;");
+    expect(flyout).not.toContain("top: 36px;");
+    expect(/#workspace-header-trigger \{[^}]*\}/u.exec(css)?.[0]).toContain(
+      "cursor: pointer;"
+    );
+  });
+
+  test("uses transparent monospace headers and a clear Thread divider", () => {
+    const css = readFileSync("media/webview.css", "utf-8");
+    const headers = /#thread-header,\s*#workspace-header \{[^}]*\}/u.exec(
+      css
+    )?.[0];
+    const thread = /#thread \{[^}]*\}/u.exec(css)?.[0];
+
+    expect(headers).toContain("background: transparent;");
+    expect(headers).toContain("font-family: var(--mischief-mono-font);");
+    expect(headers).toContain(
+      "border-bottom: 1px solid var(--thread-frame-border);"
+    );
+    expect(headers).not.toContain("border-top:");
+    expect(thread).toContain(
+      "border-top: 2px solid var(--vscode-panel-border);"
+    );
+  });
+
+  test("styles both Workspace lists like neutral menus with indented Threads", () => {
+    const css = readFileSync("media/webview.css", "utf-8");
+    const list = /\.workspace-list \{[^}]*\}/u.exec(css)?.[0];
+    const selected = /\.workspace-list \.row\.selected \{[^}]*\}/u.exec(
+      css
+    )?.[0];
+
+    expect(list).toContain("--vscode-menu-foreground");
+    expect(list).toContain("--vscode-menu-background");
+    expect(selected).toContain("--vscode-menu-background");
+    expect(css).toContain(".workspace-list > .project-divider");
+    expect(css).toMatch(/\.thread-row \{\s*padding-left: 32px;/u);
   });
 
   test("caps composer height relative to a short webview", () => {
@@ -1959,7 +2130,7 @@ describe("view provider", () => {
     });
   });
 
-  test("posts Workspace expansion and action-menu requests to the Navigator", async () => {
+  test("posts command controls to the Navigator", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     const provider = new MischiefView(
       testValue<never>({}),
@@ -1990,12 +2161,20 @@ describe("view provider", () => {
 
     provider.setAllExpanded(true);
     provider.setAllExpanded(false);
-    provider.toggleActionsMenu();
+    provider.toggleProjectsMenu();
+    provider.configurationChanged();
+    expect(postMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: "state" })
+    );
 
-    expect(postMessage.mock.calls).toStrictEqual([
+    expect(
+      postMessage.mock.calls.filter(
+        ([message]) => testValue<{ type: string }>(message).type !== "state"
+      )
+    ).toStrictEqual([
       [{ expanded: true, type: "setAllExpanded" }],
       [{ expanded: false, type: "setAllExpanded" }],
-      [{ type: "toggleActionsMenu" }],
+      [{ type: "toggleProjectsMenu" }],
     ]);
   });
 

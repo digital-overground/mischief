@@ -168,6 +168,7 @@ main > section {
   flex: 1 0 72px;
   overflow: hidden;
   border: 0;
+  border-top: 2px solid var(--vscode-panel-border);
   overflow-wrap: anywhere;
 }
 #thread-content {
@@ -308,21 +309,27 @@ select:disabled {
   > .icon:not(.workspace-menu-trigger) {
   opacity: 1;
 }
-#navigator
-  .workspace-node:not(.current)
-  > .workspace-row
-  > .workspace-menu-trigger {
-  margin-left: 24px;
-}
 .workspace-row {
   padding-left: 10px;
 }
-#navigator-list
-  > .workspace-node:nth-child(even)
-  > .workspace-row:not(.selected):not(:hover):not(:focus-within) {
+.workspace-list {
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
   background: var(
-    --vscode-sideBarSectionHeader-background,
-    var(--vscode-sideBar-background)
+    --vscode-menu-background,
+    var(--vscode-editorWidget-background)
+  );
+}
+.workspace-list > .project-divider {
+  border: 0;
+  border-top: 1px solid
+    var(--vscode-menu-separatorBackground, var(--vscode-panel-border));
+  margin: 4px 8px;
+}
+.workspace-list .row:is(:hover, :focus-within) {
+  background: color-mix(
+    in srgb,
+    var(--vscode-menu-foreground, var(--vscode-foreground)) 10%,
+    var(--vscode-menu-background, var(--vscode-editorWidget-background))
   );
 }
 .workspace-disclosure {
@@ -348,12 +355,19 @@ select:disabled {
 .thread-row {
   padding-left: 32px;
 }
-.row.selected {
-  background: var(--vscode-list-activeSelectionBackground);
-  color: var(--vscode-list-activeSelectionForeground);
+.workspace-list .row.selected {
+  background: color-mix(
+    in srgb,
+    var(--vscode-menu-foreground, var(--vscode-foreground)) 18%,
+    var(--vscode-menu-background, var(--vscode-editorWidget-background))
+  );
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
 }
-#navigator-list > .workspace-node > .workspace-row.closing {
-  background: var(--vscode-sideBar-background);
+.workspace-list > .workspace-node > .workspace-row.closing {
+  background: var(
+    --vscode-menu-background,
+    var(--vscode-editorWidget-background)
+  );
   color: var(--vscode-descriptionForeground);
   opacity: 0.65;
 }
@@ -391,7 +405,8 @@ select:disabled {
   display: inline-flex;
   align-items: center;
   margin-left: 10px;
-  color: var(--vscode-descriptionForeground);
+  color: inherit;
+  opacity: 0.8;
   font-family: var(--mischief-mono-font);
   font-size: 11px;
   white-space: nowrap;
@@ -406,13 +421,6 @@ select:disabled {
   content: "·";
   font-size: 9px;
 }
-.workspace-color {
-  width: 8px;
-  height: 8px;
-  flex: none;
-  border-radius: 50%;
-  box-shadow: 0 0 0 1px var(--hl-fg);
-}
 .meta {
   padding-left: 8px;
   overflow: hidden;
@@ -422,16 +430,9 @@ select:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.selected .meta {
+.workspace-list .meta {
   color: inherit;
   opacity: 0.8;
-}
-.workspace-statuses {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding-left: 5px;
 }
 .workspace-close-spinner {
   width: 24px;
@@ -442,18 +443,6 @@ select:disabled {
 }
 .workspace-close-spinner .thread-status.active {
   color: var(--vscode-descriptionForeground);
-}
-.workspace-thread-count {
-  width: 52px;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 3px;
-  padding-right: 5px;
-  color: var(--vscode-descriptionForeground);
-  font-family: var(--mischief-mono-font);
-  font-size: 11px;
 }
 .workspace-menu {
   position: fixed;
@@ -471,12 +460,20 @@ select:disabled {
   );
   box-shadow: 0 2px 8px var(--vscode-widget-shadow);
 }
-.mischief-menu {
-  top: 4px;
-  right: 4px;
+.projects-menu {
+  width: max-content;
+  max-width: calc(100vw - 8px);
+  padding: 0;
   outline: none;
 }
-.workspace-menu button {
+.projects-menu-actions {
+  padding: 4px;
+}
+.projects-menu > hr {
+  margin: 4px 8px;
+}
+.workspace-menu:not(.projects-menu) button,
+.projects-menu-actions button {
   width: 100%;
   display: flex;
   align-items: center;
@@ -487,20 +484,18 @@ select:disabled {
   background: transparent;
   cursor: pointer;
 }
-.workspace-menu button:hover,
-.workspace-menu button:focus-visible {
+.workspace-menu:not(.projects-menu) button:hover,
+.workspace-menu:not(.projects-menu) button:focus-visible,
+.projects-menu-actions button:hover,
+.projects-menu-actions button:focus-visible {
   background: var(
     --vscode-menu-selectionBackground,
     var(--vscode-list-hoverBackground)
   );
   color: var(--vscode-menu-selectionForeground, inherit);
 }
-.workspace-menu-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.workspace-menu svg {
+.workspace-menu:not(.projects-menu) svg,
+.projects-menu-actions svg {
   width: 16px;
   height: 16px;
   flex: none;
@@ -583,7 +578,8 @@ select:disabled {
   text-align: left;
   line-height: 1.5;
 }
-#thread-header {
+#thread-header,
+#workspace-header {
   --thread-frame-border: var(
     --vscode-modernPanel-border,
     var(--vscode-editor-border, var(--vscode-widget-border))
@@ -593,15 +589,51 @@ select:disabled {
   padding: 3px 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
-  border-block: 1px solid var(--thread-frame-border);
-  color: var(--vscode-statusBar-foreground, var(--vscode-foreground));
-  background: var(
-    --vscode-titleBar-activeBackground,
-    var(--vscode-sideBarSectionHeader-background)
-  );
+  border-bottom: 1px solid var(--thread-frame-border);
+  color: var(--vscode-foreground);
+  background: transparent;
+  font-family: var(--mischief-mono-font);
   font-size: var(--vscode-font-size, 13px);
   font-weight: normal;
   text-transform: none;
+}
+#workspace-header {
+  flex: none;
+  padding: 0;
+}
+#workspace-title {
+  display: block;
+  overflow: hidden;
+  color: var(--vscode-textLink-foreground);
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#workspace-header-trigger {
+  position: relative;
+  width: 100%;
+  min-height: 31px;
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+#workspace-header-trigger .workspace-header-more {
+  position: absolute;
+  right: 8px;
+}
+#workspace-header-trigger:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+#workspace-header-trigger:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
 }
 .thread-header-agent {
   grid-column: 1;
@@ -650,6 +682,7 @@ select:disabled {
 #thread-title {
   display: block;
   overflow: hidden;
+  color: var(--vscode-textLink-foreground);
   font-size: inherit;
   text-align: center;
   text-overflow: ellipsis;
@@ -905,10 +938,6 @@ select:disabled {
   max-height: 11px;
   margin-right: 3px;
   vertical-align: -1px;
-}
-.workspace-thread-icon {
-  width: 14px;
-  height: 14px;
 }
 .thread-action-icon {
   width: 14px;

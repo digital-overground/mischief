@@ -1,4 +1,11 @@
-import { memo, useEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { isNonEmpty } from "../present";
 import type { ProjectsSnapshot, Workspace } from "../projects/projects";
@@ -146,59 +153,6 @@ const WorkspaceMenu = ({
   </div>
 );
 
-const RemoteWorkspaceMenu = ({
-  close,
-  dismiss,
-  path,
-  position,
-  threads,
-}: {
-  close: () => void;
-  dismiss: () => void;
-  path: string;
-  position: { left: number; top: number };
-  threads: ThreadSummary[];
-}): React.JSX.Element => (
-  <div
-    className="workspace-menu"
-    role="menu"
-    aria-label="Workspace actions"
-    style={position}
-    onKeyDown={menuKeyDown}
-  >
-    <button
-      autoFocus
-      type="button"
-      role="menuitem"
-      onClick={() => {
-        postMessage({ path, type: "openWorkspace" });
-        dismiss();
-      }}
-    >
-      <SvgIcon kind="externalLink" /> Go to Window
-    </button>
-    <hr />
-    {threads.map((thread) => (
-      <button
-        key={thread.id}
-        type="button"
-        role="menuitem"
-        onClick={() => {
-          postMessage({ id: thread.id, type: "selectThread" });
-          dismiss();
-        }}
-      >
-        <SvgIcon kind="botMessageSquare" />{" "}
-        <span className="workspace-menu-title">{thread.name}</span>
-      </button>
-    ))}
-    {threads.length ? <hr /> : null}
-    <button type="button" role="menuitem" onClick={close}>
-      <SvgIcon kind="x" /> Remove Workspace
-    </button>
-  </div>
-);
-
 const ThreadMenu = ({
   dismiss,
   id,
@@ -241,18 +195,22 @@ const ThreadMenu = ({
 
 // oxlint-disable-next-line complexity -- Workspace and Thread row actions share the menu state
 const WorkspaceNode = ({
-  actionsMenuOpen,
+  parentMenuOpen,
   expanded,
+  flyout,
   now,
+  onNavigate,
   onToggle,
   projectRoot,
   selectedId,
   threads,
   workspace,
 }: {
-  actionsMenuOpen: boolean;
+  parentMenuOpen: boolean;
   expanded: boolean;
+  flyout: boolean;
   now: number;
+  onNavigate?: () => void;
   onToggle: () => void;
   projectRoot?: string;
   selectedId?: string | null;
@@ -267,10 +225,10 @@ const WorkspaceNode = ({
     threadId?: string;
   } | null>(null);
   useEffect(() => {
-    if (actionsMenuOpen) {
+    if (parentMenuOpen) {
       setMenu(null);
     }
-  }, [actionsMenuOpen]);
+  }, [parentMenuOpen]);
   useEffect(() => {
     const dismissOutside = (event: MouseEvent): void => {
       if (
@@ -303,14 +261,7 @@ const WorkspaceNode = ({
       left: Math.max(4, Math.min(x, window.innerWidth - 216)),
       top: Math.max(
         4,
-        Math.min(
-          y,
-          window.innerHeight -
-            Math.min(
-              window.innerHeight - 8,
-              workspace.current ? 152 : (threads.length + 3) * 29
-            )
-        )
+        Math.min(y, window.innerHeight - Math.min(window.innerHeight - 8, 152))
       ),
       ...(isNonEmpty(threadId) ? { threadId } : {}),
     });
@@ -319,14 +270,14 @@ const WorkspaceNode = ({
     setMenu(null);
     setClosing(true);
     postMessage({ path: workspace.path, type: "closeWorkspace" });
+    onNavigate?.();
   };
-  const attention = (["waiting", "error", "completed"] as const).filter(
-    (indicator) => threads.some((thread) => thread.indicator === indicator)
-  );
-  const workspaceAction = workspace.current
-    ? `${expanded ? "Collapse" : "Expand"} ${workspace.name}`
-    : `Open ${workspace.name} Window`;
-  const threadCountLabel = `Agent Threads: ${threads.length}`;
+  let workspaceAction = `Open ${workspace.name} Window`;
+  if (flyout) {
+    workspaceAction = `Open ${workspace.name} in Mischief`;
+  } else if (workspace.current) {
+    workspaceAction = `${expanded ? "Collapse" : "Expand"} ${workspace.name}`;
+  }
   return (
     <div
       ref={nodeRef}
@@ -336,13 +287,13 @@ const WorkspaceNode = ({
         aria-busy={closing}
         className={`row workspace-row${workspace.current && !expanded ? " selected" : ""}${closing ? " closing" : ""}`}
         onContextMenu={(event) => {
-          if (!closing) {
+          if (workspace.current && !closing) {
             event.preventDefault();
             showMenu(event.clientX, event.clientY);
           }
         }}
       >
-        {workspace.current ? (
+        {workspace.current && !flyout ? (
           <button
             className="workspace-disclosure workspace-toggle"
             type="button"
@@ -367,20 +318,16 @@ const WorkspaceNode = ({
           title={workspaceAction}
           aria-label={workspaceAction}
           onClick={() => {
-            if (workspace.current) {
+            if (flyout) {
+              postMessage({ path: workspace.path, type: "focusWorkspace" });
+              onNavigate?.();
+            } else if (workspace.current) {
               onToggle();
             } else {
               postMessage({ path: workspace.path, type: "openWorkspace" });
             }
           }}
         >
-          {isNonEmpty(workspace.color) ? (
-            <span
-              aria-hidden="true"
-              className="workspace-color"
-              style={{ backgroundColor: workspace.color }}
-            />
-          ) : null}
           <span className="workspace-label">
             <span className="name">{workspace.name}</span>
             {isNonEmpty(workspace.branch) ? (
@@ -390,26 +337,13 @@ const WorkspaceNode = ({
               </span>
             ) : null}
           </span>
-          <span className="workspace-statuses">
-            {attention.map((indicator) => (
-              <StatusIndicator kind={indicator} key={indicator} />
-            ))}
-          </span>
         </button>
-        <span
-          className="workspace-thread-count"
-          title={threadCountLabel}
-          role="img"
-          aria-label={threadCountLabel}
-        >
-          <SvgIcon className="workspace-thread-icon" kind="botMessageSquare" />
-          <span>{threads.length}</span>
-        </span>
         {workspace.current ? (
           <IconButton
             title="New Thread"
             onClick={() => {
               postMessage({ type: "newThread" });
+              onNavigate?.();
             }}
           >
             <SvgIcon className="thread-action-icon" kind="chat" />
@@ -445,47 +379,17 @@ const WorkspaceNode = ({
           >
             <SvgIcon className="thread-action-icon" kind="moreVertical" />
           </button>
-        ) : (
-          <button
-            className="icon workspace-menu-trigger"
-            type="button"
-            title="Workspace actions"
-            aria-label="Workspace actions"
-            aria-haspopup="menu"
-            aria-expanded={menu !== null}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (menu) {
-                setMenu(null);
-              } else {
-                const rect = event.currentTarget.getBoundingClientRect();
-                showMenu(rect.right - 208, rect.bottom);
-              }
-            }}
-          >
-            <SvgIcon className="thread-action-icon" kind="moreVertical" />
-          </button>
-        )}
+        ) : null}
       </div>
       {menu && menu.threadId === undefined && workspace.current ? (
         <WorkspaceMenu
           close={closeWorkspace}
           dismiss={() => {
             setMenu(null);
+            onNavigate?.();
           }}
           position={menu}
           projectRoot={projectRoot}
-        />
-      ) : null}
-      {menu && menu.threadId === undefined && !workspace.current ? (
-        <RemoteWorkspaceMenu
-          close={closeWorkspace}
-          dismiss={() => {
-            setMenu(null);
-          }}
-          path={workspace.path}
-          position={menu}
-          threads={threads}
         />
       ) : null}
       {isNonEmpty(menu?.threadId) ? (
@@ -497,15 +401,17 @@ const WorkspaceNode = ({
           position={menu}
         />
       ) : null}
-      {workspace.current && expanded ? (
+      {(workspace.current || flyout) && expanded ? (
         <div className="workspace-threads">
           {threads.map((thread) => (
             <div
               className={`row thread-row${selectedId === thread.id ? " selected" : ""}`}
               key={thread.id}
               onContextMenu={(event) => {
-                event.preventDefault();
-                showMenu(event.clientX, event.clientY, thread.id);
+                if (workspace.current) {
+                  event.preventDefault();
+                  showMenu(event.clientX, event.clientY, thread.id);
+                }
               }}
             >
               <button
@@ -514,6 +420,7 @@ const WorkspaceNode = ({
                 title="Open Thread"
                 onClick={() => {
                   postMessage({ id: thread.id, type: "selectThread" });
+                  onNavigate?.();
                 }}
               >
                 <StatusIndicator kind={thread.indicator} />
@@ -522,25 +429,27 @@ const WorkspaceNode = ({
                   {compactTime(thread.updatedAt, now)}
                 </span>
               </button>
-              <button
-                className="icon"
-                type="button"
-                title="Thread actions"
-                aria-label="Thread actions"
-                aria-haspopup="menu"
-                aria-expanded={menu?.threadId === thread.id}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (menu?.threadId === thread.id) {
-                    setMenu(null);
-                  } else {
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    showMenu(rect.right - 208, rect.bottom, thread.id);
-                  }
-                }}
-              >
-                <SvgIcon className="thread-action-icon" kind="moreVertical" />
-              </button>
+              {workspace.current ? (
+                <button
+                  className="icon"
+                  type="button"
+                  title="Thread actions"
+                  aria-label="Thread actions"
+                  aria-haspopup="menu"
+                  aria-expanded={menu?.threadId === thread.id}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (menu?.threadId === thread.id) {
+                      setMenu(null);
+                    } else {
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      showMenu(rect.right - 208, rect.bottom, thread.id);
+                    }
+                  }}
+                >
+                  <SvgIcon className="thread-action-icon" kind="moreVertical" />
+                </button>
+              ) : null}
             </div>
           ))}
         </div>
@@ -549,36 +458,104 @@ const WorkspaceNode = ({
   );
 };
 
-const NavigatorPaneView = ({
-  actionsMenuOpen,
-  collapseAll,
-  expandAllRequest,
-  onDismissActionsMenu,
-  onExpand,
-  projects,
+const WorkspaceList = ({
+  parentMenuOpen,
+  emptyMessage,
+  expanded,
+  flyout,
+  groups,
+  now,
+  onNavigate,
+  onToggle,
+  projectRoot,
   threads,
 }: {
-  actionsMenuOpen: boolean;
+  parentMenuOpen: boolean;
+  emptyMessage: string;
+  expanded: boolean;
+  flyout: boolean;
+  groups: Workspace[][];
+  now: number;
+  onNavigate?: () => void;
+  onToggle: () => void;
+  projectRoot?: string;
+  threads: RenderedThreadsSnapshot;
+}): React.JSX.Element => (
+  <div
+    className="content workspace-list"
+    id={flyout ? "navigator-flyout-list" : "navigator-list"}
+  >
+    {groups.map((group, index) => (
+      <Fragment key={group[0]?.path}>
+        {index > 0 ? <hr className="project-divider" /> : null}
+        {group.map((workspace) => (
+          <WorkspaceNode
+            parentMenuOpen={parentMenuOpen}
+            expanded={flyout || (workspace.current && expanded)}
+            flyout={flyout}
+            key={workspace.path}
+            now={now}
+            onNavigate={onNavigate}
+            onToggle={onToggle}
+            projectRoot={workspace.current ? projectRoot : undefined}
+            selectedId={threads.selected?.id}
+            threads={threads.threads.filter(
+              (thread) => thread.workspace === workspace.path
+            )}
+            workspace={workspace}
+          />
+        ))}
+      </Fragment>
+    ))}
+    {groups.length > 0 ? null : <div className="empty">{emptyMessage}</div>}
+  </div>
+);
+
+const NavigatorPaneView = ({
+  collapseAll,
+  expandAllRequest,
+  onDismissProjectsMenu,
+  onExpand,
+  onToggleProjectsMenu,
+  projects,
+  projectsMenuOpen,
+  threads,
+}: {
   collapseAll: boolean;
   expandAllRequest: number;
-  onDismissActionsMenu: () => void;
+  onDismissProjectsMenu: () => void;
   onExpand: () => void;
+  onToggleProjectsMenu: () => void;
   projects: ProjectsSnapshot;
+  projectsMenuOpen: boolean;
   threads: RenderedThreadsSnapshot;
 }): React.JSX.Element => {
   const [expanded, setExpanded] = useState(false);
-  const actionsMenuRef = useRef<HTMLDivElement>(null);
+  const [menuPosition, setMenuPosition] = useState({ left: 4, top: 36 });
+  const projectsMenuRef = useRef<HTMLDivElement>(null);
   const [now, setNow] = useState(Date.now());
   const previousCurrent = useRef<string | null>(null);
   const previousExpandAllRequest = useRef(expandAllRequest);
-  const workspaces = [
-    ...projects.projects.flatMap((project) => project.workspaces),
-    ...projects.ungrouped,
-  ].toSorted((left, right) => left.name.localeCompare(right.name));
+  const groups = [
+    ...projects.projects
+      .toSorted((left, right) => left.name.localeCompare(right.name))
+      .map((project) =>
+        project.workspaces.toSorted((left, right) =>
+          left.name.localeCompare(right.name)
+        )
+      ),
+    projects.ungrouped.toSorted((left, right) =>
+      left.name.localeCompare(right.name)
+    ),
+  ].filter((group) => group.length > 0);
+  const workspaces = groups.flat();
   const currentPath = workspaces.find((workspace) => workspace.current)?.path;
   const currentProjectRoot = projects.projects.find((project) =>
     project.workspaces.some((workspace) => workspace.path === currentPath)
   )?.root;
+  const visibleGroups = groups
+    .map((group) => group.filter((workspace) => workspace.current))
+    .filter((group) => group.length > 0);
   useEffect(() => {
     if (currentPath !== previousCurrent.current) {
       previousCurrent.current = currentPath ?? null;
@@ -606,23 +583,38 @@ const NavigatorPaneView = ({
     };
   }, []);
   useEffect(() => {
-    if (actionsMenuOpen) {
-      actionsMenuRef.current?.focus();
+    if (projectsMenuOpen) {
+      projectsMenuRef.current?.focus();
     }
-  }, [actionsMenuOpen]);
+  }, [projectsMenuOpen]);
+  useLayoutEffect(() => {
+    if (!projectsMenuOpen || !projectsMenuRef.current) {
+      return;
+    }
+    const menu = projectsMenuRef.current;
+    const { width, height } = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(4, Math.min(menuPosition.left, window.innerWidth - width - 4))}px`;
+    menu.style.top = `${Math.max(4, Math.min(menuPosition.top, window.innerHeight - height - 4))}px`;
+  }, [menuPosition, projectsMenuOpen]);
   useEffect(() => {
     const dismissOutside = (event: MouseEvent): void => {
       if (
-        actionsMenuOpen &&
-        event.target instanceof Node &&
-        actionsMenuRef.current?.contains(event.target) === false
+        event.target instanceof Element &&
+        event.target.closest("#workspace-header button") !== null
       ) {
-        onDismissActionsMenu();
+        return;
+      }
+      if (
+        projectsMenuOpen &&
+        event.target instanceof Node &&
+        projectsMenuRef.current?.contains(event.target) === false
+      ) {
+        onDismissProjectsMenu();
       }
     };
     const escape = (event: KeyboardEvent): void => {
-      if (actionsMenuOpen && event.key === "Escape") {
-        onDismissActionsMenu();
+      if (projectsMenuOpen && event.key === "Escape") {
+        onDismissProjectsMenu();
       }
     };
     document.addEventListener("click", dismissOutside, true);
@@ -633,77 +625,111 @@ const NavigatorPaneView = ({
       document.removeEventListener("contextmenu", dismissOutside, true);
       document.removeEventListener("keydown", escape);
     };
-  }, [actionsMenuOpen, onDismissActionsMenu]);
+  }, [onDismissProjectsMenu, projectsMenuOpen]);
+  const toggleCurrentWorkspace = (): void => {
+    if (expanded) {
+      setExpanded(false);
+      return;
+    }
+    onExpand();
+    setExpanded(true);
+  };
   return (
     <section id="navigator">
-      {actionsMenuOpen ? (
-        <div
-          ref={actionsMenuRef}
-          className="workspace-menu mischief-menu"
-          role="menu"
-          aria-label="Mischief actions"
-          tabIndex={-1}
-          onKeyDown={menuKeyDown}
+      <header id="workspace-header">
+        <button
+          id="workspace-header-trigger"
+          type="button"
+          title="Browse Workspaces and Threads"
+          aria-label="Browse Workspaces and Threads"
+          aria-controls="navigator-flyout-list"
+          aria-expanded={projectsMenuOpen}
+          aria-haspopup="dialog"
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            setMenuPosition({
+              left:
+                event.detail === 0 ? rect.left + rect.width / 2 : event.clientX,
+              top: event.detail === 0 ? rect.bottom : event.clientY,
+            });
+            onToggleProjectsMenu();
+          }}
         >
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              postMessage({ type: "addWorkspace" });
-              onDismissActionsMenu();
-            }}
-          >
-            <SvgIcon kind="plus" /> Add Workspace…
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              postMessage({ type: "refresh" });
-              onDismissActionsMenu();
-            }}
-          >
-            <SvgIcon kind="history" /> Refresh
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              postMessage({ type: "showSettings" });
-              onDismissActionsMenu();
-            }}
-          >
-            <SvgIcon kind="tool" /> Settings
-          </button>
+          <span id="workspace-title">Workspaces</span>
+          <SvgIcon
+            className="thread-action-icon workspace-header-more"
+            kind="moreVertical"
+          />
+        </button>
+      </header>
+      {projectsMenuOpen ? (
+        <div
+          ref={projectsMenuRef}
+          className="workspace-menu projects-menu"
+          role="dialog"
+          aria-label="Workspaces and Threads"
+          tabIndex={-1}
+          style={menuPosition}
+          onKeyDown={(event) => {
+            if (
+              event.target instanceof Element &&
+              event.target.closest('[role="menu"]') !== null
+            ) {
+              return;
+            }
+            menuKeyDown(event);
+          }}
+        >
+          <div className="projects-menu-actions">
+            <button
+              type="button"
+              onClick={() => {
+                postMessage({ type: "addWorkspace" });
+                onDismissProjectsMenu();
+              }}
+            >
+              <SvgIcon kind="plus" /> Add Workspace…
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                postMessage({ type: "refresh" });
+                onDismissProjectsMenu();
+              }}
+            >
+              <SvgIcon kind="history" /> Refresh
+            </button>
+          </div>
+          <hr />
+          <WorkspaceList
+            parentMenuOpen={projectsMenuOpen}
+            emptyMessage="No active Workspaces. Add one with ＋."
+            expanded={expanded}
+            flyout
+            groups={groups}
+            now={now}
+            onNavigate={onDismissProjectsMenu}
+            onToggle={toggleCurrentWorkspace}
+            projectRoot={currentProjectRoot}
+            threads={threads}
+          />
         </div>
       ) : null}
-      <div className="content" id="navigator-list">
-        {workspaces.map((workspace) => (
-          <WorkspaceNode
-            actionsMenuOpen={actionsMenuOpen}
-            expanded={workspace.current && expanded}
-            key={workspace.path}
-            now={now}
-            onToggle={() => {
-              if (expanded) {
-                setExpanded(false);
-                return;
-              }
-              onExpand();
-              setExpanded(true);
-            }}
-            projectRoot={workspace.current ? currentProjectRoot : undefined}
-            selectedId={threads.selected?.id}
-            threads={threads.threads.filter(
-              (thread) => thread.workspace === workspace.path
-            )}
-            workspace={workspace}
-          />
-        ))}
-        {workspaces.length ? null : (
-          <div className="empty">No active Workspaces. Add one with ＋.</div>
-        )}
-      </div>
+      <WorkspaceList
+        parentMenuOpen={projectsMenuOpen}
+        emptyMessage={
+          workspaces.length > 0
+            ? "No current Workspace. Browse Workspaces from the header."
+            : "No active Workspaces. Add one from the header."
+        }
+        expanded={expanded}
+        flyout={false}
+        groups={visibleGroups}
+        now={now}
+        onToggle={toggleCurrentWorkspace}
+        projectRoot={currentProjectRoot}
+        threads={threads}
+      />
     </section>
   );
 };
