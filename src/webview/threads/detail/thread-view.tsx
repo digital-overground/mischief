@@ -30,17 +30,15 @@ const Processing = ({ hidden }: { hidden: boolean }): React.JSX.Element => (
 // oxlint-disable-next-line complexity -- the component renders Thread state branches
 export const ThreadView = ({
   contextItems,
-  onToggleMaximized,
   setup,
   snapshot,
-  threadMaximized,
   transcript,
+  workspaceColor,
 }: {
   contextItems: string[];
-  onToggleMaximized: () => void;
   setup?: RenderedSetupStep;
   snapshot: RenderedThreadsSnapshot;
-  threadMaximized: boolean;
+  workspaceColor?: string;
   transcript: {
     items: RenderedTranscriptItem[];
     streaming: boolean;
@@ -127,9 +125,6 @@ export const ThreadView = ({
     selected?.items.find(
       (item) => item.kind === "plan" && isNonEmpty(item.text)
     );
-  const maximizeLabel = threadMaximized
-    ? "Expand Navigator"
-    : "Maximize Current Thread";
   const processingLabel =
     selected?.sessionOperation === "branchSummary"
       ? "Generating branch summary…"
@@ -142,59 +137,79 @@ export const ThreadView = ({
         id="thread-content"
         inert={blocked || Boolean(selected?.interaction)}
       >
-        <header id="thread-header">
-          <span className="heading" id="thread-title">
-            {setup ? "Setup" : (selected?.name ?? "Thread")}
-          </span>
-          {!setup &&
-            selected &&
-            (selected.id === null ? (
-              <button
-                type="button"
-                className="thread-agent"
-                title="Choose Agent for new Thread"
-                onClick={() => {
-                  postMessage({ type: "chooseAgent" });
-                }}
-              >
-                {selected.agentId
-                  ? `${AGENTS[selected.agentId].name} ▾`
-                  : "Choose Agent ▾"}
-              </button>
-            ) : (
-              <span
-                className="thread-agent"
-                title="This Thread's Agent cannot be changed"
-              >
-                {selected.agentId
-                  ? AGENTS[selected.agentId].name
-                  : "Choose Agent"}
-              </span>
-            ))}
-          <button
-            className="icon"
-            id="maximize-thread"
-            title={maximizeLabel}
-            aria-label={maximizeLabel}
-            aria-pressed={threadMaximized}
-            onClick={onToggleMaximized}
-          >
-            <SvgIcon kind={threadMaximized ? "minimize" : "maximize"} />
-          </button>
-          <button
-            className="icon"
-            id="rename-thread"
-            title="Rename Thread"
-            aria-label="Rename Thread"
-            disabled={!isNonEmpty(selected?.id)}
-            onClick={() => {
-              if (isNonEmpty(selected?.id)) {
-                postMessage({ id: selected.id, type: "renameThread" });
+        <header
+          id="thread-header"
+          style={
+            isNonEmpty(workspaceColor)
+              ? { backgroundColor: workspaceColor }
+              : undefined
+          }
+        >
+          <div className="thread-header-agent">
+            {!setup &&
+              selected &&
+              (selected.id === null ? (
+                <button
+                  type="button"
+                  className="thread-agent"
+                  title="Choose Agent for new Thread"
+                  onClick={() => {
+                    postMessage({ type: "chooseAgent" });
+                  }}
+                >
+                  {selected.agentId
+                    ? `${AGENTS[selected.agentId].name} ▾`
+                    : "Choose Agent ▾"}
+                </button>
+              ) : (
+                <span
+                  className="thread-agent"
+                  title="This Thread's Agent cannot be changed"
+                >
+                  {selected.agentId
+                    ? AGENTS[selected.agentId].name
+                    : "Choose Agent"}
+                </span>
+              ))}
+          </div>
+          <div className="thread-title-group">
+            <button
+              id="rename-thread"
+              title={isNonEmpty(selected?.id) ? "Rename Thread" : undefined}
+              aria-label={
+                isNonEmpty(selected?.id)
+                  ? `Rename Thread: ${selected.name}`
+                  : undefined
               }
-            }}
-          >
-            <SvgIcon className="thread-action-icon" kind="pencil" />
-          </button>
+              disabled={!isNonEmpty(selected?.id)}
+              onClick={() => {
+                if (isNonEmpty(selected?.id)) {
+                  postMessage({ id: selected.id, type: "renameThread" });
+                }
+              }}
+            >
+              <span className="heading" id="thread-title">
+                {setup ? "Setup" : (selected?.name ?? "Thread")}
+              </span>
+              <SvgIcon className="thread-action-icon" kind="pencil" />
+            </button>
+          </div>
+          <div className="thread-header-actions">
+            <button
+              className="icon"
+              id="close-thread"
+              title="Close Thread"
+              aria-label="Close Thread"
+              disabled={!isNonEmpty(selected?.id)}
+              onClick={() => {
+                if (isNonEmpty(selected?.id)) {
+                  postMessage({ id: selected.id, type: "removeThread" });
+                }
+              }}
+            >
+              <SvgIcon className="thread-action-icon" kind="x" />
+            </button>
+          </div>
         </header>
         <div
           id="chat"

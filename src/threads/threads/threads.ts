@@ -102,6 +102,7 @@ interface Runtime {
     echoedId?: string;
   }[];
   activePrompt?: Runtime["pending"][number];
+  closing?: boolean;
   retryImages?: PromptImage[];
   sessionOperation?: ThreadSessionOperation;
   setup?: Promise<string>;
@@ -153,6 +154,7 @@ export class Threads {
   private stored: StoredThread[];
   private persistence = Promise.resolve();
   private selectionSync = Promise.resolve();
+  private lastFocusRequest?: string;
   private readonly runtimes = new Map<string, Runtime>();
   private readonly listeners = new Set<(change?: ThreadsChange) => void>();
   private readonly stopDatabaseListener: () => void;
@@ -212,11 +214,11 @@ export class Threads {
         await this.persist(record);
       })
     );
-    const selected = this.database
+    const selection = this.database
       .snapshot()
-      .selections.find(
-        (selection) => selection.workspace === workspace
-      )?.threadId;
+      .selections.find((candidate) => candidate.workspace === workspace);
+    const selected = selection?.threadId;
+    this.lastFocusRequest = selection?.focusRequest;
     this.selectedId = records.some((record) => record.id === selected)
       ? selected
       : records[0]?.id;
@@ -393,7 +395,7 @@ export class Threads {
       return undefined;
     }
     if (record.workspace !== this.workspace) {
-      await this.selectThread(record.workspace, id);
+      await this.selectThread(record.workspace, id, randomUUID());
       return record.workspace;
     }
     this.selectedId = id;
@@ -600,12 +602,14 @@ export class Threads {
       record.updatedAt = new Date().toISOString();
     } catch (error) {
       runtime.registration = undefined;
-      runtime.status = "error";
-      record.error = errorMessage(error);
-      record.retryText = pending.text;
-      runtime.retryImages = pending.images;
-      record.authentication =
-        agentAuthentication(error) ?? record.authentication;
+      if (runtime.closing !== true) {
+        runtime.status = "error";
+        record.error = errorMessage(error);
+        record.retryText = pending.text;
+        runtime.retryImages = pending.images;
+        record.authentication =
+          agentAuthentication(error) ?? record.authentication;
+      }
     } finally {
       runtime.activePrompt = undefined;
       runtime.pending = runtime.pending.filter(
@@ -941,7 +945,8 @@ export class Threads {
         if (!runtime) {
           return;
         }
-        await Threads.cancelRuntime(record, runtime);
+        runtime.closing = true;
+        await Threads.cancelRuntime(record, runtime, false);
         await this.persist(record);
         runtime.connection.dispose();
         this.runtimes.delete(record.id);
@@ -1117,7 +1122,8 @@ export class Threads {
 
   private static async cancelRuntime(
     record: StoredThread,
-    runtime: Runtime
+    runtime: Runtime,
+    sendAgentCancel = true
   ): Promise<void> {
     stopStreaming(runtime);
     runtime.resolvePermission?.({ cancelled: true });
@@ -1137,7 +1143,7 @@ export class Threads {
     if (isDefined(activeItem)) {
       activeItem.cancelled = true;
     }
-    if (isNonEmpty(record.sessionId)) {
+    if (sendAgentCancel && isNonEmpty(record.sessionId)) {
       await runtime.connection.cancel(record.sessionId);
     }
     runtime.status = "idle";
@@ -1218,9 +1224,12 @@ export class Threads {
           elicitation: async (request) =>
             await this.handleElicitation(record, request),
           error: (error) => {
+            const active = this.runtimes.get(record.id);
+            if (active?.closing === true) {
+              return;
+            }
             record.error = errorMessage(error);
             record.authentication = error.authentication;
-            const active = this.runtimes.get(record.id);
             if (active) {
               stopStreaming(active);
               active.status = "error";
@@ -1395,22 +1404,34 @@ export class Threads {
       if (!isNonEmpty(workspace)) {
         return;
       }
-      const selected = this.database
+      const selection = this.database
         .snapshot()
-        .selections.find(
-          (selection) => selection.workspace === workspace
-        )?.threadId;
-      if (!isNonEmpty(selected) || selected === this.selectedId) {
+        .selections.find((candidate) => candidate.workspace === workspace);
+      if (!selection || !isNonEmpty(selection.threadId)) {
         return;
       }
+      const selected = selection.threadId;
       const record = this.findRecord(selected);
       if (!record || record.workspace !== workspace) {
+        return;
+      }
+      const focus =
+        isNonEmpty(selection.focusRequest) &&
+        selection.focusRequest !== this.lastFocusRequest;
+      this.lastFocusRequest = selection.focusRequest;
+      if (selected === this.selectedId) {
+        if (focus) {
+          this.emit({ type: "remoteSelection" });
+        }
         return;
       }
       this.selectedId = selected;
       this.viewedId = selected;
       this.draft = false;
       record.unread = false;
+      if (focus) {
+        this.emit({ type: "remoteSelection" });
+      }
       await this.persist(record);
       await this.load(record);
       this.emit();
@@ -1541,10 +1562,12 @@ export class Threads {
 
   private async selectThread(
     workspace: string,
-    threadId?: string
+    threadId?: string,
+    focusRequest?: string
   ): Promise<void> {
     await this.apply({
       ...(isNonEmpty(threadId) ? { threadId } : {}),
+      ...(isNonEmpty(focusRequest) ? { focusRequest } : {}),
       type: "selectThread",
       workspace,
     });

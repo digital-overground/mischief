@@ -2,6 +2,7 @@ export type IconKind =
   | "alert"
   | "archive"
   | "bot"
+  | "botMessageSquare"
   | "brain"
   | "chat"
   | "circle"
@@ -9,8 +10,7 @@ export type IconKind =
   | "download"
   | "draftingCompass"
   | "history"
-  | "maximize"
-  | "minimize"
+  | "moreVertical"
   | "fork"
   | "circleCheck"
   | "eye"
@@ -62,6 +62,16 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M20 14h2" />
       <path d="M15 13v2" />
       <path d="M9 13v2" />
+    </>
+  ),
+  botMessageSquare: (
+    <>
+      <path d="M12 6V2H8" />
+      <path d="M15.5 12h.01" />
+      <path d="M8.5 12h.01" />
+      <path d="M12 12h.01" />
+      <path d="M16 18H8a4 4 0 0 1-4-4v-5a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v5a4 4 0 0 1-4 4Z" />
+      <path d="M12 18v4" />
     </>
   ),
   brain: (
@@ -175,20 +185,11 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M12 7v5l4 2" />
     </>
   ),
-  maximize: (
+  moreVertical: (
     <>
-      <path d="M8 3H5a2 2 0 0 0-2 2v3" />
-      <path d="M16 3h3a2 2 0 0 1 2 2v3" />
-      <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
-      <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
-    </>
-  ),
-  minimize: (
-    <>
-      <path d="M8 3v3a2 2 0 0 1-2 2H3" />
-      <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
-      <path d="M3 16h3a2 2 0 0 1 2 2v3" />
-      <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
+      <circle cx="12" cy="5" r="1" />
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="12" cy="19" r="1" />
     </>
   ),
   package: (

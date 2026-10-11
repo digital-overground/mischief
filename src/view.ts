@@ -319,6 +319,16 @@ export class MischiefView implements vscode.WebviewViewProvider {
         this.renderTranscript(change);
       } else if (change?.type === "sessionOperation") {
         this.renderSessionOperation(change);
+      } else if (change?.type === "remoteSelection") {
+        this.render();
+        void MischiefView.run(
+          (async () => {
+            await vscode.commands.executeCommand(
+              "workbench.view.extension.mischief"
+            );
+            this.view?.show(false);
+          })()
+        );
       } else {
         this.render();
       }
@@ -727,6 +737,13 @@ export class MischiefView implements vscode.WebviewViewProvider {
     } satisfies HostToWebviewMessage);
   }
 
+  toggleActionsMenu(): void {
+    const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
+    void postMessage?.({
+      type: "toggleActionsMenu",
+    } satisfies HostToWebviewMessage);
+  }
+
   showSettings(): void {
     const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
     const defaultAgent = vscode.workspace
@@ -815,7 +832,16 @@ export class MischiefView implements vscode.WebviewViewProvider {
     if (current && active !== current.path) {
       await this.threads.openWorkspace(current.path);
     } else if (!current && isNonEmpty(active)) {
+      const closing = this.database
+        .snapshot()
+        .workspaces.some(
+          (workspace) =>
+            workspace.path === active && workspace.status === "inactive"
+        );
       await this.threads.closeWorkspace();
+      if (closing) {
+        await vscode.commands.executeCommand("workbench.action.closeWindow");
+      }
     }
   }
 
@@ -885,15 +911,16 @@ export class MischiefView implements vscode.WebviewViewProvider {
       await this.sendContextItems();
       return true;
     }
-    if (
-      data.type === "navigatorExpanded" &&
-      typeof data.expanded === "boolean"
-    ) {
-      await vscode.commands.executeCommand(
-        "setContext",
-        "mischief.navigatorAllExpanded",
-        data.expanded
-      );
+    if (data.type === "addWorkspace") {
+      await this.addWorkspace();
+      return true;
+    }
+    if (data.type === "refresh") {
+      await this.refresh();
+      return true;
+    }
+    if (data.type === "showSettings") {
+      this.showSettings();
       return true;
     }
     if (data.type === "newThread") {
@@ -925,8 +952,8 @@ export class MischiefView implements vscode.WebviewViewProvider {
       await this.openWorkspace(data.path);
       return true;
     }
-    if (data.type === "deactivateWorkspace" && typeof data.path === "string") {
-      await this.deactivateWorkspace(data.path);
+    if (data.type === "closeWorkspace" && typeof data.path === "string") {
+      await this.closeWorkspace(data.path);
       return true;
     }
     return false;
@@ -978,11 +1005,14 @@ export class MischiefView implements vscode.WebviewViewProvider {
     data: Record<string, unknown>
   ): Promise<boolean> {
     if (data.type === "selectThread" && typeof data.id === "string") {
-      const workspace = await this.threads.select(data.id);
+      const workspace = this.threads
+        .snapshot()
+        .threads.find((thread) => thread.id === data.id)?.workspace;
       const current = this.workspaces().find((candidate) => candidate.current);
       if (isNonEmpty(workspace) && workspace !== current?.path) {
         await this.openWorkspace(workspace);
       }
+      await this.threads.select(data.id);
       return true;
     }
     if (data.type === "removeThread" && typeof data.id === "string") {
@@ -1277,15 +1307,11 @@ export class MischiefView implements vscode.WebviewViewProvider {
     );
   }
 
-  private async deactivateWorkspace(candidate: string): Promise<void> {
-    const workspace = this.workspaces().find((item) => item.path === candidate);
-    if (!workspace) {
+  private async closeWorkspace(candidate: string): Promise<void> {
+    if (!this.workspaces().some((workspace) => workspace.path === candidate)) {
       return;
     }
     await this.setProjects(this.projects.remove(candidate));
-    if (workspace.current) {
-      await this.threads.closeWorkspace();
-    }
     this.render();
   }
 

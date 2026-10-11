@@ -36,6 +36,7 @@ export const App = (): React.JSX.Element => {
   const [agents, setAgents] = useState<AgentSetting[]>([]);
   const [contextItems, setContextItems] = useState<string[]>([]);
   const [expandAllRequest, setExpandAllRequest] = useState(0);
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [threadMaximized, setThreadMaximized] = useState(false);
   const [transcript, setTranscript] = useState<{
     items: RenderedTranscriptItem[];
@@ -59,6 +60,8 @@ export const App = (): React.JSX.Element => {
         setAgents(event.data.agents);
       } else if (event.data.type === "contextItems") {
         setContextItems(event.data.items);
+      } else if (event.data.type === "toggleActionsMenu") {
+        setActionsMenuOpen((open) => !open);
       } else if (event.data.type === "setAllExpanded") {
         if (event.data.expanded) {
           setExpandAllRequest((request) => request + 1);
@@ -121,24 +124,28 @@ export const App = (): React.JSX.Element => {
       [
         ...snapshot.projects.projects.flatMap((project) => project.workspaces),
         ...snapshot.projects.ungrouped,
-      ].find((workspace) => workspace.current)?.path,
+      ].find((workspace) => workspace.current),
     [snapshot.projects]
   );
   useEffect(() => {
-    if ((currentWorkspace ?? null) === previousWorkspace.current) {
+    if ((currentWorkspace?.path ?? null) === previousWorkspace.current) {
       return;
     }
-    previousWorkspace.current = currentWorkspace ?? null;
+    previousWorkspace.current = currentWorkspace?.path ?? null;
     setContextItems([]);
     postMessage({ type: "contextItems" });
-  }, [currentWorkspace]);
+  }, [currentWorkspace?.path]);
 
   return (
     <>
       <main>
         <NavigatorPane
+          actionsMenuOpen={actionsMenuOpen}
           collapseAll={threadMaximized}
           expandAllRequest={expandAllRequest}
+          onDismissActionsMenu={() => {
+            setActionsMenuOpen(false);
+          }}
           projects={snapshot.projects}
           threads={snapshot.threads}
           onExpand={() => {
@@ -148,15 +155,9 @@ export const App = (): React.JSX.Element => {
         <ThreadView
           contextItems={contextItems}
           setup={snapshot.setup}
+          workspaceColor={currentWorkspace?.color}
           snapshot={snapshot.threads}
-          threadMaximized={threadMaximized}
           transcript={transcript}
-          onToggleMaximized={() => {
-            if (threadMaximized) {
-              setExpandAllRequest((request) => request + 1);
-            }
-            setThreadMaximized(!threadMaximized);
-          }}
         />
       </main>
       <dialog

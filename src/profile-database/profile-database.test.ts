@@ -67,6 +67,58 @@ describe(ProfileDatabase, () => {
     }
   });
 
+  test("an owning Instance receives a remote focus request with polling fallback", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const profileDirectory = await mkdtemp(
+      path.join(tmpdir(), "mischief-profile-database-")
+    );
+    const workspace = path.join(profileDirectory, "workspace");
+    const owner = await ProfileDatabase.open({
+      currentWorkspace: workspace,
+      instanceId: "00000000-0000-4000-8000-000000000001",
+      log: vi.fn<(message: string) => void>(),
+      profileDirectory,
+    });
+    let source: ProfileDatabase | undefined;
+    const threadId = "10000000-0000-4000-8000-000000000001";
+    const request = "20000000-0000-4000-8000-000000000001";
+    try {
+      await owner.apply({
+        thread: {
+          createdAt: "2026-09-11T12:00:00.000Z",
+          id: threadId,
+          name: "Shared Thread",
+          status: "idle",
+          updatedAt: "2026-09-11T12:00:00.000Z",
+          workspace,
+        },
+        type: "putThread",
+      });
+      source = await ProfileDatabase.open({
+        currentWorkspace: path.join(profileDirectory, "other"),
+        instanceId: "00000000-0000-4000-8000-000000000002",
+        log: vi.fn<(message: string) => void>(),
+        profileDirectory,
+      });
+      await source.apply({
+        focusRequest: request,
+        threadId,
+        type: "selectThread",
+        workspace,
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.waitFor(() => {
+        expect(owner.snapshot().selections).toStrictEqual([
+          { focusRequest: request, threadId, workspace },
+        ]);
+      });
+    } finally {
+      await Promise.all([owner.dispose(), source?.dispose()]);
+      await rm(profileDirectory, { force: true, recursive: true });
+      vi.useRealTimers();
+    }
+  });
+
   test("any Instance may select a valid foreign Thread but cannot mutate it", async () => {
     vi.useFakeTimers();
     const profileDirectory = await mkdtemp(

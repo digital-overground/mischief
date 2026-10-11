@@ -1398,19 +1398,32 @@ describe("view provider", () => {
     expect(newThread.mock.calls).toStrictEqual([["codex-acp"]]);
   });
 
-  test("opens the owning Workspace only after a remote Thread selection", async () => {
+  test("opens the owning Workspace before requesting its Thread focus", async () => {
     vscode.executeCommand.mockClear();
-    const select = vi
-      .fn<(id: string) => Promise<string | undefined>>()
-      .mockResolvedValueOnce("/current")
-      .mockResolvedValueOnce("/remote");
+    let remoteSelectedAfterWindow = false;
+    const select = vi.fn<(id: string) => Promise<string | undefined>>(
+      async (id) => {
+        await Promise.resolve();
+        if (id === "remote-thread") {
+          remoteSelectedAfterWindow =
+            vscode.executeCommand.mock.calls.length > 0;
+        }
+        return id === "remote-thread" ? "/remote" : "/current";
+      }
+    );
     const threads = {
       onChange: vi.fn<() => void>(),
       openWorkspace: vi.fn<() => Promise<void>>(async () => {
         await Promise.resolve();
       }),
       select,
-      snapshot: () => ({ threads: [], workspace: "/current" }),
+      snapshot: () => ({
+        threads: [
+          { id: "local-thread", workspace: "/current" },
+          { id: "remote-thread", workspace: "/remote" },
+        ],
+        workspace: "/current",
+      }),
     };
     const provider = new MischiefView(
       testValue<never>({
@@ -1454,15 +1467,51 @@ describe("view provider", () => {
     await handle({ id: "local-thread", type: "selectThread" });
     await handle({ id: "remote-thread", type: "selectThread" });
 
-    expect(select.mock.calls).toStrictEqual([
-      ["local-thread"],
-      ["remote-thread"],
-    ]);
+    expect({
+      remoteSelectedAfterWindow,
+      selects: select.mock.calls,
+    }).toStrictEqual({
+      remoteSelectedAfterWindow: true,
+      selects: [["local-thread"], ["remote-thread"]],
+    });
     expect(vscode.executeCommand).toHaveBeenCalledExactlyOnceWith(
       "vscode.openFolder",
       { fsPath: "/remote" },
       { forceNewWindow: true }
     );
+  });
+
+  test("focuses Mischief when the owning Instance receives a remote Thread selection", async () => {
+    let emit: ((change?: { type: "remoteSelection" }) => void) | undefined;
+    const provider = new MischiefView(
+      testValue<never>({}),
+      testValue<never>({
+        onChange: (
+          listener: (change?: { type: "remoteSelection" }) => void
+        ) => {
+          emit = listener;
+        },
+        snapshot: () => ({ threads: [] }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase())
+    );
+    const show = vi.fn<(preserveFocus: boolean) => void>();
+    Object.assign(provider, {
+      view: { show, webview: { postMessage: vi.fn<() => void>() } },
+    });
+    vscode.executeCommand.mockClear();
+    emit?.({ type: "remoteSelection" });
+    await vi.waitFor(() => {
+      expect({
+        commands: vscode.executeCommand.mock.calls,
+        show: show.mock.calls,
+      }).toStrictEqual({
+        commands: [["workbench.view.extension.mischief"]],
+        show: [[false]],
+      });
+    });
   });
 
   test("renames the clicked Thread instead of the selected Thread", async () => {
@@ -1515,7 +1564,7 @@ describe("view provider", () => {
     });
   });
 
-  test("contributes editor and Mischief title-bar menu actions", () => {
+  test("contributes one native title action for the custom Mischief menu", () => {
     const manifest = testValue<{
       contributes: {
         commands: { command: string; icon?: string; title: string }[];
@@ -1531,29 +1580,27 @@ describe("view provider", () => {
         {
           command: "mischief.expandAll",
           icon: "$(expand-all)",
-          title: "Mischief: Expand All",
+          title: "Mischief: Expand Current Workspace",
         },
         {
           command: "mischief.collapseAll",
           icon: "$(collapse-all)",
-          title: "Mischief: Collapse All",
+          title: "Mischief: Collapse Current Workspace",
         },
       ])
     );
-    expect(manifest.contributes.menus["view/title"]).toStrictEqual(
-      expect.arrayContaining([
-        {
-          command: "mischief.expandAll",
-          group: "navigation@3",
-          when: "view == mischief.view && !mischief.navigatorAllExpanded",
-        },
-        {
-          command: "mischief.collapseAll",
-          group: "navigation@3",
-          when: "view == mischief.view && mischief.navigatorAllExpanded",
-        },
-      ])
-    );
+    expect(manifest.contributes.commands).toContainEqual({
+      command: "mischief.actions",
+      icon: "$(kebab-vertical)",
+      title: "Mischief: Actions",
+    });
+    expect(manifest.contributes.menus["view/title"]).toStrictEqual([
+      {
+        command: "mischief.actions",
+        group: "navigation@1",
+        when: "view == mischief.view",
+      },
+    ]);
     expect(manifest.contributes.menus["editor/context"]).toStrictEqual(
       expect.arrayContaining([
         {
@@ -1583,6 +1630,22 @@ describe("view provider", () => {
     const composerRule = /#composer \{[\s\S]*?\n\}/u.exec(css)?.[0];
 
     expect(composerRule).toContain("max-height: min(400px, 45vh);");
+  });
+
+  test("greys the Workspace row and hides its actions while closing", () => {
+    const css = readFileSync("media/webview.css", "utf-8");
+    expect({
+      actionsHidden:
+        /\.workspace-row\.closing > \.icon\s*\{\s*display: none;/u.test(css),
+      rowGreyed: /\.workspace-row\.closing\s*\{[\s\S]*?opacity: 0\.65;/u.test(
+        css
+      ),
+      spinner: css.includes(".workspace-close-spinner"),
+    }).toStrictEqual({
+      actionsHidden: true,
+      rowGreyed: true,
+      spinner: true,
+    });
   });
 
   test("sends only the changed transcript item while streaming", async () => {
@@ -1822,7 +1885,81 @@ describe("view provider", () => {
     });
   });
 
-  test("posts Expand All and Collapse All requests to the Navigator", async () => {
+  test("closes the owning VS Code window when another Instance closes its Workspace", async () => {
+    let databaseChanged: (() => void) | undefined;
+    let workspaces: { path: string; status: "active" | "inactive" }[] = [
+      { path: "/workspace", status: "active" },
+    ];
+    let currentWorkspace: string | undefined = "/workspace";
+    const snapshot = {
+      projects: [],
+      ungrouped: [
+        {
+          ahead: 0,
+          behind: 0,
+          changes: 0,
+          current: true,
+          linked: false,
+          name: "workspace",
+          path: "/workspace",
+        },
+      ],
+    };
+    const closeWorkspace = vi.fn<() => Promise<void>>(async () => {
+      await Promise.resolve();
+      currentWorkspace = undefined;
+    });
+    const provider = new MischiefView(
+      testValue<never>({
+        open: async () => {
+          await Promise.resolve();
+          return snapshot;
+        },
+        refresh: async () => {
+          await Promise.resolve();
+          return workspaces.some((workspace) => workspace.status === "active")
+            ? snapshot
+            : { projects: [], ungrouped: [] };
+        },
+      }),
+      testValue<never>({
+        closeWorkspace,
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({
+          ...(isNonEmpty(currentWorkspace)
+            ? { workspace: currentWorkspace }
+            : {}),
+          threads: [],
+        }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({
+        get: (_key: string, fallback: unknown) => fallback,
+      }),
+      testValue<never>({
+        onChange: (listener: () => void) => {
+          databaseChanged = listener;
+        },
+        snapshot: () => ({ workspaces }),
+      })
+    );
+    await provider.initialize("/workspace");
+    vscode.executeCommand.mockClear();
+    workspaces = [{ path: "/workspace", status: "inactive" }];
+    databaseChanged?.();
+
+    await vi.waitFor(() => {
+      expect({
+        closes: closeWorkspace.mock.calls,
+        commands: vscode.executeCommand.mock.calls,
+      }).toStrictEqual({
+        closes: [[]],
+        commands: [["workbench.action.closeWindow"]],
+      });
+    });
+  });
+
+  test("posts Workspace expansion and action-menu requests to the Navigator", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     const provider = new MischiefView(
       testValue<never>({}),
@@ -1853,14 +1990,16 @@ describe("view provider", () => {
 
     provider.setAllExpanded(true);
     provider.setAllExpanded(false);
+    provider.toggleActionsMenu();
 
     expect(postMessage.mock.calls).toStrictEqual([
       [{ expanded: true, type: "setAllExpanded" }],
       [{ expanded: false, type: "setAllExpanded" }],
+      [{ type: "toggleActionsMenu" }],
     ]);
   });
 
-  test("updates the native toggle after Navigator expansion changes", async () => {
+  test("routes webview action-menu choices to host actions", async () => {
     let receive: ((message: unknown) => void) | undefined;
     const provider = new MischiefView(
       testValue<never>({}),
@@ -1889,16 +2028,26 @@ describe("view provider", () => {
         },
       })
     );
-    vscode.executeCommand.mockClear();
+    const addWorkspace = vi.spyOn(provider, "addWorkspace").mockResolvedValue();
+    const refresh = vi.spyOn(provider, "refresh").mockResolvedValue();
+    const showSettings = vi
+      .spyOn(provider, "showSettings")
+      .mockImplementation(() => {});
 
-    receive?.({ expanded: true, type: "navigatorExpanded" });
-    receive?.({ expanded: false, type: "navigatorExpanded" });
+    receive?.({ type: "addWorkspace" });
+    receive?.({ type: "refresh" });
+    receive?.({ type: "showSettings" });
 
     await vi.waitFor(() => {
-      expect(vscode.executeCommand.mock.calls).toStrictEqual([
-        ["setContext", "mischief.navigatorAllExpanded", true],
-        ["setContext", "mischief.navigatorAllExpanded", false],
-      ]);
+      expect({
+        addWorkspace: addWorkspace.mock.calls,
+        refresh: refresh.mock.calls,
+        showSettings: showSettings.mock.calls,
+      }).toStrictEqual({
+        addWorkspace: [[]],
+        refresh: [[]],
+        showSettings: [[]],
+      });
     });
   });
 
