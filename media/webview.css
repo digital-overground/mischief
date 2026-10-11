@@ -585,20 +585,42 @@ select:disabled {
 #thread-header {
   min-height: 38px;
   padding: 7px 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
   border-bottom: 1px solid var(--vscode-focusBorder);
-  background: color-mix(
-    in srgb,
-    var(--vscode-sideBarSectionHeader-background) 90%,
-    var(--vscode-focusBorder) 10%
+  color: var(--vscode-titleBar-activeForeground, var(--vscode-foreground));
+  background: var(
+    --vscode-titleBar-activeBackground,
+    var(--vscode-sideBarSectionHeader-background)
   );
   font-size: 13px;
   text-transform: none;
 }
+#rename-thread {
+  justify-self: start;
+}
 #thread-title {
   font-size: 15px;
+  text-align: center;
+}
+.thread-header-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
 }
 #thread-header .thread-agent {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
   font-size: 12px;
+  text-overflow: ellipsis;
+}
+#thread-header .thread-agent:hover {
+  color: inherit;
+}
+#close-thread {
+  flex: none;
 }
 #usage-control {
   position: relative;

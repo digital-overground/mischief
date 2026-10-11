@@ -153,45 +153,47 @@ export const ThreadView = ({
           <span className="heading" id="thread-title">
             {setup ? "Setup" : (selected?.name ?? "Thread")}
           </span>
-          {!setup &&
-            selected &&
-            (selected.id === null ? (
-              <button
-                type="button"
-                className="thread-agent"
-                title="Choose Agent for new Thread"
-                onClick={() => {
-                  postMessage({ type: "chooseAgent" });
-                }}
-              >
-                {selected.agentId
-                  ? `${AGENTS[selected.agentId].name} ▾`
-                  : "Choose Agent ▾"}
-              </button>
-            ) : (
-              <span
-                className="thread-agent"
-                title="This Thread's Agent cannot be changed"
-              >
-                {selected.agentId
-                  ? AGENTS[selected.agentId].name
-                  : "Choose Agent"}
-              </span>
-            ))}
-          <button
-            className="icon"
-            id="close-thread"
-            title="Close Thread"
-            aria-label="Close Thread"
-            disabled={!isNonEmpty(selected?.id)}
-            onClick={() => {
-              if (isNonEmpty(selected?.id)) {
-                postMessage({ id: selected.id, type: "removeThread" });
-              }
-            }}
-          >
-            <SvgIcon className="thread-action-icon" kind="x" />
-          </button>
+          <div className="thread-header-actions">
+            {!setup &&
+              selected &&
+              (selected.id === null ? (
+                <button
+                  type="button"
+                  className="thread-agent"
+                  title="Choose Agent for new Thread"
+                  onClick={() => {
+                    postMessage({ type: "chooseAgent" });
+                  }}
+                >
+                  {selected.agentId
+                    ? `${AGENTS[selected.agentId].name} ▾`
+                    : "Choose Agent ▾"}
+                </button>
+              ) : (
+                <span
+                  className="thread-agent"
+                  title="This Thread's Agent cannot be changed"
+                >
+                  {selected.agentId
+                    ? AGENTS[selected.agentId].name
+                    : "Choose Agent"}
+                </span>
+              ))}
+            <button
+              className="icon"
+              id="close-thread"
+              title="Close Thread"
+              aria-label="Close Thread"
+              disabled={!isNonEmpty(selected?.id)}
+              onClick={() => {
+                if (isNonEmpty(selected?.id)) {
+                  postMessage({ id: selected.id, type: "removeThread" });
+                }
+              }}
+            >
+              <SvgIcon className="thread-action-icon" kind="x" />
+            </button>
+          </div>
         </header>
         <div
           id="chat"

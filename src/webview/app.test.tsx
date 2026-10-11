@@ -309,12 +309,12 @@ describe("React webview", () => {
     }
     expect(
       [...header.children].map((child) => child.id || child.className)
-    ).toStrictEqual([
-      "rename-thread",
-      "thread-title",
-      "thread-agent",
-      "close-thread",
-    ]);
+    ).toStrictEqual(["rename-thread", "thread-title", "thread-header-actions"]);
+    expect(
+      [...(header.querySelector(".thread-header-actions")?.children ?? [])].map(
+        (child) => child.id || child.className
+      )
+    ).toStrictEqual(["thread-agent", "close-thread"]);
     postMessage.mockClear();
     act(() => {
       rename.click();
