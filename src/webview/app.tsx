@@ -124,17 +124,17 @@ export const App = (): React.JSX.Element => {
       [
         ...snapshot.projects.projects.flatMap((project) => project.workspaces),
         ...snapshot.projects.ungrouped,
-      ].find((workspace) => workspace.current)?.path,
+      ].find((workspace) => workspace.current),
     [snapshot.projects]
   );
   useEffect(() => {
-    if ((currentWorkspace ?? null) === previousWorkspace.current) {
+    if ((currentWorkspace?.path ?? null) === previousWorkspace.current) {
       return;
     }
-    previousWorkspace.current = currentWorkspace ?? null;
+    previousWorkspace.current = currentWorkspace?.path ?? null;
     setContextItems([]);
     postMessage({ type: "contextItems" });
-  }, [currentWorkspace]);
+  }, [currentWorkspace?.path]);
 
   return (
     <>
@@ -155,6 +155,7 @@ export const App = (): React.JSX.Element => {
         <ThreadView
           contextItems={contextItems}
           setup={snapshot.setup}
+          workspaceColor={currentWorkspace?.color}
           snapshot={snapshot.threads}
           transcript={transcript}
         />

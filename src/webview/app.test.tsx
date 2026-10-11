@@ -294,6 +294,32 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("matches the current Workspace window color in the Thread header", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent<HostToWebviewMessage>("message", {
+          data: {
+            font: "Test Mono",
+            projects: {
+              projects: [],
+              ungrouped: [
+                { ...workspaceSummary("workspace", true), color: "#123abc" },
+              ],
+            },
+            threads: { threads: [], workspace: "/workspace" },
+            type: "state",
+          },
+        })
+      );
+    });
+    expect(
+      document.querySelector<HTMLElement>("#thread-header")?.style
+        .backgroundColor
+    ).toBe("rgb(18, 58, 188)");
+    await unmount();
+  });
+
   test("puts Rename on the left and Close on the right of the Thread title", async () => {
     const unmount = await renderApp();
     act(() => {
