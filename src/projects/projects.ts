@@ -142,17 +142,15 @@ export class Projects {
       this.database.snapshot().workspaces.map((workspace) => workspace.path)
     );
     const locations = imported.flat();
-    await Promise.all(
-      [
-        ...new Map(
-          locations.map((location) => [location.path, location])
-        ).values(),
-      ]
-        .filter((workspace) => !existing.has(workspace.path))
-        .map(async (workspace) => {
-          await this.activate(workspace);
-        })
-    );
+    const missing = [
+      ...new Map(
+        locations.map((location) => [location.path, location])
+      ).values(),
+    ].filter((workspace) => !existing.has(workspace.path));
+    for (const workspace of missing) {
+      // oxlint-disable-next-line no-await-in-loop -- serialize imports to avoid concurrent profile writes
+      await this.activate(workspace);
+    }
   }
 
   async listOpenIssues(
