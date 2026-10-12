@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mischief · architecture review · 12 Oct 2026</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "neutral",
+        securityLevel: "strict",
+      });
+    </script>
+    <style>
+      body {
+        background: #f7f5f0;
+        color: #182239;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+      }
+      .page {
+        max-width: 1120px;
+        margin: auto;
+        padding: 56px 24px 90px;
+      }
+      .eyebrow {
+        color: #345e76;
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+      }
+      h1,
+      h2,
+      h3 {
+        font-family: Georgia, ui-serif, serif;
+        font-weight: normal;
+      }
+      .card {
+        background: white;
+        border: 1px solid #d8d5ca;
+        border-radius: 20px;
+        padding: 32px;
+        margin: 38px 0;
+        box-shadow: 0 12px 42px #1822390b;
+      }
+      .pair {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+        margin: 24px 0;
+      }
+      .diagram {
+        min-height: 320px;
+        border: 1px solid #dadfdc;
+        border-radius: 14px;
+        padding: 18px;
+        background: #f8faf8;
+        overflow-x: auto;
+      }
+      .diagram.after {
+        background: #f0f5f1;
+        border-color: #b7cfbd;
+      }
+      .diagram-label {
+        color: #496071;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        margin-bottom: 17px;
+      }
+      .seam-line {
+        border-top: 2px dashed #8194a0;
+        margin: 12px 0;
+        position: relative;
+      }
+      .seam-line::after {
+        content: "seam";
+        color: #607080;
+        background: #f0f5f1;
+        font-size: 0.68rem;
+        position: absolute;
+        right: 0;
+        top: -11px;
+        padding-left: 6px;
+      }
+      .mini {
+        font-size: 0.8rem;
+        padding: 9px 12px;
+        border: 1px solid #b6c2c7;
+        border-radius: 9px;
+        background: white;
+      }
+      .deep {
+        background: #182c3d;
+        color: white;
+        border: 3px solid #182c3d;
+        border-radius: 14px;
+        padding: 18px;
+      }
+      .inner {
+        background: #284252;
+        color: #e7eff0;
+        border: 1px solid #58707c;
+        border-radius: 8px;
+        padding: 7px;
+        font-size: 0.72rem;
+      }
+      .arrow {
+        text-align: center;
+        color: #286a59;
+        font-size: 1.55rem;
+        line-height: 1.2;
+      }
+      .leak {
+        color: #b1433c;
+      }
+      .file {
+        font:
+          0.78rem ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        color: #274353;
+      }
+      .badge {
+        border-radius: 99px;
+        padding: 6px 12px;
+        font-size: 0.72rem;
+        font-weight: 700;
+      }
+      .strong {
+        background: #d7eddd;
+        color: #1b633e;
+      }
+      .worth {
+        background: #f8eacb;
+        color: #855720;
+      }
+      .spec {
+        background: #e5e8ea;
+        color: #455461;
+      }
+      .type {
+        background: #e9edf0;
+        color: #334c60;
+      }
+      .facts {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 24px;
+        font-size: 0.88rem;
+        line-height: 1.55;
+      }
+      .facts h3 {
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-size: 0.69rem;
+        color: #507080;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+      }
+      .wins {
+        font-size: 0.83rem;
+        margin-top: 18px;
+        color: #345e52;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .wins span {
+        padding: 6px 9px;
+        background: #eef6f0;
+        border-radius: 6px;
+      }
+      .mermaid {
+        display: flex;
+        justify-content: center;
+        margin: 0;
+      }
+      @media (max-width: 770px) {
+        .pair,
+        .facts {
+          grid-template-columns: 1fr;
+        }
+        .card {
+          padding: 20px;
+        }
+        .page {
+          padding: 34px 16px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header>
+        <p class="eyebrow">Architecture / focused review</p>
+        <div class="flex flex-wrap items-end justify-between gap-3">
+          <h1 class="mt-2 text-5xl">Mischief</h1>
+          <p class="text-sm text-slate-500">
+            12 Oct 2026 · recent Workspace navigation and Thread changes
+          </p>
+        </div>
+        <div
+          class="mt-8 flex flex-wrap gap-5 border-y border-stone-300 py-4 text-xs text-slate-600"
+        >
+          <span>□ solid box = module</span><span>┄ dashed line = seam</span>
+          <span class="leak">→ red = leaked decision</span
+          ><span>■ dark box = deep module</span>
+        </div>
+      </header>
+
+      <section id="candidates">
+        <article id="thread-transcript" class="card">
+          <header>
+            <div class="flex gap-2">
+              <span class="badge strong">Strong</span
+              ><span class="badge type">in-process</span>
+            </div>
+            <h2 class="mt-4 text-3xl">
+              Deepen the Thread transcript projection
+            </h2>
+            <p class="mt-3 text-sm text-slate-600">
+              <b>Files</b> · <span class="file">src/webview/app.tsx</span> ·
+              <span class="file"
+                >src/webview/threads/detail/thread-view.tsx</span
+              >
+              ·
+              <span class="file"
+                >src/webview/threads/detail/transcript.tsx</span
+              >
+              · <span class="file">src/webview/app.test.tsx</span>
+            </p>
+          </header>
+          <div class="pair">
+            <div class="diagram">
+              <p class="diagram-label">
+                Before · three partial views of one Thread
+              </p>
+              <pre class="mermaid">
+flowchart TB
+  H[Threads snapshot + item updates] --> A[App: accumulate by ID]
+  A --> V[Thread view: merge for jumps + plans]
+  A --> R[Transcript: replace tail only]
+  H --> V
+  H --> R
+  V -. "non-tail updates disagree" .-> R
+  classDef mod fill:#fff,stroke:#8399a4,color:#182239;
+  classDef leak fill:#fbe9e6,stroke:#b1433c,color:#742c28;
+  class H,A,V mod;
+  class R leak;
+              </pre>
+            </div>
+            <div class="diagram after">
+              <p class="diagram-label">
+                After · one ordered transcript inside the Thread view
+              </p>
+              <div class="flex justify-center gap-2 text-center">
+                <span class="mini">Snapshot</span
+                ><span class="mini">Streamed item</span>
+              </div>
+              <div class="arrow">↘ &nbsp; ↙</div>
+              <div class="seam-line"></div>
+              <div class="deep text-center">
+                <p class="text-xs tracking-widest text-teal-200 uppercase">
+                  Thread transcript module
+                </p>
+                <p class="mt-2 text-sm">One ordering and replacement rule</p>
+                <div class="mt-4 grid grid-cols-3 gap-2">
+                  <span class="inner">history</span
+                  ><span class="inner">plans</span
+                  ><span class="inner">updates</span>
+                </div>
+              </div>
+              <div class="arrow">↓</div>
+              <div class="mini text-center">
+                One result for display, jumps and composer
+              </div>
+            </div>
+          </div>
+          <div class="facts">
+            <div>
+              <h3>Problem</h3>
+              <p>
+                Thread view merges updates by ID; transcript rendering replaces
+                only the last item. A late update to an earlier tool can render
+                twice.
+              </p>
+            </div>
+            <div>
+              <h3>Solution</h3>
+              <p>
+                Keep the existing webview seam; concentrate snapshot and
+                streamed-item ordering in one Thread transcript module, not
+                another public adapter.
+              </p>
+            </div>
+            <div>
+              <h3>Benefits &amp; tests</h3>
+              <p>
+                Locality: one merge rule. Leverage: display, jump and plan
+                agree. Test the interface through a streamed non-tail update in
+                the rendered Thread.
+              </p>
+            </div>
+          </div>
+          <div class="wins">
+            <span>Deletion test: remove competing merge paths</span
+            ><span>Depth: one ordered result</span><span>No new adapter</span>
+          </div>
+        </article>
+
+        <article id="project-navigation" class="card">
+          <header>
+            <div class="flex gap-2">
+              <span class="badge worth">Worth exploring</span
+              ><span class="badge type"
+                >local-substitutable · real Git tests</span
+              >
+            </div>
+            <h2 class="mt-4 text-3xl">
+              Let Projects own Workspace navigation order
+            </h2>
+            <p class="mt-3 text-sm text-slate-600">
+              <b>Files</b> ·
+              <span class="file">src/projects/projects.ts</span> ·
+              <span class="file">src/view.ts</span> ·
+              <span class="file">src/webview/app.tsx</span> ·
+              <span class="file">src/webview/navigator-pane.tsx</span> ·
+              <span class="file">src/projects/projects.test.ts</span> ·
+              <span class="file">src/webview/app.test.tsx</span>
+            </p>
+          </header>
+          <div class="pair">
+            <div class="diagram">
+              <p class="diagram-label">
+                Before · Projects' meaning reconstructed by each caller
+              </p>
+              <div class="space-y-2">
+                <div class="mini border-red-300">
+                  <b>Projects</b> · grouped; linked Workspaces first, then name
+                </div>
+                <p class="leak text-center text-lg">↙ &nbsp; ↓ &nbsp; ↘</p>
+                <div class="grid grid-cols-3 gap-2 text-center text-xs">
+                  <div class="mini">
+                    <b>VS Code view</b><br />flattens + finds current Project
+                  </div>
+                  <div class="mini">
+                    <b>App</b><br />flattens + finds current Workspace
+                  </div>
+                  <div class="mini border-red-300">
+                    <b>Navigator</b><br />re-sorts Workspaces by name
+                  </div>
+                </div>
+                <p class="leak pt-3 text-center text-xs">
+                  The same Workspace can have two ordering rules.
+                </p>
+              </div>
+            </div>
+            <div class="diagram after">
+              <p class="diagram-label">
+                After · navigation facts live with Projects
+              </p>
+              <div class="deep text-center">
+                <p class="text-xs tracking-widest text-teal-200 uppercase">
+                  Deep Projects module
+                </p>
+                <div class="mt-4 grid grid-cols-3 gap-2">
+                  <span class="inner">Project grouping</span
+                  ><span class="inner">Workspace order</span
+                  ><span class="inner">current association</span>
+                </div>
+              </div>
+              <div class="seam-line"></div>
+              <div class="arrow">↓ &nbsp; ↓ &nbsp; ↓</div>
+              <div class="grid grid-cols-3 gap-2 text-center text-xs">
+                <div class="mini">VS Code view</div>
+                <div class="mini">App</div>
+                <div class="mini">Navigator</div>
+              </div>
+              <p class="mt-5 text-center text-xs text-slate-500">
+                Presentation stays in the webview; Git stays inside Projects.
+              </p>
+            </div>
+          </div>
+          <div class="facts">
+            <div>
+              <h3>Problem</h3>
+              <p>
+                Projects sorts linked Workspaces first, but the Navigator
+                re-sorts them alphabetically; current Workspace and Project
+                identity are repeatedly rediscovered.
+              </p>
+            </div>
+            <div>
+              <h3>Solution</h3>
+              <p>
+                Make Projects the single owner of navigation facts. Remove
+                caller-specific grouping, sorting and reverse lookups without
+                moving UI behavior into Projects.
+              </p>
+            </div>
+            <div>
+              <h3>Benefits &amp; tests</h3>
+              <p>
+                Locality: Workspace ordering changes once. Leverage: three
+                callers share it. Test Projects through real Git and the
+                Navigator through its rendered rows.
+              </p>
+            </div>
+          </div>
+          <div class="wins">
+            <span>Deletion test: caller lookups go away</span
+            ><span>Depth: smaller caller knowledge</span
+            ><span>Existing seam; no extra adapter</span>
+          </div>
+        </article>
+
+        <article id="agent-status" class="card">
+          <header>
+            <div class="flex gap-2">
+              <span class="badge worth">Worth exploring</span
+              ><span class="badge type">in-process status flow</span>
+            </div>
+            <h2 class="mt-4 text-3xl">
+              Keep Agent status in its owning module
+            </h2>
+            <p class="mt-3 text-sm text-slate-600">
+              <b>Files</b> · <span class="file">src/agents/manager.ts</span> ·
+              <span class="file">src/extension.ts</span> ·
+              <span class="file">src/view.ts</span> ·
+              <span class="file">src/webview/protocol.ts</span> ·
+              <span class="file">src/webview/settings-dialog.tsx</span> ·
+              <span class="file">src/view.test.ts</span>
+            </p>
+          </header>
+          <div class="pair">
+            <div class="diagram">
+              <p class="diagram-label">
+                Before · status travels through a mirror
+              </p>
+              <pre class="mermaid">
+flowchart LR
+  M[AgentManager: full statuses] --> E[Extension: loop per Agent]
+  E --> V[View: mirrored statuses]
+  V --> W[Webview: full list per Agent]
+  W --> D[Settings: render]
+  P[Webview protocol: AgentSetting] -. "type leaks inward" .-> M
+  classDef mod fill:#fff,stroke:#8399a4,color:#182239;
+  classDef leak fill:#fbe9e6,stroke:#b1433c,color:#742c28;
+  class M,E,W,D mod;
+  class V,P leak;
+              </pre>
+            </div>
+            <div class="diagram after">
+              <p class="diagram-label">After · one owner and one delivery</p>
+              <div class="deep text-center">
+                <p class="text-xs tracking-widest text-teal-200 uppercase">
+                  Agent status module
+                </p>
+                <p class="mt-2 text-sm">Status meaning and current snapshot</p>
+                <div class="inner mt-4">
+                  Managed install · update · availability
+                </div>
+              </div>
+              <div class="seam-line"></div>
+              <div class="arrow">↓</div>
+              <div class="mini text-center">
+                VS Code view adapter · forwards one snapshot
+              </div>
+              <div class="arrow">↓</div>
+              <div class="mini text-center">
+                Settings · displays Agent status
+              </div>
+            </div>
+          </div>
+          <div class="facts">
+            <div>
+              <h3>Problem</h3>
+              <p>
+                AgentManager owns statuses, but imports their type from the
+                webview protocol. The view mirrors the list and sends it once
+                per Agent on each change.
+              </p>
+            </div>
+            <div>
+              <h3>Solution</h3>
+              <p>
+                Keep status meaning in the existing Agent module; have the VS
+                Code view adapter forward its snapshot once. Remove the mirrored
+                status state.
+              </p>
+            </div>
+            <div>
+              <h3>Benefits &amp; tests</h3>
+              <p>
+                Locality: one status owner. Leverage: Settings receives one
+                consistent list. Test the manager interface and one forwarded
+                view message.
+              </p>
+            </div>
+          </div>
+          <div class="wins">
+            <span>Deletion test: mirror disappears</span
+            ><span>Depth: no UI type inside Agent logic</span
+            ><span>No new seam or adapter</span>
+          </div>
+        </article>
+      </section>
+
+      <section
+        id="top-recommendation"
+        class="rounded-2xl bg-slate-900 p-8 text-white"
+      >
+        <p class="eyebrow text-teal-300">Top recommendation</p>
+        <h2 class="mt-3 text-3xl">
+          <a
+            href="#thread-transcript"
+            class="underline decoration-teal-400 underline-offset-4"
+            >Deepen the Thread transcript projection</a
+          >
+        </h2>
+        <p class="mt-3 text-sm text-slate-300">
+          It fixes a concrete inconsistency at the hottest test seam without
+          reopening ADR-0001 or splitting the already-deep Threads and Profile
+          Database modules.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

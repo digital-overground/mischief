@@ -26,6 +26,7 @@ export const App = (): React.JSX.Element => {
     threadId?: string;
   }>({ items: [], streaming: false });
   const previousWorkspace = useRef<string | null>(null);
+  const selectedThreadId = useRef<string | null>(null);
 
   useEffect(() => {
     const receive = (event: MessageEvent<HostToWebviewMessage>): void => {
@@ -39,6 +40,7 @@ export const App = (): React.JSX.Element => {
         }
         setThreadMaximized(!event.data.expanded);
       } else if (event.data.type === "state") {
+        selectedThreadId.current = event.data.threads.selected?.id ?? null;
         setSnapshot(event.data);
         setTranscript({ items: [], streaming: false });
       } else if (event.data.type === "sessionOperation") {
@@ -61,6 +63,9 @@ export const App = (): React.JSX.Element => {
         });
       } else if (event.data.type === "transcript") {
         const update = event.data;
+        if (update.threadId !== selectedThreadId.current) {
+          return;
+        }
         setTranscript((current) => {
           const items =
             current.threadId === update.threadId ? current.items : [];

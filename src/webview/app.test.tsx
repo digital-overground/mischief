@@ -100,6 +100,21 @@ const renderApp = async (): Promise<() => Promise<void>> => {
   };
 };
 
+const sendTranscriptItem = (threadId: string, text: string): void => {
+  act(() => {
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: {
+          item: { id: `${threadId}-message`, kind: "assistant", text },
+          streaming: true,
+          threadId,
+          type: "transcript",
+        } satisfies HostToWebviewMessage,
+      })
+    );
+  });
+};
+
 describe("React webview", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -2254,6 +2269,27 @@ describe("React webview", () => {
     expect(document.querySelector("#transcript")?.textContent).not.toContain(
       "Message 0"
     );
+    const lastEntry = document.querySelector('[data-message-id="item-209"]');
+    if (!lastEntry) {
+      throw new Error("Missing last Thread entry");
+    }
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            item: { id: "item-0", kind: "assistant", text: "Updated first" },
+            streaming: true,
+            threadId: "long",
+            type: "transcript",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    expect({
+      count: document.querySelectorAll("#transcript .entry").length,
+      preserved:
+        document.querySelector('[data-message-id="item-209"]') === lastEntry,
+    }).toStrictEqual({ count: 100, preserved: true });
     const chat = document.querySelector<HTMLDivElement>("#chat");
     if (!chat) {
       throw new Error("Missing chat");
@@ -2262,6 +2298,15 @@ describe("React webview", () => {
       chat.dispatchEvent(new Event("scroll", { bubbles: true }));
     });
     expect(document.querySelectorAll("#transcript .entry")).toHaveLength(200);
+    act(() => {
+      chat.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    expect({
+      count: document.querySelectorAll("#transcript .entry").length,
+      first: [...document.querySelectorAll('[data-message-id="item-0"]')].map(
+        (entry) => entry.textContent
+      ),
+    }).toStrictEqual({ count: 210, first: ["Updated first"] });
     await unmount();
   });
 
@@ -2370,6 +2415,103 @@ describe("React webview", () => {
       scrollHeight: scrollHeight.mock.calls.length,
       scrollTop: scrollTop.mock.calls.length,
     }).toStrictEqual({ clientHeight: 0, scrollHeight: 0, scrollTop: 0 });
+    await unmount();
+  });
+
+  test("keeps the selected Thread's stream when another Thread updates", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("first", []) })
+      );
+    });
+    sendTranscriptItem("first", "Live first");
+    const refreshed = threadState("first", []);
+    if (!refreshed.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    refreshed.threads.selected.items = [
+      { id: "first-message", kind: "assistant", text: "Committed first" },
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: refreshed }));
+    });
+    expect(document.querySelector("#transcript")?.textContent).toBe(
+      "Committed first"
+    );
+
+    const second = threadState("second", []);
+    if (!second.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    second.threads.selected.status = "running";
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: second }));
+    });
+    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+    if (!composer) {
+      throw new Error("Missing composer");
+    }
+    composer.value = "Unsent draft";
+    sendTranscriptItem("second", "Live second");
+    sendTranscriptItem("first", "Background update");
+
+    expect({
+      draft: composer.value,
+      processingHidden:
+        document.querySelector<HTMLElement>("#processing")?.hidden,
+      transcript: [...document.querySelectorAll("#transcript .entry")].map(
+        (entry) => entry.textContent
+      ),
+    }).toStrictEqual({
+      draft: "Unsent draft",
+      processingHidden: true,
+      transcript: ["Live second"],
+    });
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: refreshed }));
+    });
+    expect(document.querySelector("#transcript")?.textContent).toBe(
+      "Committed first"
+    );
+    await unmount();
+  });
+
+  test("renders the latest non-tail transcript item once in its original position", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (!state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    state.threads.selected.items = [
+      { id: "earlier", kind: "assistant", text: "Partial" },
+      { id: "later", kind: "user", text: "Later" },
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+      for (const item of [
+        { id: "earlier", kind: "assistant" as const, text: "Updated" },
+        { id: "earlier", kind: "assistant" as const, text: "Final" },
+        { id: "new", kind: "assistant" as const, text: "New" },
+      ]) {
+        window.dispatchEvent(
+          new MessageEvent("message", {
+            data: {
+              item,
+              streaming: true,
+              threadId: "selected",
+              type: "transcript",
+            } satisfies HostToWebviewMessage,
+          })
+        );
+      }
+    });
+
+    expect(
+      [...document.querySelectorAll("#transcript .entry")].map(
+        (entry) => entry.textContent
+      )
+    ).toStrictEqual(["Final", "Later", "New"]);
     await unmount();
   });
 
@@ -3052,6 +3194,57 @@ describe("React webview", () => {
       active: option,
       expanded: "true",
       selected: "true",
+    });
+    await unmount();
+  });
+
+  test("uses streamed Thread items for the plan, transcript and message history", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (!state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    state.threads.selected.items = [
+      { id: "plan", kind: "plan", text: "Old plan" },
+      { id: "reply", kind: "assistant", text: "Old reply" },
+      { id: "follow-up", kind: "user", text: "Follow-up" },
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+      for (const item of [
+        { id: "plan", kind: "plan" as const, text: "" },
+        { id: "reply", kind: "assistant" as const, text: "Latest reply" },
+      ]) {
+        window.dispatchEvent(
+          new MessageEvent("message", {
+            data: {
+              item,
+              streaming: true,
+              threadId: "selected",
+              type: "transcript",
+            } satisfies HostToWebviewMessage,
+          })
+        );
+      }
+    });
+    act(() => {
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="Message history"]')
+        ?.click();
+    });
+
+    expect({
+      history: [
+        ...document.querySelectorAll("#history-list .history-entry"),
+      ].map((entry) => entry.textContent),
+      plan: document.querySelector("#plan"),
+      transcript: [...document.querySelectorAll("#transcript .entry")].map(
+        (entry) => entry.textContent
+      ),
+    }).toStrictEqual({
+      history: ["Latest reply", "Follow-up"],
+      plan: null,
+      transcript: ["Latest reply", "Follow-up"],
     });
     await unmount();
   });

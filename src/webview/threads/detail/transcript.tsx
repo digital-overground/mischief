@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo } from "react";
 import type { ReactNode } from "react";
 
 import { isDefined, isNonEmpty, isNonZero, isRecord } from "../../../present";
@@ -606,7 +606,6 @@ export const Transcript = ({
   selected,
   selectedSetupOptions,
   setup,
-  streamedItems,
   visibleCount,
 }: {
   onCopied: () => void;
@@ -614,7 +613,6 @@ export const Transcript = ({
   selected?: RenderedThreadDetail;
   selectedSetupOptions: string[];
   setup?: RenderedSetupStep;
-  streamedItems: RenderedTranscriptItem[];
   visibleCount: number;
 }): React.JSX.Element => {
   const onTranscriptHighlight = async (): Promise<void> => {
@@ -628,19 +626,7 @@ export const Transcript = ({
       onCopied();
     }
   };
-  const { history, tail } = useMemo(() => {
-    const items = selected?.items.filter((item) => item.kind !== "plan") ?? [];
-    return { history: items.slice(0, -1), tail: items.at(-1) };
-  }, [selected?.items]);
-  const streamed = useMemo(
-    () => streamedItems.filter((item) => item.kind !== "plan"),
-    [streamedItems]
-  );
-  const tailWasUpdated = streamed.some((item) => item.id === tail?.id);
-  const committed = useMemo(
-    () => (tail && !tailWasUpdated ? [...history, tail] : history),
-    [history, tail, tailWasUpdated]
-  );
+  const items = selected?.items.filter((item) => item.kind !== "plan") ?? [];
   let content: ReactNode;
   if (setup) {
     content = (
@@ -665,14 +651,13 @@ export const Transcript = ({
     );
   } else if (!selected) {
     content = <div className="empty">Select an active Workspace.</div>;
-  } else if (history.length || tail || streamed.length) {
+  } else if (items.length) {
     content = (
       <>
-        {committed.length > visibleCount ? (
+        {items.length > visibleCount ? (
           <div className="empty">Scroll up to load older messages.</div>
         ) : null}
-        <TranscriptNodes items={committed.slice(-visibleCount)} />
-        <TranscriptNodes items={streamed} />
+        <TranscriptNodes items={items.slice(-visibleCount)} />
       </>
     );
   } else {

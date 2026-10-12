@@ -119,13 +119,8 @@ export const ThreadView = ({
     transcript.threadId === selected?.id
       ? transcript.streaming
       : selected?.streaming;
-  const plan =
-    transcriptItems.findLast(
-      (item) => item.kind === "plan" && isNonEmpty(item.text)
-    ) ??
-    selected?.items.find(
-      (item) => item.kind === "plan" && isNonEmpty(item.text)
-    );
+  const latestPlan = historyItems.findLast((item) => item.kind === "plan");
+  const plan = isNonEmpty(latestPlan?.text) ? latestPlan : undefined;
   const processingLabel =
     selected?.sessionOperation === "branchSummary"
       ? "Generating branch summary…"
@@ -234,7 +229,7 @@ export const ThreadView = ({
               onCopied={() => {
                 setCopyNotice((notice) => notice + 1);
               }}
-              selected={selected}
+              selected={selected && { ...selected, items: historyItems }}
               onSetupOptionChange={(id, checked) => {
                 setSelectedSetupOptions((current) =>
                   checked
@@ -244,7 +239,6 @@ export const ThreadView = ({
               }}
               selectedSetupOptions={selectedSetupOptions}
               setup={setup}
-              streamedItems={transcriptItems}
               visibleCount={visibleCount}
               key={setup ? "setup" : (selected?.id ?? "none")}
             />
