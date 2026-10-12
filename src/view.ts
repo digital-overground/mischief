@@ -1575,8 +1575,19 @@ export class MischiefView implements vscode.WebviewViewProvider {
         items: threads.selected.items.map(renderTranscriptItem),
       };
     }
-    const postMessage = this.view.webview.postMessage.bind(this.view.webview);
+    const { webview } = this.view;
+    const postMessage = webview.postMessage.bind(webview);
     return postMessage({
+      agentIcons: Object.fromEntries(
+        AGENT_IDS.map((id) => [
+          id,
+          webview
+            .asWebviewUri(
+              vscode.Uri.joinPath(this.extensionUri, AGENTS[id].icon)
+            )
+            .toString(),
+        ])
+      ),
       font:
         font !== undefined && font.length > 0 ? font : DEFAULT_MONO_FONT_FAMILY,
       projects: this.projectsSnapshot,

@@ -7,9 +7,11 @@ import {
   useState,
 } from "react";
 
+import type { AgentId } from "../agents/update";
 import { isNonEmpty } from "../present";
 import type { ProjectsSnapshot, Workspace } from "../projects/projects";
 import type { ThreadIndicator, ThreadSummary } from "../threads/threads/models";
+import { AgentIcon } from "./agent-icon";
 import { postMessage } from "./bridge";
 import { SvgIcon } from "./icon";
 import type { RenderedThreadsSnapshot } from "./protocol";
@@ -160,48 +162,9 @@ const WorkspaceMenu = ({
   </div>
 );
 
-const ThreadMenu = ({
-  dismiss,
-  id,
-  position,
-}: {
-  dismiss: () => void;
-  id: string;
-  position: { left: number; top: number };
-}): React.JSX.Element => (
-  <div
-    className="workspace-menu"
-    role="menu"
-    aria-label="Thread actions"
-    style={position}
-    onKeyDown={menuKeyDown}
-  >
-    <button
-      autoFocus
-      type="button"
-      role="menuitem"
-      onClick={() => {
-        postMessage({ id, type: "renameThread" });
-        dismiss();
-      }}
-    >
-      <SvgIcon kind="pencil" /> Rename Thread
-    </button>
-    <button
-      type="button"
-      role="menuitem"
-      onClick={() => {
-        postMessage({ id, type: "removeThread" });
-        dismiss();
-      }}
-    >
-      <SvgIcon kind="archive" /> Close Thread
-    </button>
-  </div>
-);
-
-// oxlint-disable-next-line complexity -- Workspace and Thread row actions share the menu state
+// oxlint-disable-next-line complexity -- Workspace menu and Thread row actions share this rendering path
 const WorkspaceNode = ({
+  agentIcons,
   parentMenuOpen,
   expanded,
   flyout,
@@ -213,6 +176,7 @@ const WorkspaceNode = ({
   threads,
   workspace,
 }: {
+  agentIcons?: Partial<Record<AgentId, string>>;
   parentMenuOpen: boolean;
   expanded: boolean;
   flyout: boolean;
@@ -226,11 +190,7 @@ const WorkspaceNode = ({
 }): React.JSX.Element => {
   const [closing, setClosing] = useState(false);
   const nodeRef = useRef<HTMLDivElement>(null);
-  const [menu, setMenu] = useState<{
-    left: number;
-    top: number;
-    threadId?: string;
-  } | null>(null);
+  const [menu, setMenu] = useState<{ left: number; top: number } | null>(null);
   useEffect(() => {
     if (parentMenuOpen) {
       setMenu(null);
@@ -263,14 +223,13 @@ const WorkspaceNode = ({
       document.removeEventListener("keydown", escape);
     };
   }, [menu]);
-  const showMenu = (x: number, y: number, threadId?: string): void => {
+  const showMenu = (x: number, y: number): void => {
     setMenu({
       left: Math.max(4, Math.min(x, window.innerWidth - 216)),
       top: Math.max(
         4,
         Math.min(y, window.innerHeight - Math.min(window.innerHeight - 8, 152))
       ),
-      ...(isNonEmpty(threadId) ? { threadId } : {}),
     });
   };
   const closeWorkspace = (): void => {
@@ -373,10 +332,10 @@ const WorkspaceNode = ({
             title="Workspace actions"
             aria-label="Workspace actions"
             aria-haspopup="menu"
-            aria-expanded={menu !== null && menu.threadId === undefined}
+            aria-expanded={menu !== null}
             onClick={(event) => {
               event.stopPropagation();
-              if (menu && menu.threadId === undefined) {
+              if (menu) {
                 setMenu(null);
               } else {
                 const rect = event.currentTarget.getBoundingClientRect();
@@ -388,7 +347,7 @@ const WorkspaceNode = ({
           </button>
         ) : null}
       </div>
-      {menu && menu.threadId === undefined && workspace.current ? (
+      {menu && workspace.current ? (
         <WorkspaceMenu
           close={closeWorkspace}
           dismiss={() => {
@@ -399,28 +358,16 @@ const WorkspaceNode = ({
           projectRoot={projectRoot}
         />
       ) : null}
-      {isNonEmpty(menu?.threadId) ? (
-        <ThreadMenu
-          dismiss={() => {
-            setMenu(null);
-          }}
-          id={menu.threadId}
-          position={menu}
-        />
-      ) : null}
       {(workspace.current || flyout) && expanded ? (
         <div className="workspace-threads">
           {threads.map((thread) => (
             <div
-              className={`row thread-row${selectedId === thread.id ? " selected" : ""}`}
+              className={`row thread-row${selectedId === thread.id ? " selected" : ""}${!flyout && thread.indicator !== "idle" ? " has-status" : ""}`}
               key={thread.id}
-              onContextMenu={(event) => {
-                if (workspace.current) {
-                  event.preventDefault();
-                  showMenu(event.clientX, event.clientY, thread.id);
-                }
-              }}
             >
+              {!flyout && thread.indicator !== "idle" ? (
+                <StatusIndicator kind={thread.indicator} />
+              ) : null}
               <button
                 className="row-open"
                 type="button"
@@ -433,32 +380,29 @@ const WorkspaceNode = ({
                 <span className="name">{thread.name}</span>
                 <span className="meta thread-activity">
                   {compactTime(thread.updatedAt, now)}
+                  <AgentIcon
+                    id={thread.agentId ?? "magpi-acp"}
+                    icons={agentIcons}
+                  />
                 </span>
               </button>
               {workspace.current ? (
                 <button
                   className="icon"
                   type="button"
-                  title="Thread actions"
-                  aria-label="Thread actions"
-                  aria-haspopup="menu"
-                  aria-expanded={menu?.threadId === thread.id}
+                  title="Close Thread"
+                  aria-label="Close Thread"
                   onClick={(event) => {
                     event.stopPropagation();
-                    if (menu?.threadId === thread.id) {
-                      setMenu(null);
-                    } else {
-                      const rect = event.currentTarget.getBoundingClientRect();
-                      showMenu(rect.right - 208, rect.bottom, thread.id);
-                    }
+                    postMessage({ id: thread.id, type: "removeThread" });
                   }}
                 >
-                  <SvgIcon className="thread-action-icon" kind="moreVertical" />
+                  <SvgIcon className="thread-action-icon" kind="x" />
                 </button>
               ) : null}
-              {thread.indicator === "idle" ? null : (
+              {flyout && thread.indicator !== "idle" ? (
                 <StatusIndicator kind={thread.indicator} />
-              )}
+              ) : null}
             </div>
           ))}
         </div>
@@ -468,6 +412,7 @@ const WorkspaceNode = ({
 };
 
 const WorkspaceList = ({
+  agentIcons,
   parentMenuOpen,
   emptyMessage,
   expanded,
@@ -479,6 +424,7 @@ const WorkspaceList = ({
   projectRoot,
   threads,
 }: {
+  agentIcons?: Partial<Record<AgentId, string>>;
   parentMenuOpen: boolean;
   emptyMessage: string;
   expanded: boolean;
@@ -499,6 +445,7 @@ const WorkspaceList = ({
         {index > 0 ? <hr className="project-divider" /> : null}
         {group.map((workspace) => (
           <WorkspaceNode
+            agentIcons={agentIcons}
             parentMenuOpen={parentMenuOpen}
             expanded={flyout || (workspace.current && expanded)}
             flyout={flyout}
@@ -521,6 +468,7 @@ const WorkspaceList = ({
 );
 
 const NavigatorPaneView = ({
+  agentIcons,
   collapseAll,
   expandAllRequest,
   onDismissProjectsMenu,
@@ -530,6 +478,7 @@ const NavigatorPaneView = ({
   projectsMenuOpen,
   threads,
 }: {
+  agentIcons?: Partial<Record<AgentId, string>>;
   collapseAll: boolean;
   expandAllRequest: number;
   onDismissProjectsMenu: () => void;
@@ -735,6 +684,7 @@ const NavigatorPaneView = ({
           </div>
           <hr />
           <WorkspaceList
+            agentIcons={agentIcons}
             parentMenuOpen={projectsMenuOpen}
             emptyMessage="No active Workspaces. Add one with ＋."
             expanded={expanded}
@@ -749,6 +699,7 @@ const NavigatorPaneView = ({
         </div>
       ) : null}
       <WorkspaceList
+        agentIcons={agentIcons}
         parentMenuOpen={projectsMenuOpen}
         emptyMessage={
           workspaces.length > 0

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { act } from "react";
 // @vitest-environment jsdom
 import { createRoot } from "react-dom/client";
@@ -27,7 +29,7 @@ const threadState = (
   id: string,
   drafts: string[],
   agentId: AgentId | null = "magpi-acp"
-): HostToWebviewMessage => ({
+): Extract<HostToWebviewMessage, { type: "state" }> => ({
   font: "Test Mono",
   projects: { projects: [], ungrouped: [] },
   threads: {
@@ -380,6 +382,84 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("shows the configured Agent icons in the title and beside each Thread time", async () => {
+    const unmount = await renderApp();
+    const base = threadState("selected", [], "codex-acp");
+    const icons = {
+      "claude-agent-acp": "webview:/media/agents/claude-acp.svg",
+      "codex-acp": "webview:/media/agents/codex-acp.svg",
+      "magpi-acp": "webview:/media/agents/magpi-acp.svg",
+    };
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            ...base,
+            agentIcons: icons,
+            projects: {
+              projects: [],
+              ungrouped: [workspaceSummary("workspace", true)],
+            },
+            threads: {
+              ...base.threads,
+              threads: [
+                {
+                  ...threadSummary("first", "First", "/workspace"),
+                  agentId: "magpi-acp",
+                },
+                {
+                  ...threadSummary("second", "Second", "/workspace"),
+                  agentId: "claude-agent-acp",
+                },
+                {
+                  ...threadSummary("third", "Third", "/workspace"),
+                  agentId: "codex-acp",
+                },
+              ],
+            },
+          },
+        })
+      );
+    });
+    expect(document.querySelector(".thread-header-agent")?.textContent).toBe(
+      ""
+    );
+    expect(
+      document
+        .querySelector(".thread-header-agent .agent-icon")
+        ?.getAttribute("aria-label")
+    ).toBe("Codex");
+    expect(
+      [...document.querySelectorAll("#navigator-list .thread-activity")].map(
+        (activity) => ({
+          agent: activity
+            .querySelector(".agent-icon")
+            ?.getAttribute("aria-label"),
+          icon: activity.querySelector<HTMLElement>(".agent-icon")?.style
+            .maskImage,
+          time: activity.firstChild?.textContent,
+        })
+      )
+    ).toStrictEqual([
+      {
+        agent: "MagPi",
+        icon: `url("${icons["magpi-acp"]}")`,
+        time: testValue<unknown>(expect.any(String)),
+      },
+      {
+        agent: "Claude Agent",
+        icon: `url("${icons["claude-agent-acp"]}")`,
+        time: testValue<unknown>(expect.any(String)),
+      },
+      {
+        agent: "Codex",
+        icon: `url("${icons["codex-acp"]}")`,
+        time: testValue<unknown>(expect.any(String)),
+      },
+    ]);
+    await unmount();
+  });
+
   test("shows a button tooltip after a short hover delay", async () => {
     vi.useFakeTimers();
     const unmount = await renderApp();
@@ -435,7 +515,7 @@ describe("React webview", () => {
       'input[type="checkbox"]'
     );
     const defaultAgent =
-      dialog?.querySelector<HTMLSelectElement>("#default-agent");
+      dialog?.querySelector<HTMLButtonElement>("#default-agent");
     const close = dialog?.querySelector<HTMLButtonElement>(
       '[aria-label="Close Settings"]'
     );
@@ -480,7 +560,7 @@ describe("React webview", () => {
     expect({
       agent: dialog.querySelector(".settings-agent")?.textContent,
       checked: checkbox.checked,
-      defaultAgent: defaultAgent.value,
+      defaultAgent: defaultAgent.textContent?.trim(),
       defaultChecked,
       description: dialog.querySelector(".settings-description")?.textContent,
       open: dialog.open,
@@ -488,7 +568,7 @@ describe("React webview", () => {
     }).toStrictEqual({
       agent: "MagPiInstalled 0.3.0 · Latest 0.3.0 · Up to dateInstall managed",
       checked: false,
-      defaultAgent: "",
+      defaultAgent: "Choose each time",
       defaultChecked: true,
       description:
         "Automatically assigns colors from the active theme to Workspace windows that do not already define them.",
@@ -498,9 +578,21 @@ describe("React webview", () => {
 
     postMessage.mockClear();
     act(() => {
-      defaultAgent.value = "magpi-acp";
-      defaultAgent.dispatchEvent(new Event("change", { bubbles: true }));
+      defaultAgent.click();
     });
+    const magpiOption = [
+      ...dialog.querySelectorAll<HTMLButtonElement>('[role="option"]'),
+    ].find((option) => option.textContent?.includes("MagPi"));
+    if (!magpiOption) {
+      throw new Error("Missing MagPi option");
+    }
+    act(() => {
+      magpiOption.click();
+    });
+    expect({
+      expanded: defaultAgent.getAttribute("aria-expanded"),
+      label: defaultAgent.textContent?.trim(),
+    }).toStrictEqual({ expanded: "false", label: "MagPi" });
     expect(postMessage).toHaveBeenCalledExactlyOnceWith({
       id: "magpi-acp",
       type: "setDefaultAgent",
@@ -518,6 +610,140 @@ describe("React webview", () => {
       close.click();
     });
     expect(dialog.open).toBeFalsy();
+    await unmount();
+  });
+
+  test("shows Agent icons beside Default Agent choices", async () => {
+    const unmount = await renderApp();
+    const icons = {
+      "claude-agent-acp": "webview:/media/agents/claude-acp.svg",
+      "codex-acp": "webview:/media/agents/codex-acp.svg",
+      "magpi-acp": "webview:/media/agents/magpi-acp.svg",
+    };
+    const dialog =
+      document.querySelector<HTMLDialogElement>("#settings-dialog");
+    if (!dialog) {
+      throw new Error("Missing Settings dialog");
+    }
+    Object.defineProperty(dialog, "showModal", {
+      value: () => {
+        dialog.setAttribute("open", "");
+      },
+    });
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { ...threadState("selected", []), agentIcons: icons },
+        })
+      );
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            agents: [
+              { id: "magpi-acp", name: "MagPi", state: "current" },
+              {
+                id: "claude-agent-acp",
+                name: "Claude Agent",
+                state: "current",
+              },
+              { id: "codex-acp", name: "Codex", state: "current" },
+            ],
+            assignWorkspaceColors: true,
+            defaultAgent: "",
+            type: "showSettings",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    act(() => {
+      document.querySelector<HTMLButtonElement>("#default-agent")?.click();
+    });
+    expect(
+      [...document.querySelectorAll(".default-agent-menu [role='option']")].map(
+        (option) => ({
+          icon: option.querySelector<HTMLElement>(".agent-icon")?.style
+            .maskImage,
+          name: option.textContent?.trim(),
+        })
+      )
+    ).toStrictEqual([
+      { icon: undefined, name: "✓Choose each time" },
+      { icon: `url("${icons["magpi-acp"]}")`, name: "MagPi" },
+      { icon: `url("${icons["claude-agent-acp"]}")`, name: "Claude Agent" },
+      { icon: `url("${icons["codex-acp"]}")`, name: "Codex" },
+    ]);
+    await unmount();
+  });
+
+  test("positions the Default Agent menu under its trigger", async () => {
+    const unmount = await renderApp();
+    const style = document.createElement("style");
+    style.textContent = readFileSync("media/webview.css", "utf-8");
+    document.head.append(style);
+    const picker = document.querySelector(".settings-agent-picker");
+    const trigger = document.querySelector<HTMLButtonElement>("#default-agent");
+    if (!picker || !trigger) {
+      throw new Error("Missing Default Agent control");
+    }
+    act(() => {
+      trigger.click();
+    });
+    const menu = picker.querySelector(".default-agent-menu");
+    expect(menu && getComputedStyle(menu).position).toBe("absolute");
+    style.remove();
+    await unmount();
+  });
+
+  test("supports keyboard navigation in the Default Agent menu", async () => {
+    const unmount = await renderApp();
+    const dialog =
+      document.querySelector<HTMLDialogElement>("#settings-dialog");
+    const trigger = dialog?.querySelector<HTMLButtonElement>("#default-agent");
+    if (!dialog || !trigger) {
+      throw new Error("Missing Default Agent control");
+    }
+    Object.defineProperty(dialog, "showModal", {
+      value: () => {
+        dialog.setAttribute("open", "");
+      },
+    });
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            agents: [{ id: "magpi-acp", name: "MagPi", state: "current" }],
+            assignWorkspaceColors: true,
+            defaultAgent: "magpi-acp",
+            type: "showSettings",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    act(() => {
+      trigger.click();
+    });
+    act(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })
+      );
+    });
+    expect(document.activeElement?.textContent).toContain("Choose each time");
+    act(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })
+      );
+    });
+    expect({
+      expanded: trigger.getAttribute("aria-expanded"),
+      focusReturned: document.activeElement === trigger,
+    }).toStrictEqual({ expanded: "false", focusReturned: true });
+    act(() => {
+      trigger.click();
+    });
+    act(() => {
+      trigger.click();
+    });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
     await unmount();
   });
 
@@ -964,7 +1190,10 @@ describe("React webview", () => {
             },
             threads: {
               threads: [
-                threadSummary("alpha-thread", "Alpha Thread", "/alpha"),
+                {
+                  ...threadSummary("alpha-thread", "Alpha Thread", "/alpha"),
+                  indicator: "active" as const,
+                },
                 threadSummary("linked-thread", "Linked Thread", "/linked"),
                 threadSummary("beta-thread", "Beta Thread", "/beta"),
                 threadSummary("loose-thread", "Loose Thread", "/loose"),
@@ -985,6 +1214,12 @@ describe("React webview", () => {
           "#navigator-flyout-list .workspace-open .name"
         ),
       ].map((name) => name.textContent),
+      flyoutIndicatorAtEnd: (() => {
+        const indicator = document.querySelector(
+          "#navigator-flyout-list .thread-row .thread-status"
+        );
+        return indicator?.parentElement?.lastElementChild === indicator;
+      })(),
       main: [
         ...document.querySelectorAll("#navigator-list .workspace-open .name"),
       ].map((name) => name.textContent),
@@ -1017,13 +1252,14 @@ describe("React webview", () => {
     }).toStrictEqual({
       dividers: 2,
       flyout: ["alpha", "linked", "beta", "loose"],
+      flyoutIndicatorAtEnd: true,
       main: ["alpha"],
       menu: "Workspaces and Threads",
       menuSections: ["projects-menu-actions", "HR", "content workspace-list"],
       newThreadButtons: 0,
       remoteMenus: 0,
       sameListControl: true,
-      statusIcons: 0,
+      statusIcons: 1,
       threadRows: [
         "Alpha Thread",
         "Linked Thread",
@@ -1346,8 +1582,11 @@ describe("React webview", () => {
           ?.classList.contains("selected"),
         threads: [...node.querySelectorAll(".thread-row")].map((thread) => ({
           activity: thread.querySelector(".thread-activity")?.textContent,
-          indicatorAtEnd:
-            thread.lastElementChild?.classList.contains("thread-status") ??
+          closeButtonAtEnd:
+            thread.lastElementChild?.getAttribute("aria-label") ===
+            "Close Thread",
+          indicatorBeforeTitle:
+            thread.firstElementChild?.classList.contains("thread-status") ??
             false,
           name: thread.querySelector(".name")?.textContent,
           questionIcon:
@@ -1371,7 +1610,8 @@ describe("React webview", () => {
             activity: testValue<unknown>(
               expect.stringMatching(/^(?:now|\d+(?:min|h|d))$/u)
             ),
-            indicatorAtEnd: true,
+            closeButtonAtEnd: true,
+            indicatorBeforeTitle: true,
             name: "Current",
             questionIcon: true,
             selected: true,
@@ -1381,7 +1621,8 @@ describe("React webview", () => {
             activity: testValue<unknown>(
               expect.stringMatching(/^(?:now|\d+(?:min|h|d))$/u)
             ),
-            indicatorAtEnd: true,
+            closeButtonAtEnd: true,
+            indicatorBeforeTitle: true,
             name: "Error",
             questionIcon: false,
             selected: false,
@@ -1408,8 +1649,8 @@ describe("React webview", () => {
       remoteThreads: document.querySelectorAll(
         ".workspace-node:not(.current) .thread-row"
       ).length,
-      threadActions: document.querySelectorAll(
-        '.workspace-node.current .thread-row [aria-label="Thread actions"]'
+      threadCloseButtons: document.querySelectorAll(
+        '.workspace-node.current .thread-row [aria-label="Close Thread"]'
       ).length,
       untitledButtons: document.querySelectorAll("button:not([title])").length,
     }).toStrictEqual({
@@ -1420,7 +1661,7 @@ describe("React webview", () => {
       projectRows: 0,
       remoteMenuTriggers: 0,
       remoteThreads: 0,
-      threadActions: 2,
+      threadCloseButtons: 2,
       untitledButtons: 0,
     });
 
@@ -1469,45 +1710,34 @@ describe("React webview", () => {
     act(() => {
       errorThread.dispatchEvent(contextMenu);
     });
-    const threadOptions = [
-      ...document.querySelectorAll<HTMLButtonElement>(
-        '.workspace-menu[aria-label="Thread actions"] [role="menuitem"]'
-      ),
-    ];
-    postMessage.mockClear();
-    act(() => {
-      threadOptions[0]?.click();
-    });
-    const renameMessages = [...postMessage.mock.calls];
-    const more = firstThread.querySelector<HTMLButtonElement>(
-      '[aria-label="Thread actions"]'
+    const threadActionMenu = document.querySelector(
+      '.workspace-menu[aria-label="Thread actions"]'
     );
-    if (!more) {
-      throw new Error("Missing Thread actions button");
+    const closeThread = firstThread.querySelector<HTMLButtonElement>(
+      '[aria-label="Close Thread"]'
+    );
+    if (!closeThread) {
+      throw new Error("Missing Close Thread button");
     }
-    act(() => {
-      more.click();
-    });
-    const closeThread = document.querySelector<HTMLButtonElement>(
-      '.workspace-menu[aria-label="Thread actions"] [role="menuitem"]:last-child'
-    );
     postMessage.mockClear();
     act(() => {
-      closeThread?.click();
+      closeThread.click();
     });
     const closeMessages = [...postMessage.mock.calls];
     expect({
+      closeButtons: document.querySelectorAll(
+        '.workspace-node.current .thread-row [aria-label="Close Thread"]'
+      ).length,
       closeMessages,
       contextPrevented: contextMenu.defaultPrevented,
       historyMessages,
-      renameMessages,
-      threadOptions: threadOptions.map((option) => option.textContent?.trim()),
+      threadActionMenu,
     }).toStrictEqual({
+      closeButtons: 2,
       closeMessages: [[{ id: "current-thread", type: "removeThread" }]],
-      contextPrevented: true,
+      contextPrevented: false,
       historyMessages: [[{ type: "threadHistory" }]],
-      renameMessages: [[{ id: "error-thread", type: "renameThread" }]],
-      threadOptions: ["Rename Thread", "Close Thread"],
+      threadActionMenu: null,
     });
 
     postMessage.mockClear();

@@ -1,3 +1,4 @@
+import type { AgentId } from "../agents/update";
 import type { ProjectsSnapshot } from "../projects/projects";
 import type { PromptImage } from "../threads/model";
 import type {
@@ -61,6 +62,7 @@ export type HostToWebviewMessage =
   | {
       type: "state";
       font: string;
+      agentIcons?: Partial<Record<AgentId, string>>;
       projects: ProjectsSnapshot;
       setup?: RenderedSetupStep;
       threads: RenderedThreadsSnapshot;

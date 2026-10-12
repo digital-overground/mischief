@@ -1613,7 +1613,15 @@ describe("view provider", () => {
     );
     const show = vi.fn<(preserveFocus: boolean) => void>();
     Object.assign(provider, {
-      view: { show, webview: { postMessage: vi.fn<() => void>() } },
+      view: {
+        show,
+        webview: {
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => uri.fsPath,
+          }),
+          postMessage: vi.fn<() => void>(),
+        },
+      },
     });
     vscode.executeCommand.mockClear();
     emit?.({ type: "remoteSelection" });
@@ -1965,9 +1973,18 @@ describe("view provider", () => {
       tooltip: "",
       value: 0,
     });
+    expect(postMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        agentIcons: {
+          "claude-agent-acp": `webview:${process.cwd()}/media/agents/claude-acp.svg`,
+          "codex-acp": `webview:${process.cwd()}/media/agents/codex-acp.svg`,
+          "magpi-acp": `webview:${process.cwd()}/media/agents/magpi-acp.svg`,
+        },
+      })
+    );
     expect(webview.html).toContain('id="root"');
     expect({
-      csp: webview.html.includes("webview-csp"),
+      csp: webview.html.includes("img-src data: webview-csp"),
       placeholders: webview.html.includes("{{"),
       uris: webview.html.includes("webview:/"),
     }).toStrictEqual({ csp: true, placeholders: false, uris: true });
