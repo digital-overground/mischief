@@ -1,11 +1,4 @@
-import {
-  Fragment,
-  memo,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { AgentId } from "../agents/update";
 import { isNonEmpty } from "../present";
@@ -417,7 +410,7 @@ const WorkspaceList = ({
   emptyMessage,
   expanded,
   flyout,
-  groups,
+  workspaces,
   now,
   onNavigate,
   onToggle,
@@ -429,7 +422,7 @@ const WorkspaceList = ({
   emptyMessage: string;
   expanded: boolean;
   flyout: boolean;
-  groups: Workspace[][];
+  workspaces: Workspace[];
   now: number;
   onNavigate?: () => void;
   onToggle: () => void;
@@ -440,30 +433,25 @@ const WorkspaceList = ({
     className="content workspace-list"
     id={flyout ? "navigator-flyout-list" : "navigator-list"}
   >
-    {groups.map((group, index) => (
-      <Fragment key={group[0]?.path}>
-        {index > 0 ? <hr className="project-divider" /> : null}
-        {group.map((workspace) => (
-          <WorkspaceNode
-            agentIcons={agentIcons}
-            parentMenuOpen={parentMenuOpen}
-            expanded={flyout || (workspace.current && expanded)}
-            flyout={flyout}
-            key={workspace.path}
-            now={now}
-            onNavigate={onNavigate}
-            onToggle={onToggle}
-            projectRoot={workspace.current ? projectRoot : undefined}
-            selectedId={threads.selected?.id}
-            threads={threads.threads.filter(
-              (thread) => thread.workspace === workspace.path
-            )}
-            workspace={workspace}
-          />
-        ))}
-      </Fragment>
+    {workspaces.map((workspace) => (
+      <WorkspaceNode
+        agentIcons={agentIcons}
+        parentMenuOpen={parentMenuOpen}
+        expanded={flyout || (workspace.current && expanded)}
+        flyout={flyout}
+        key={workspace.path}
+        now={now}
+        onNavigate={onNavigate}
+        onToggle={onToggle}
+        projectRoot={workspace.current ? projectRoot : undefined}
+        selectedId={threads.selected?.id}
+        threads={threads.threads.filter(
+          (thread) => thread.workspace === workspace.path
+        )}
+        workspace={workspace}
+      />
     ))}
-    {groups.length > 0 ? null : <div className="empty">{emptyMessage}</div>}
+    {workspaces.length > 0 ? null : <div className="empty">{emptyMessage}</div>}
   </div>
 );
 
@@ -494,26 +482,10 @@ const NavigatorPaneView = ({
   const [now, setNow] = useState(Date.now());
   const previousCurrent = useRef<string | null>(null);
   const previousExpandAllRequest = useRef(expandAllRequest);
-  const groups = [
-    ...projects.projects
-      .toSorted((left, right) => left.name.localeCompare(right.name))
-      .map((project) =>
-        project.workspaces.toSorted((left, right) =>
-          left.name.localeCompare(right.name)
-        )
-      ),
-    projects.ungrouped.toSorted((left, right) =>
-      left.name.localeCompare(right.name)
-    ),
-  ].filter((group) => group.length > 0);
-  const workspaces = groups.flat();
-  const currentPath = workspaces.find((workspace) => workspace.current)?.path;
-  const currentProjectRoot = projects.projects.find((project) =>
-    project.workspaces.some((workspace) => workspace.path === currentPath)
-  )?.root;
-  const visibleGroups = groups
-    .map((group) => group.filter((workspace) => workspace.current))
-    .filter((group) => group.length > 0);
+  const { current, workspaces } = projects.navigation;
+  const currentPath = current?.workspace.path;
+  const currentProjectRoot = current?.projectRoot;
+  const visibleWorkspaces = current ? [current.workspace] : [];
   const needsAttention = threads.threads.some(
     (thread) => thread.needsAttention
   );
@@ -689,7 +661,7 @@ const NavigatorPaneView = ({
             emptyMessage="No active Workspaces. Add one with ＋."
             expanded={expanded}
             flyout
-            groups={groups}
+            workspaces={workspaces}
             now={now}
             onNavigate={onDismissProjectsMenu}
             onToggle={toggleCurrentWorkspace}
@@ -708,7 +680,7 @@ const NavigatorPaneView = ({
         }
         expanded={expanded}
         flyout={false}
-        groups={visibleGroups}
+        workspaces={visibleWorkspaces}
         now={now}
         onToggle={toggleCurrentWorkspace}
         projectRoot={currentProjectRoot}

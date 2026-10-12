@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import type { AgentId } from "../agents/update";
 import { isDefined } from "../present";
+import { projectsFixture } from "../projects/projects-fixture";
 import { testValue } from "../test-value";
 import type { HostToWebviewMessage } from "./protocol";
 
@@ -31,7 +32,7 @@ const threadState = (
   agentId: AgentId | null = "magpi-acp"
 ): Extract<HostToWebviewMessage, { type: "state" }> => ({
   font: "Test Mono",
-  projects: { projects: [], ungrouped: [] },
+  projects: projectsFixture({ projects: [], ungrouped: [] }),
   threads: {
     selected: {
       ...(agentId === null ? {} : { agentId }),
@@ -134,7 +135,7 @@ describe("React webview", () => {
         new MessageEvent<HostToWebviewMessage>("message", {
           data: {
             font: "Test Mono",
-            projects: { projects: [], ungrouped: [] },
+            projects: projectsFixture({ projects: [], ungrouped: [] }),
             setup: {
               id: "addons",
               item: {
@@ -263,7 +264,7 @@ describe("React webview", () => {
         new MessageEvent<HostToWebviewMessage>("message", {
           data: {
             font: "Test Mono",
-            projects: {
+            projects: projectsFixture({
               projects: [
                 {
                   name: "project",
@@ -291,7 +292,7 @@ describe("React webview", () => {
                 },
               ],
               ungrouped: [],
-            },
+            }),
             threads: { threads: [], workspace: "/workspace" },
             type: "state",
           },
@@ -329,12 +330,12 @@ describe("React webview", () => {
         new MessageEvent<HostToWebviewMessage>("message", {
           data: {
             font: "Test Mono",
-            projects: {
+            projects: projectsFixture({
               projects: [],
               ungrouped: [
                 { ...workspaceSummary("workspace", true), color: "#123abc" },
               ],
-            },
+            }),
             threads: { threads: [], workspace: "/workspace" },
             type: "state",
           },
@@ -411,10 +412,10 @@ describe("React webview", () => {
           data: {
             ...base,
             agentIcons: icons,
-            projects: {
+            projects: projectsFixture({
               projects: [],
               ungrouped: [workspaceSummary("workspace", true)],
-            },
+            }),
             threads: {
               ...base.threads,
               threads: [
@@ -817,14 +818,14 @@ describe("React webview", () => {
     await unmount();
   });
 
-  test("routes Project actions from the current Workspace row", async () => {
+  test("routes internal Project actions from a current linked Workspace", async () => {
     const unmount = await renderApp();
     act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
           data: {
             font: "Test Mono",
-            projects: {
+            projects: projectsFixture({
               projects: [
                 {
                   name: "project",
@@ -835,7 +836,7 @@ describe("React webview", () => {
                       behind: 0,
                       changes: 0,
                       current: true,
-                      linked: false,
+                      linked: true,
                       name: "workspace",
                       path: "/workspace",
                     },
@@ -843,7 +844,7 @@ describe("React webview", () => {
                 },
               ],
               ungrouped: [],
-            },
+            }),
             threads: { threads: [] },
             type: "state",
           } satisfies HostToWebviewMessage,
@@ -963,7 +964,7 @@ describe("React webview", () => {
         new MessageEvent<HostToWebviewMessage>("message", {
           data: {
             font: "Test Mono",
-            projects: {
+            projects: projectsFixture({
               projects: [
                 {
                   name: "current-project",
@@ -980,7 +981,7 @@ describe("React webview", () => {
                 },
               ],
               ungrouped: [workspaceSummary("loose")],
-            },
+            }),
             threads: { threads: [] },
             type: "state",
           },
@@ -995,9 +996,6 @@ describe("React webview", () => {
         (name) => name.textContent
       )
     ).toStrictEqual(["current"]);
-    expect(
-      document.querySelectorAll("#navigator-list > .project-divider")
-    ).toHaveLength(0);
     toggleProjectsMenu();
     expect(
       [
@@ -1005,18 +1003,18 @@ describe("React webview", () => {
           "#navigator-flyout-list .workspace-open .name"
         ),
       ].map((name) => name.textContent)
-    ).toStrictEqual(["current", "current-linked", "other", "loose"]);
+    ).toStrictEqual(["current", "current-linked", "loose", "other"]);
     await unmount();
   });
 
-  test("groups Workspaces by Project with dividers and no headings", async () => {
+  test("shows one alphabetical Workspace list without Project grouping", async () => {
     const unmount = await renderApp();
     act(() => {
       window.dispatchEvent(
         new MessageEvent<HostToWebviewMessage>("message", {
           data: {
             font: "Test Mono",
-            projects: {
+            projects: projectsFixture({
               projects: [
                 {
                   name: "z-project",
@@ -1033,7 +1031,7 @@ describe("React webview", () => {
                 },
               ],
               ungrouped: [workspaceSummary("Charlie")],
-            },
+            }),
             threads: { threads: [] },
             type: "state",
           },
@@ -1042,22 +1040,21 @@ describe("React webview", () => {
     });
     toggleProjectsMenu();
     expect({
+      children: document.querySelector("#navigator-flyout-list")?.children
+        .length,
       expandableRows: document.querySelectorAll(".workspace-toggle").length,
       main: document.querySelector("#navigator-list .workspace-open .name")
         ?.textContent,
-      projectHeadings: document.querySelectorAll(".navigator-group").length,
       rows: [
-        ...(document.querySelector("#navigator-flyout-list")?.children ?? []),
-      ].map((child) =>
-        child.matches(".project-divider")
-          ? "divider"
-          : child.querySelector(".workspace-open .name")?.textContent
-      ),
+        ...document.querySelectorAll(
+          "#navigator-flyout-list .workspace-open .name"
+        ),
+      ].map((row) => row.textContent),
     }).toStrictEqual({
+      children: 4,
       expandableRows: 1,
       main: "Zulu",
-      projectHeadings: 0,
-      rows: ["Bravo", "divider", "Alpha", "Zulu", "divider", "Charlie"],
+      rows: ["Alpha", "Bravo", "Charlie", "Zulu"],
     });
     await unmount();
   });
@@ -1069,10 +1066,10 @@ describe("React webview", () => {
         new MessageEvent<HostToWebviewMessage>("message", {
           data: {
             font: "Test Mono",
-            projects: {
+            projects: projectsFixture({
               projects: [],
               ungrouped: [workspaceSummary("Alpha"), workspaceSummary("Bravo")],
-            },
+            }),
             threads: { threads: [] },
             type: "state",
           },
@@ -1082,6 +1079,9 @@ describe("React webview", () => {
     expect(
       document.querySelectorAll("#navigator-list .workspace-node")
     ).toHaveLength(0);
+    expect(document.querySelector("#navigator-list .empty")?.textContent).toBe(
+      "No current Workspace. Browse Workspaces from the header."
+    );
     toggleProjectsMenu();
     const alpha = document.querySelector<HTMLElement>(
       "#navigator-flyout-list .workspace-row"
@@ -1115,10 +1115,10 @@ describe("React webview", () => {
         new MessageEvent<HostToWebviewMessage>("message", {
           data: {
             font: "Test Mono",
-            projects: {
+            projects: projectsFixture({
               projects: [],
               ungrouped: [workspaceSummary("Alpha", true)],
-            },
+            }),
             threads: { threads: [] },
             type: "state",
           },
@@ -1135,6 +1135,11 @@ describe("React webview", () => {
     act(() => {
       workspaceTrigger.click();
     });
+    expect(
+      [...document.querySelectorAll('[role="menuitem"]')].map((item) =>
+        item.textContent?.trim()
+      )
+    ).toStrictEqual(["Thread History", "Close Workspace"]);
     toggleProjectsMenu();
     expect({
       header: document.querySelector("#workspace-title")?.textContent,
@@ -1178,14 +1183,14 @@ describe("React webview", () => {
     await unmount();
   });
 
-  test("browses Projects and focuses a selected Project or Thread", async () => {
+  test("browses Workspaces and focuses a selected Workspace or Thread", async () => {
     const unmount = await renderApp();
     act(() => {
       window.dispatchEvent(
         new MessageEvent<HostToWebviewMessage>("message", {
           data: {
             font: "Test Mono",
-            projects: {
+            projects: projectsFixture({
               projects: [
                 {
                   name: "Alpha Project",
@@ -1202,7 +1207,7 @@ describe("React webview", () => {
                 },
               ],
               ungrouped: [workspaceSummary("loose")],
-            },
+            }),
             threads: {
               threads: [
                 {
@@ -1221,9 +1226,6 @@ describe("React webview", () => {
     });
     toggleProjectsMenu();
     expect({
-      dividers: document.querySelectorAll(
-        "#navigator-flyout-list > .project-divider"
-      ).length,
       flyout: [
         ...document.querySelectorAll(
           "#navigator-flyout-list .workspace-open .name"
@@ -1265,8 +1267,7 @@ describe("React webview", () => {
         "#navigator-flyout-list .workspace-toggle"
       ).length,
     }).toStrictEqual({
-      dividers: 2,
-      flyout: ["alpha", "linked", "beta", "loose"],
+      flyout: ["alpha", "beta", "linked", "loose"],
       flyoutIndicatorAtEnd: true,
       main: ["alpha"],
       menu: "Workspaces and Threads",
@@ -1277,8 +1278,8 @@ describe("React webview", () => {
       statusIcons: 1,
       threadRows: [
         "Alpha Thread",
-        "Linked Thread",
         "Beta Thread",
+        "Linked Thread",
         "Loose Thread",
       ],
       toggles: 0,
@@ -1422,7 +1423,7 @@ describe("React webview", () => {
           new MessageEvent<HostToWebviewMessage>("message", {
             data: {
               font: "Test Mono",
-              projects: { projects: [], ungrouped: [] },
+              projects: projectsFixture({ projects: [], ungrouped: [] }),
               threads: {
                 threads: [
                   threadSummary("idle", "Idle", "/current"),
@@ -1503,7 +1504,7 @@ describe("React webview", () => {
         new MessageEvent("message", {
           data: {
             font: "Test Mono",
-            projects: {
+            projects: projectsFixture({
               projects: [
                 {
                   name: "project",
@@ -1534,7 +1535,7 @@ describe("React webview", () => {
                 },
               ],
               ungrouped: [],
-            },
+            }),
             threads: {
               selected: {
                 commands: [],
@@ -2240,7 +2241,7 @@ describe("React webview", () => {
         new MessageEvent("message", {
           data: {
             font: "Test Mono",
-            projects: { projects: [], ungrouped: [] },
+            projects: projectsFixture({ projects: [], ungrouped: [] }),
             threads: {
               selected: {
                 commands: [],
@@ -2310,11 +2311,56 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("requests context only when the current Workspace changes", async () => {
+    const unmount = await renderApp();
+    const state = (
+      workspace?: string
+    ): Extract<HostToWebviewMessage, { type: "state" }> => ({
+      font: "Test Mono",
+      projects: projectsFixture({
+        projects: [],
+        ungrouped:
+          workspace === undefined ? [] : [workspaceSummary(workspace, true)],
+      }),
+      threads: { threads: [] },
+      type: "state",
+    });
+    const contextRequests = (): unknown[][] =>
+      postMessage.mock.calls.filter(
+        ([message]) =>
+          testValue<{ type?: string }>(message).type === "contextItems"
+      );
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: state("alpha") })
+      );
+    });
+    expect(contextRequests()).toHaveLength(1);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: state("alpha") })
+      );
+    });
+    expect(contextRequests()).toHaveLength(1);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: state("beta") })
+      );
+    });
+    expect(contextRequests()).toHaveLength(2);
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state() }));
+    });
+    expect(contextRequests()).toHaveLength(3);
+    await unmount();
+  });
+
   test("applies streaming transcript items without replacing history or composer text", async () => {
     const unmount = await renderApp();
     const state: HostToWebviewMessage = {
       font: "Test Mono",
-      projects: {
+      projects: projectsFixture({
         projects: [],
         ungrouped: [
           {
@@ -2327,7 +2373,7 @@ describe("React webview", () => {
             path: "/workspace",
           },
         ],
-      },
+      }),
       threads: {
         selected: {
           commands: [],
@@ -2799,7 +2845,7 @@ describe("React webview", () => {
         new MessageEvent("message", {
           data: {
             font: "Test Mono",
-            projects: { projects: [], ungrouped: [] },
+            projects: projectsFixture({ projects: [], ungrouped: [] }),
             threads: {
               selected: {
                 commands: [],
@@ -2941,7 +2987,7 @@ describe("React webview", () => {
         new MessageEvent("message", {
           data: {
             font: "Test Mono",
-            projects: { projects: [], ungrouped: [] },
+            projects: projectsFixture({ projects: [], ungrouped: [] }),
             threads: {
               selected: {
                 commands: [
@@ -2998,7 +3044,7 @@ describe("React webview", () => {
         new MessageEvent("message", {
           data: {
             font: "Test Mono",
-            projects: { projects: [], ungrouped: [] },
+            projects: projectsFixture({ projects: [], ungrouped: [] }),
             threads: {
               selected: {
                 commands: [
@@ -3123,7 +3169,7 @@ describe("React webview", () => {
     };
     const state: HostToWebviewMessage = {
       font: "Test Mono",
-      projects: { projects: [], ungrouped: [] },
+      projects: projectsFixture({ projects: [], ungrouped: [] }),
       threads: {
         selected: {
           agentId: "magpi-acp",
@@ -3254,7 +3300,7 @@ describe("React webview", () => {
 
     const state: HostToWebviewMessage = {
       font: "Test Mono",
-      projects: { projects: [], ungrouped: [] },
+      projects: projectsFixture({ projects: [], ungrouped: [] }),
       threads: {
         selected: {
           commands: [],
@@ -3375,7 +3421,7 @@ describe("React webview", () => {
     const unmount = await renderApp();
     const state: HostToWebviewMessage = {
       font: "Test Mono",
-      projects: { projects: [], ungrouped: [] },
+      projects: projectsFixture({ projects: [], ungrouped: [] }),
       threads: {
         selected: {
           commands: [],
@@ -3533,7 +3579,7 @@ describe("React webview", () => {
     const unmount = await renderApp();
     const state: HostToWebviewMessage = {
       font: "Test Mono",
-      projects: { projects: [], ungrouped: [] },
+      projects: projectsFixture({ projects: [], ungrouped: [] }),
       threads: {
         selected: {
           commands: [],

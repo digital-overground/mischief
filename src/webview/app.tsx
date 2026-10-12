@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { postMessage } from "./bridge";
 import { ButtonTooltip } from "./button-tooltip";
@@ -9,7 +9,7 @@ import { ThreadView } from "./threads/detail/thread-view";
 
 const initialState: Extract<HostToWebviewMessage, { type: "state" }> = {
   font: "ui-monospace, monospace",
-  projects: { projects: [], ungrouped: [] },
+  projects: { navigation: { workspaces: [] } },
   threads: { threads: [] },
   type: "state",
 };
@@ -95,14 +95,7 @@ export const App = (): React.JSX.Element => {
     );
   }, [snapshot.font]);
 
-  const currentWorkspace = useMemo(
-    () =>
-      [
-        ...snapshot.projects.projects.flatMap((project) => project.workspaces),
-        ...snapshot.projects.ungrouped,
-      ].find((workspace) => workspace.current),
-    [snapshot.projects]
-  );
+  const currentWorkspace = snapshot.projects.navigation.current?.workspace;
   useEffect(() => {
     if ((currentWorkspace?.path ?? null) === previousWorkspace.current) {
       return;

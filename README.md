@@ -1,16 +1,8 @@
 # Mischief
 
-A VS Code extension for managing Projects, Workspaces, and graphical Agent Threads powered by MagPi, Claude Agent, or Codex over ACP.
+A VS Code extension for managing Workspaces and graphical Agent Threads powered by MagPi, Claude Agent, or Codex over ACP.
 
-Mischief provides a profile-wide Project/Workspace browser plus durable Threads with streamed messages, thinking, tools, plans, inline interaction requests, Agent configuration, cancellation, and transcript restoration.
-
-Its domain hierarchy is:
-
-```text
-Project
-  Workspace / linked worktree
-    Thread
-```
+Mischief provides a profile-wide Workspace browser plus durable Threads with streamed messages, thinking, tools, plans, inline interaction requests, Agent configuration, cancellation, and transcript restoration. Git roots and linked worktrees share internal Project settings, but navigation stays flat.
 
 ## Install
 
@@ -24,7 +16,7 @@ Install these on the machine where the VS Code extension host runs:
 - [Node.js](https://nodejs.org/) 22.19 or newer. `npm` is included with Node.js.
 - Agent credentials or a configured model provider for the Agent you choose.
 
-[Git](https://git-scm.com/) is required for Git Projects, linked worktree discovery, status, and worktree creation. Without Git, Mischief can still manage folders as ungrouped Workspaces.
+[Git](https://git-scm.com/) is required for linked worktree discovery, status, and worktree creation. Without Git, Mischief can still manage folders as Workspaces.
 
 When using Remote SSH, Dev Containers, or WSL, install Node.js and Git in that remote environment because Mischief runs there.
 

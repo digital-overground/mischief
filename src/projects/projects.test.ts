@@ -124,10 +124,13 @@ describe("projects module", () => {
 
     await rm(folder, { recursive: true });
     let snapshot = await projects.refresh();
-    expect(snapshot.ungrouped).toStrictEqual([]);
+    expect(snapshot).toMatchObject({
+      navigation: { workspaces: [] },
+    });
+    expect(snapshot.navigation.current).toBeUndefined();
     await mkdir(folder);
     snapshot = await projects.refresh();
-    expect(snapshot.ungrouped).toHaveLength(1);
+    expect(snapshot.navigation.workspaces).toHaveLength(1);
   });
 
   test("the owning window can make its current Workspace inactive", async () => {
@@ -136,9 +139,10 @@ describe("projects module", () => {
 
     await projects.open(folder);
     const inactive = await projects.remove(folder);
-    expect(inactive.ungrouped).toStrictEqual([]);
+    expect(inactive.navigation.workspaces).toStrictEqual([]);
+    expect(inactive.navigation.current).toBeUndefined();
     const reopened = await projects.open(folder);
-    expect(reopened.ungrouped).toHaveLength(1);
+    expect(reopened.navigation.workspaces).toHaveLength(1);
   });
 
   test("another window can make an active Workspace inactive", async () => {
@@ -149,7 +153,7 @@ describe("projects module", () => {
 
     const snapshot = await other.remove(folder);
 
-    expect(snapshot.ungrouped).toStrictEqual([]);
+    expect(snapshot.navigation.workspaces).toStrictEqual([]);
   });
 
   test("locates a nested folder at its Git Workspace root", async () => {
@@ -172,9 +176,12 @@ describe("projects module", () => {
 
     const snapshot = await projects.open(folder);
 
-    expect(snapshot.ungrouped).toMatchObject([
+    expect(snapshot.navigation.workspaces).toMatchObject([
       { current: true, path: canonicalFolder },
     ]);
+    expect(snapshot.navigation.current).toStrictEqual({
+      workspace: snapshot.navigation.workspaces[0],
+    });
   });
 
   test("adding an untracked folder creates an ungrouped Workspace", async () => {
@@ -184,14 +191,26 @@ describe("projects module", () => {
 
     const snapshot = await projects.add(folder);
 
-    expect(snapshot.projects).toStrictEqual([]);
-    expect(snapshot.ungrouped).toMatchObject([
+    expect(snapshot.navigation.workspaces).toMatchObject([
       {
         linked: false,
         name: path.basename(folder),
         path: canonicalFolder,
       },
     ]);
+  });
+
+  test("adding a Workspace preserves the current Workspace", async () => {
+    const current = await temporaryFolder();
+    const added = await temporaryFolder();
+    const projects = await createProjects();
+    await projects.open(current);
+
+    const snapshot = await projects.add(added);
+
+    expect(snapshot.navigation.current?.workspace.path).toBe(
+      await realpath(current)
+    );
   });
 
   test("refresh drops a deleted linked Workspace without dropping its Project", async () => {
@@ -210,7 +229,7 @@ describe("projects module", () => {
     await rm(linked, { recursive: true });
 
     const snapshot = await projects.refresh();
-    expect(snapshot.projects[0]?.workspaces).toMatchObject([
+    expect(snapshot.navigation.workspaces).toMatchObject([
       { path: await realpath(root) },
     ]);
   });
@@ -229,7 +248,7 @@ describe("projects module", () => {
     await git(root, "worktree", "add", "-b", "later", linked);
 
     const snapshot = await projects.refresh();
-    expect(snapshot.projects[0]?.workspaces).toHaveLength(1);
+    expect(snapshot.navigation.workspaces).toHaveLength(1);
   });
 
   test("configures and lists validated open GitHub issues for a managed Project", async () => {
@@ -503,7 +522,7 @@ describe("projects module", () => {
       projects.createWorkspace(root, "My New Thing")
     ).rejects.toThrow(/already exists|already checked out/u);
     const snapshot = await projects.refresh();
-    expect(snapshot.projects[0]?.workspaces).toContainEqual(
+    expect(snapshot.navigation.workspaces).toContainEqual(
       expect.objectContaining({
         branch: "my-new-thing",
         path: expected,
@@ -540,9 +559,14 @@ describe("projects module", () => {
 
     const snapshot = await projects.refresh();
     expect(
-      snapshot.projects[0]?.workspaces.map((workspace) => workspace.path)
-    ).toStrictEqual([await realpath(linked)]);
-    expect(snapshot.ungrouped).toHaveLength(1);
+      snapshot.navigation.workspaces.map((workspace) => workspace.path)
+    ).toStrictEqual(
+      expect.arrayContaining([
+        await realpath(linked),
+        await realpath(untracked),
+      ])
+    );
+    expect(snapshot.navigation.workspaces).toHaveLength(2);
     expect(
       database
         .snapshot()
@@ -578,7 +602,9 @@ describe("projects module", () => {
 
       await vi.waitFor(async () => {
         const snapshot = await second.refresh();
-        expect(snapshot.projects).toMatchObject([{ root: canonicalRoot }]);
+        expect(snapshot.navigation.workspaces).toMatchObject([
+          { path: canonicalRoot },
+        ]);
       });
     } finally {
       await Promise.all([firstDatabase.dispose(), secondDatabase.dispose()]);
@@ -618,6 +644,35 @@ describe("projects module", () => {
     });
   });
 
+  test("navigation is globally alphabetical while Projects stay internal", async () => {
+    const parent = await temporaryFolder();
+    const root = path.join(parent, "z-root");
+    const linked = path.join(parent, "a-linked");
+    const other = path.join(parent, "c-project");
+    const ungrouped = path.join(parent, "b-loose");
+    await git(parent, "init", "--initial-branch=main", root);
+    await git(root, "config", "user.email", "mischief@example.test");
+    await git(root, "config", "user.name", "Mischief Test");
+    await git(root, "commit", "--allow-empty", "--message=initial");
+    await git(root, "worktree", "add", "-b", "feature", linked);
+    await git(parent, "init", "--initial-branch=main", other);
+    await mkdir(ungrouped);
+    const projects = await createProjects();
+    await projects.open(linked);
+    await projects.add(root);
+    await projects.add(other);
+
+    const snapshot = await projects.add(ungrouped);
+
+    expect(
+      snapshot.navigation.workspaces.map((workspace) => workspace.name)
+    ).toStrictEqual(["a-linked", "b-loose", "c-project", "z-root"]);
+    expect(snapshot.navigation.current).toStrictEqual({
+      projectRoot: await realpath(root),
+      workspace: snapshot.navigation.workspaces[0],
+    });
+  });
+
   test("adding a Git Workspace discovers its Project and linked Workspaces", async () => {
     const parent = await temporaryFolder();
     const root = path.join(parent, "mischief");
@@ -631,23 +686,15 @@ describe("projects module", () => {
 
     const projects = await createProjects();
     const snapshot = await projects.add(linked);
-    const canonicalRoot = await realpath(root);
     const canonicalLinked = await realpath(linked);
 
-    expect(snapshot.projects).toMatchObject([
+    expect(snapshot.navigation.workspaces).toMatchObject([
       {
-        name: "mischief",
-        root: canonicalRoot,
-        workspaces: [
-          {
-            branch: "feature",
-            linked: true,
-            name: "feature-worktree",
-            path: canonicalLinked,
-          },
-        ],
+        branch: "feature",
+        linked: true,
+        name: "feature-worktree",
+        path: canonicalLinked,
       },
     ]);
-    expect(snapshot.ungrouped).toStrictEqual([]);
   });
 });

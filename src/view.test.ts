@@ -9,6 +9,7 @@ import { describe, expect, test, vi } from "vitest";
 
 import { exec } from "./exec";
 import { isNonEmpty } from "./present";
+import { projectsFixture } from "./projects/projects-fixture";
 import { testValue } from "./test-value";
 import { MischiefView } from "./view";
 
@@ -143,10 +144,10 @@ describe("view provider", () => {
         path.join(parent, "first"),
         path.join(parent, "second"),
       ];
-      const snapshot = {
+      const snapshot = projectsFixture({
         projects: [{ name: "project", root, workspaces: [] }],
         ungrouped: [],
-      };
+      });
       vscode.assignWorkspaceColors = false;
       vscode.showInputBox.mockReset().mockResolvedValue("new");
       vscode.showQuickPick.mockReset().mockImplementation(async (items) => {
@@ -279,7 +280,7 @@ describe("view provider", () => {
     const projects = {
       open: vi.fn<() => Promise<unknown>>(async () => {
         await Promise.resolve();
-        return {
+        return projectsFixture({
           projects: [],
           ungrouped: [
             {
@@ -292,7 +293,7 @@ describe("view provider", () => {
               path: folder,
             },
           ],
-        };
+        });
       }),
     };
     const threads = {
@@ -380,7 +381,7 @@ describe("view provider", () => {
       testValue<never>({
         open: async () => {
           await Promise.resolve();
-          return {
+          return projectsFixture({
             projects: [],
             ungrouped: [
               {
@@ -393,7 +394,7 @@ describe("view provider", () => {
                 path: folder,
               },
             ],
-          };
+          });
         },
       }),
       testValue<never>(threads),
@@ -543,7 +544,7 @@ describe("view provider", () => {
         { current: false, name: "origin/release", remoteOnly: true },
       ];
     });
-    const snapshot = {
+    const snapshot = projectsFixture({
       projects: [
         {
           name: "project",
@@ -562,7 +563,7 @@ describe("view provider", () => {
         },
       ],
       ungrouped: [],
-    };
+    });
     const listOpenIssues = vi.fn<
       (
         root: string,
@@ -594,10 +595,10 @@ describe("view provider", () => {
       listOpenIssues,
       open: vi.fn<() => Promise<unknown>>(async () => {
         await Promise.resolve();
-        return {
+        return projectsFixture({
           projects: [{ name: "project", root: "/project", workspaces: [] }],
           ungrouped: [],
-        };
+        });
       }),
       refresh: vi.fn<() => Promise<unknown>>(async () => {
         await Promise.resolve();
@@ -859,7 +860,7 @@ describe("view provider", () => {
       testValue<never>({
         open: async () => {
           await Promise.resolve();
-          return { projects: [], ungrouped: [] };
+          return projectsFixture({ projects: [], ungrouped: [] });
         },
       }),
       testValue<never>({
@@ -995,10 +996,10 @@ describe("view provider", () => {
         listOpenIssues,
         open: async () => {
           await Promise.resolve();
-          return {
+          return projectsFixture({
             projects: [{ name: "project", root: "/project", workspaces: [] }],
             ungrouped: [],
-          };
+          });
         },
         sourceBranches,
       }),
@@ -1141,10 +1142,10 @@ describe("view provider", () => {
           },
           open: async () => {
             await Promise.resolve();
-            return {
+            return projectsFixture({
               projects: [{ name: "project", root: "/project", workspaces: [] }],
               ungrouped: [],
-            };
+            });
           },
           sourceBranches,
         }),
@@ -1411,7 +1412,7 @@ describe("view provider", () => {
       testValue<never>({
         open: async () => {
           await Promise.resolve();
-          return {
+          return projectsFixture({
             projects: [],
             ungrouped: [
               {
@@ -1424,7 +1425,7 @@ describe("view provider", () => {
                 path: "/remote",
               },
             ],
-          };
+          });
         },
       }),
       testValue<never>({
@@ -1459,7 +1460,7 @@ describe("view provider", () => {
       testValue<never>({
         refresh: async () => {
           await Promise.resolve();
-          return {
+          return projectsFixture({
             projects: [],
             ungrouped: [
               {
@@ -1481,7 +1482,7 @@ describe("view provider", () => {
                 path: "/remote",
               },
             ],
-          };
+          });
         },
       }),
       testValue<never>({
@@ -1543,7 +1544,7 @@ describe("view provider", () => {
       testValue<never>({
         refresh: async () => {
           await Promise.resolve();
-          return {
+          return projectsFixture({
             projects: [],
             ungrouped: [
               {
@@ -1565,7 +1566,7 @@ describe("view provider", () => {
                 path: "/remote",
               },
             ],
-          };
+          });
         },
       }),
       testValue<never>(threads),
@@ -1800,7 +1801,6 @@ describe("view provider", () => {
     expect(list).toContain("--vscode-menu-foreground");
     expect(list).toContain("--vscode-menu-background");
     expect(selected).toContain("--vscode-menu-background");
-    expect(css).toContain(".workspace-list > .project-divider");
     expect(css).toMatch(/\.thread-row \{\s*padding-left: 32px;/u);
   });
 
@@ -1939,7 +1939,7 @@ describe("view provider", () => {
       testValue<never>({
         refresh: async () => {
           await Promise.resolve();
-          return {
+          return projectsFixture({
             projects: [],
             ungrouped: [
               {
@@ -1952,7 +1952,7 @@ describe("view provider", () => {
                 path: "/workspace",
               },
             ],
-          };
+          });
         },
       }),
       testValue<never>(threads),
@@ -1994,7 +1994,7 @@ describe("view provider", () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     let databaseChanged: (() => void) | undefined;
     let workspaces: unknown[] = [];
-    const projectsSnapshot = {
+    const projectsSnapshot = projectsFixture({
       projects: [],
       ungrouped: [
         {
@@ -2007,7 +2007,7 @@ describe("view provider", () => {
           path: "/remote",
         },
       ],
-    };
+    });
     const provider = new MischiefView(
       testValue<never>({
         refresh: async () => {
@@ -2073,13 +2073,57 @@ describe("view provider", () => {
     });
   });
 
+  test("uses Projects navigation facts without rebuilding Project groups", async () => {
+    const workspace = {
+      ahead: 0,
+      behind: 0,
+      changes: 0,
+      current: true,
+      linked: true,
+      name: "linked",
+      path: "/linked",
+    };
+    const snapshot = {
+      navigation: {
+        current: { projectRoot: "/root", workspace },
+        workspaces: [workspace],
+      },
+    };
+    const openWorkspace = vi.fn<() => Promise<void>>(async () => {
+      await Promise.resolve();
+    });
+    vscode.assignWorkspaceColors = false;
+    const provider = new MischiefView(
+      testValue<never>({
+        open: async () => {
+          await Promise.resolve();
+          return snapshot;
+        },
+      }),
+      testValue<never>({
+        onChange: vi.fn<() => void>(),
+        openWorkspace,
+        snapshot: () => ({ threads: [] }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({ get: (_key: string, fallback: unknown) => fallback }),
+      testValue<never>(profileDatabase())
+    );
+
+    await provider.initialize("/linked");
+
+    expect(openWorkspace.mock.calls).toStrictEqual([["/linked"]]);
+    expect(Object.hasOwn(workspace, "color")).toBeTruthy();
+    vscode.assignWorkspaceColors = true;
+  });
+
   test("closes the owning VS Code window when another Instance closes its Workspace", async () => {
     let databaseChanged: (() => void) | undefined;
     let workspaces: { path: string; status: "active" | "inactive" }[] = [
       { path: "/workspace", status: "active" },
     ];
     let currentWorkspace: string | undefined = "/workspace";
-    const snapshot = {
+    const snapshot = projectsFixture({
       projects: [],
       ungrouped: [
         {
@@ -2092,7 +2136,7 @@ describe("view provider", () => {
           path: "/workspace",
         },
       ],
-    };
+    });
     const closeWorkspace = vi.fn<() => Promise<void>>(async () => {
       await Promise.resolve();
       currentWorkspace = undefined;
@@ -2107,7 +2151,7 @@ describe("view provider", () => {
           await Promise.resolve();
           return workspaces.some((workspace) => workspace.status === "active")
             ? snapshot
-            : { projects: [], ungrouped: [] };
+            : projectsFixture({ projects: [], ungrouped: [] });
         },
       }),
       testValue<never>({

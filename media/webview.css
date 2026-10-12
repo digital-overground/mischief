@@ -344,12 +344,6 @@ select:disabled {
     var(--vscode-editorWidget-background)
   );
 }
-.workspace-list > .project-divider {
-  border: 0;
-  border-top: 1px solid
-    var(--vscode-menu-separatorBackground, var(--vscode-panel-border));
-  margin: 4px 8px;
-}
 .workspace-list .row:is(:hover, :focus-within) {
   background: color-mix(
     in srgb,

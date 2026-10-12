@@ -23,10 +23,8 @@ import {
 import type {
   GitHubIssue,
   GitSourceBranch,
-  Project,
   Projects,
   ProjectsSnapshot,
-  Workspace,
 } from "./projects/projects";
 import type { AgentTreeNavigationOptions } from "./threads/acp/models";
 import type { PromptImage } from "./threads/model";
@@ -279,7 +277,9 @@ export interface ThreadSetup {
 
 export class MischiefView implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
-  private projectsSnapshot: ProjectsSnapshot = { projects: [], ungrouped: [] };
+  private projectsSnapshot: ProjectsSnapshot = {
+    navigation: { workspaces: [] },
+  };
   private readonly database: ProfileDatabase;
   private databaseWorkspaces: string;
   private profileRefresh = Promise.resolve();
@@ -346,7 +346,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     if (
       isNonEmpty(focusWorkspace) &&
       focusWorkspace ===
-        this.workspaces().find((workspace) => workspace.current)?.path
+        this.projectsSnapshot.navigation.current?.workspace.path
     ) {
       // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined removes a VS Code Memento key.
       await this.storage.update(FOCUS_WORKSPACE_KEY, undefined);
@@ -378,15 +378,9 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   async newWorkspace(projectRoot: string): Promise<void> {
-    const project = this.projectsSnapshot.projects.find(
-      (candidate) => candidate.root === projectRoot
-    );
-    if (!project) {
-      return;
-    }
     const name = await vscode.window.showInputBox({
       prompt: "Create a linked worktree and branch",
-      title: `New Workspace for ${project.name}`,
+      title: `New Workspace for ${path.basename(projectRoot)}`,
       validateInput: (value) => {
         const normalized = normalizeWorkspaceName(value);
         if (!normalized) {
@@ -400,7 +394,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     if (name === undefined) {
       return;
     }
-    await this.createWorkspace(project, name);
+    await this.createWorkspace(projectRoot, name);
   }
 
   async refresh(): Promise<void> {
@@ -410,18 +404,13 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   private async openIssues(projectRoot: string): Promise<void> {
-    const project = this.projectsSnapshot.projects.find(
-      (candidate) => candidate.root === projectRoot
-    );
-    if (!project) {
-      return;
-    }
+    const projectName = path.basename(projectRoot);
     const issues = await this.projects.listOpenIssues(
-      project.root,
+      projectRoot,
       async (defaultRepository) => {
         const repository = await vscode.window.showInputBox({
           prompt: "Enter the GitHub issue repository as owner/repo",
-          title: `Issue Repository for ${project.name}`,
+          title: `Issue Repository for ${projectName}`,
           validateInput: (value) =>
             isNonEmpty(normalizeGitHubRepository(value))
               ? undefined
@@ -438,12 +427,12 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
     if (!issues.length) {
       await vscode.window.showInformationMessage(
-        `No open GitHub issues for ${project.name}.`
+        `No open GitHub issues for ${projectName}.`
       );
       return;
     }
     const picker = vscode.window.createQuickPick<GitHubIssueQuickPickItem>();
-    picker.title = `Open Issues · ${project.name}`;
+    picker.title = `Open Issues · ${projectName}`;
     picker.items = issues.map((issue) => ({
       buttons: [
         {
@@ -460,7 +449,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
         if (isDefined(selected)) {
           picker.hide();
           void MischiefView.run(
-            this.newIssueWorkspace(project, selected.issue)
+            this.newIssueWorkspace(projectRoot, selected.issue)
           );
         }
       }),
@@ -489,13 +478,13 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   private async newIssueWorkspace(
-    project: Project,
+    projectRoot: string,
     issue: GitHubIssue
   ): Promise<void> {
-    const branches = await this.projects.sourceBranches(project.root);
+    const branches = await this.projects.sourceBranches(projectRoot);
     if (!branches.length) {
       await vscode.window.showInformationMessage(
-        `No source branches for ${project.name}.`
+        `No source branches for ${path.basename(projectRoot)}.`
       );
       return;
     }
@@ -534,7 +523,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
         if (selected?.branch) {
           picker.hide();
           void MischiefView.run(
-            this.nameIssueWorkspace(project, issue, selected.branch)
+            this.nameIssueWorkspace(projectRoot, issue, selected.branch)
           );
         }
       }),
@@ -549,7 +538,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   private async nameIssueWorkspace(
-    project: Project,
+    projectRoot: string,
     issue: GitHubIssue,
     branch: GitSourceBranch
   ): Promise<void> {
@@ -569,7 +558,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     });
     if (name !== undefined) {
       await this.createWorkspace(
-        project,
+        projectRoot,
         name,
         branch.name,
         issuePrompt(issue)
@@ -578,20 +567,20 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   private async createWorkspace(
-    project: Project,
+    projectRoot: string,
     name: string,
     sourceRef?: string,
     prompt?: string
   ): Promise<void> {
     const workspace = await this.projects.createWorkspace(
-      project.root,
+      projectRoot,
       name,
       sourceRef
     );
     try {
-      const entries = await ignoredWorkspaceFiles(project.root);
+      const entries = await ignoredWorkspaceFiles(projectRoot);
       if (entries.length > 0) {
-        const { settings } = await readWorkspaceSettings(project.root);
+        const { settings } = await readWorkspaceSettings(projectRoot);
         const saved = settings[COPY_IGNORED_ITEMS_KEY];
         const previous = Array.isArray(saved) ? new Set<unknown>(saved) : null;
         const selected = await vscode.window.showQuickPick(
@@ -608,10 +597,10 @@ export class MischiefView implements vscode.WebviewViewProvider {
         if (selected) {
           const names = selected.map((item) => item.label);
           if (names.length > 0) {
-            await copyIgnoredWorkspaceFiles(project.root, workspace, names);
+            await copyIgnoredWorkspaceFiles(projectRoot, workspace, names);
           }
           await updateWorkspaceSetting(
-            project.root,
+            projectRoot,
             COPY_IGNORED_ITEMS_KEY,
             names
           );
@@ -624,7 +613,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
     if (workspaceColorsEnabled()) {
       try {
-        await assignWorkspaceColors(workspace, project.root);
+        await assignWorkspaceColors(workspace, projectRoot);
       } catch (error) {
         void vscode.window.showWarningMessage(
           `Mischief created the Workspace but could not assign its color: ${error instanceof Error ? error.message : String(error)}`
@@ -815,16 +804,13 @@ export class MischiefView implements vscode.WebviewViewProvider {
     snapshot: Promise<ProjectsSnapshot>
   ): Promise<void> {
     this.projectsSnapshot = await snapshot;
-    const current = this.workspaces().find((workspace) => workspace.current);
+    const { current } = this.projectsSnapshot.navigation;
     if (current && workspaceColorsEnabled()) {
-      const projectRoot =
-        this.projectsSnapshot.projects.find((project) =>
-          project.workspaces.some(
-            (workspace) => workspace.path === current.path
-          )
-        )?.root ?? current.path;
       try {
-        await ensureWorkspaceColors(current.path, projectRoot);
+        await ensureWorkspaceColors(
+          current.workspace.path,
+          current.projectRoot ?? current.workspace.path
+        );
       } catch (error) {
         void vscode.window.showWarningMessage(
           `Mischief could not assign this Workspace's color: ${error instanceof Error ? error.message : String(error)}`
@@ -832,14 +818,14 @@ export class MischiefView implements vscode.WebviewViewProvider {
       }
     }
     await Promise.all(
-      this.workspaces().map(async (workspace) => {
+      this.projectsSnapshot.navigation.workspaces.map(async (workspace) => {
         workspace.color = await workspaceWindowColor(workspace.path);
       })
     );
   }
 
   private async syncThreads(): Promise<void> {
-    const current = this.workspaces().find((workspace) => workspace.current);
+    const current = this.projectsSnapshot.navigation.current?.workspace;
     const active = this.threads.snapshot().workspace;
     if (current && active !== current.path) {
       await this.threads.openWorkspace(current.path);
@@ -1031,7 +1017,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
       const workspace = this.threads
         .snapshot()
         .threads.find((thread) => thread.id === data.id)?.workspace;
-      const current = this.workspaces().find((candidate) => candidate.current);
+      const current = this.projectsSnapshot.navigation.current?.workspace;
       if (isNonEmpty(workspace) && workspace !== current?.path) {
         await this.openWorkspace(workspace);
       }
@@ -1286,7 +1272,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   private async startPendingWorkspace(): Promise<void> {
-    const workspace = this.workspaces().find((candidate) => candidate.current);
+    const workspace = this.projectsSnapshot.navigation.current?.workspace;
     const pending = this.storage.get<PendingWorkspaceStart[]>(
       START_WORKSPACES_KEY,
       []
@@ -1317,7 +1303,9 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   private async openWorkspace(candidate: string): Promise<void> {
-    const workspace = this.workspaces().find((item) => item.path === candidate);
+    const workspace = this.projectsSnapshot.navigation.workspaces.find(
+      (item) => item.path === candidate
+    );
     if (!workspace || workspace.current) {
       return;
     }
@@ -1331,7 +1319,9 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   private async focusWorkspace(candidate: string): Promise<void> {
-    const workspace = this.workspaces().find((item) => item.path === candidate);
+    const workspace = this.projectsSnapshot.navigation.workspaces.find(
+      (item) => item.path === candidate
+    );
     if (!workspace) {
       return;
     }
@@ -1348,7 +1338,11 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   private async closeWorkspace(candidate: string): Promise<void> {
-    if (!this.workspaces().some((workspace) => workspace.path === candidate)) {
+    if (
+      !this.projectsSnapshot.navigation.workspaces.some(
+        (workspace) => workspace.path === candidate
+      )
+    ) {
       return;
     }
     await this.setProjects(this.projects.remove(candidate));
@@ -1490,17 +1484,8 @@ export class MischiefView implements vscode.WebviewViewProvider {
     );
   }
 
-  private workspaces(): Workspace[] {
-    return [
-      ...this.projectsSnapshot.projects.flatMap(
-        (project) => project.workspaces
-      ),
-      ...this.projectsSnapshot.ungrouped,
-    ];
-  }
-
   private async sendContextItems(): Promise<void> {
-    const workspace = this.workspaces().find((item) => item.current);
+    const workspace = this.projectsSnapshot.navigation.current?.workspace;
     if (!workspace || !this.view) {
       return;
     }
@@ -1558,7 +1543,9 @@ export class MischiefView implements vscode.WebviewViewProvider {
       ?.trim();
     const threads = this.threads.snapshot();
     const visible = new Set(
-      this.workspaces().map((workspace) => workspace.path)
+      this.projectsSnapshot.navigation.workspaces.map(
+        (workspace) => workspace.path
+      )
     );
     const attentionCount = threads.threads.filter(
       (thread) => visible.has(thread.workspace) && thread.needsAttention

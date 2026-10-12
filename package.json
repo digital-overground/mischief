@@ -2,7 +2,7 @@
   "name": "mischief",
   "displayName": "Mischief",
   "version": "0.3.0",
-  "description": "A VS Code project, workspace, and Agent Thread browser for MagPi, Claude Agent, and Codex.",
+  "description": "A VS Code Workspace and Agent Thread browser for MagPi, Claude Agent, and Codex.",
   "categories": [
     "Chat",
     "Other"
