@@ -2,7 +2,6 @@ export type IconKind =
   | "alert"
   | "archive"
   | "bot"
-  | "botMessageSquare"
   | "brain"
   | "chat"
   | "circle"
@@ -11,10 +10,10 @@ export type IconKind =
   | "draftingCompass"
   | "history"
   | "moreVertical"
+  | "messageCircleQuestionMark"
   | "fork"
   | "circleCheck"
   | "eye"
-  | "externalLink"
   | "file"
   | "folderGit2"
   | "github"
@@ -64,16 +63,6 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M9 13v2" />
     </>
   ),
-  botMessageSquare: (
-    <>
-      <path d="M12 6V2H8" />
-      <path d="M15.5 12h.01" />
-      <path d="M8.5 12h.01" />
-      <path d="M12 12h.01" />
-      <path d="M16 18H8a4 4 0 0 1-4-4v-5a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v5a4 4 0 0 1-4 4Z" />
-      <path d="M12 18v4" />
-    </>
-  ),
   brain: (
     <>
       <path d="M12 18V5" />
@@ -120,13 +109,6 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="m21 21-2.16-3.84" />
       <path d="m3 21 8.02-14.26" />
       <circle cx="12" cy="5" r="2" />
-    </>
-  ),
-  externalLink: (
-    <>
-      <path d="M15 3h6v6" />
-      <path d="M10 14 21 3" />
-      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
     </>
   ),
   eye: (
@@ -183,6 +165,13 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
       <path d="M3 3v5h5" />
       <path d="M12 7v5l4 2" />
+    </>
+  ),
+  messageCircleQuestionMark: (
+    <>
+      <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" />
+      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+      <path d="M12 17h.01" />
     </>
   ),
   moreVertical: (

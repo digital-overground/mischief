@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { AGENTS } from "../../../agents/update";
+import type { AgentId } from "../../../agents/update";
 import { isNonEmpty } from "../../../present";
+import { AgentIcon } from "../../agent-icon";
 import { postMessage } from "../../bridge";
 import { SvgIcon } from "../../icon";
 import type {
@@ -29,16 +30,16 @@ const Processing = ({ hidden }: { hidden: boolean }): React.JSX.Element => (
 
 // oxlint-disable-next-line complexity -- the component renders Thread state branches
 export const ThreadView = ({
+  agentIcons,
   contextItems,
   setup,
   snapshot,
   transcript,
-  workspaceColor,
 }: {
+  agentIcons?: Partial<Record<AgentId, string>>;
   contextItems: string[];
   setup?: RenderedSetupStep;
   snapshot: RenderedThreadsSnapshot;
-  workspaceColor?: string;
   transcript: {
     items: RenderedTranscriptItem[];
     streaming: boolean;
@@ -137,14 +138,7 @@ export const ThreadView = ({
         id="thread-content"
         inert={blocked || Boolean(selected?.interaction)}
       >
-        <header
-          id="thread-header"
-          style={
-            isNonEmpty(workspaceColor)
-              ? { backgroundColor: workspaceColor }
-              : undefined
-          }
-        >
+        <header id="thread-header">
           <div className="thread-header-agent">
             {!setup &&
               selected &&
@@ -157,18 +151,23 @@ export const ThreadView = ({
                     postMessage({ type: "chooseAgent" });
                   }}
                 >
-                  {selected.agentId
-                    ? `${AGENTS[selected.agentId].name} ▾`
-                    : "Choose Agent ▾"}
+                  {selected.agentId ? (
+                    <AgentIcon id={selected.agentId} icons={agentIcons} />
+                  ) : (
+                    "Choose Agent"
+                  )}
+                  {" ▾"}
                 </button>
               ) : (
                 <span
                   className="thread-agent"
                   title="This Thread's Agent cannot be changed"
                 >
-                  {selected.agentId
-                    ? AGENTS[selected.agentId].name
-                    : "Choose Agent"}
+                  {selected.agentId ? (
+                    <AgentIcon id={selected.agentId} icons={agentIcons} />
+                  ) : (
+                    "Choose Agent"
+                  )}
                 </span>
               ))}
           </div>

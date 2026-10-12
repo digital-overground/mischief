@@ -2,25 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { postMessage } from "./bridge";
 import { ButtonTooltip } from "./button-tooltip";
-import { SvgIcon } from "./icon";
 import { NavigatorPane } from "./navigator-pane";
-import type {
-  AgentSetting,
-  HostToWebviewMessage,
-  RenderedTranscriptItem,
-} from "./protocol";
+import type { HostToWebviewMessage, RenderedTranscriptItem } from "./protocol";
+import { SettingsDialog } from "./settings-dialog";
 import { ThreadView } from "./threads/detail/thread-view";
-
-const agentStatus: Record<AgentSetting["state"], string> = {
-  checking: "Checking for updates…",
-  current: "Up to date",
-  installing: "Installing…",
-  missing: "Not installed",
-  newer: "Newer than published release",
-  unknown: "Could not check for updates",
-  updateAvailable: "Update available",
-  waiting: "Not connected yet",
-};
 
 const initialState: Extract<HostToWebviewMessage, { type: "state" }> = {
   font: "ui-monospace, monospace",
@@ -31,12 +16,9 @@ const initialState: Extract<HostToWebviewMessage, { type: "state" }> = {
 
 export const App = (): React.JSX.Element => {
   const [snapshot, setSnapshot] = useState(initialState);
-  const [assignWorkspaceColors, setAssignWorkspaceColors] = useState(true);
-  const [defaultAgent, setDefaultAgent] = useState("");
-  const [agents, setAgents] = useState<AgentSetting[]>([]);
   const [contextItems, setContextItems] = useState<string[]>([]);
   const [expandAllRequest, setExpandAllRequest] = useState(0);
-  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
+  const [projectsMenuOpen, setProjectsMenuOpen] = useState(false);
   const [threadMaximized, setThreadMaximized] = useState(false);
   const [transcript, setTranscript] = useState<{
     items: RenderedTranscriptItem[];
@@ -44,24 +26,13 @@ export const App = (): React.JSX.Element => {
     threadId?: string;
   }>({ items: [], streaming: false });
   const previousWorkspace = useRef<string | null>(null);
-  const settingsDialog = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
     const receive = (event: MessageEvent<HostToWebviewMessage>): void => {
-      if (event.data.type === "showSettings") {
-        setAssignWorkspaceColors(event.data.assignWorkspaceColors);
-        setDefaultAgent(event.data.defaultAgent);
-        setAgents(event.data.agents);
-        const dialog = settingsDialog.current;
-        if (dialog && !dialog.open) {
-          dialog.showModal();
-        }
-      } else if (event.data.type === "agents") {
-        setAgents(event.data.agents);
-      } else if (event.data.type === "contextItems") {
+      if (event.data.type === "contextItems") {
         setContextItems(event.data.items);
-      } else if (event.data.type === "toggleActionsMenu") {
-        setActionsMenuOpen((open) => !open);
+      } else if (event.data.type === "toggleProjectsMenu") {
+        setProjectsMenuOpen((open) => !open);
       } else if (event.data.type === "setAllExpanded") {
         if (event.data.expanded) {
           setExpandAllRequest((request) => request + 1);
@@ -140,145 +111,31 @@ export const App = (): React.JSX.Element => {
     <>
       <main>
         <NavigatorPane
-          actionsMenuOpen={actionsMenuOpen}
+          agentIcons={snapshot.agentIcons}
           collapseAll={threadMaximized}
           expandAllRequest={expandAllRequest}
-          onDismissActionsMenu={() => {
-            setActionsMenuOpen(false);
+          onDismissProjectsMenu={() => {
+            setProjectsMenuOpen(false);
           }}
-          projects={snapshot.projects}
-          threads={snapshot.threads}
           onExpand={() => {
             setThreadMaximized(false);
           }}
+          onToggleProjectsMenu={() => {
+            setProjectsMenuOpen((open) => !open);
+          }}
+          projects={snapshot.projects}
+          projectsMenuOpen={projectsMenuOpen}
+          threads={snapshot.threads}
         />
         <ThreadView
+          agentIcons={snapshot.agentIcons}
           contextItems={contextItems}
           setup={snapshot.setup}
-          workspaceColor={currentWorkspace?.color}
           snapshot={snapshot.threads}
           transcript={transcript}
         />
       </main>
-      <dialog
-        id="settings-dialog"
-        ref={settingsDialog}
-        aria-labelledby="settings-title"
-      >
-        <div className="settings-header">
-          <h2 id="settings-title">Mischief Settings</h2>
-          <button
-            className="icon"
-            type="button"
-            title="Close Settings"
-            aria-label="Close Settings"
-            onClick={() => settingsDialog.current?.close()}
-          >
-            ×
-          </button>
-        </div>
-        <label className="settings-option">
-          <input
-            type="checkbox"
-            checked={assignWorkspaceColors}
-            aria-describedby="assign-workspace-colors-description"
-            onChange={(event) => {
-              const value = event.currentTarget.checked;
-              setAssignWorkspaceColors(value);
-              postMessage({ type: "setAssignWorkspaceColors", value });
-            }}
-          />
-          <span>
-            <span className="settings-name">
-              Assign Workspace window colors
-            </span>
-            <span
-              className="settings-description"
-              id="assign-workspace-colors-description"
-            >
-              Automatically assigns colors from the active theme to Workspace
-              windows that do not already define them.
-            </span>
-          </span>
-        </label>
-        <label className="settings-option" htmlFor="default-agent">
-          <span>
-            <span className="settings-name">Default Agent</span>
-            <span className="settings-description">
-              Used for new Threads. Existing Threads keep their Agent.
-            </span>
-          </span>
-          <select
-            id="default-agent"
-            value={defaultAgent}
-            onChange={(event) => {
-              const id = event.currentTarget.value;
-              setDefaultAgent(id);
-              postMessage({ id, type: "setDefaultAgent" });
-            }}
-          >
-            <option value="">Choose each time</option>
-            {agents.map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <section className="settings-agents" aria-labelledby="agents-title">
-          <h3 id="agents-title">Agents</h3>
-          <div aria-live="polite">
-            {agents.map((agent) => (
-              <div className="settings-agent" key={agent.id}>
-                <span className="settings-name">{agent.name}</span>
-                <span className="settings-description">
-                  {agent.installedVersion === undefined
-                    ? ""
-                    : `Installed ${agent.installedVersion} · `}
-                  {agent.latestVersion === undefined
-                    ? ""
-                    : `Latest ${agent.latestVersion} · `}
-                  {agent.error ?? agentStatus[agent.state]}
-                </span>
-                <button
-                  className={`action${agent.managed === true ? "" : " primary"}`}
-                  type="button"
-                  aria-label={
-                    agent.managed === true
-                      ? `Check ${agent.name} for updates`
-                      : `Install ${agent.name} managed`
-                  }
-                  disabled={
-                    agent.state === "checking" || agent.state === "installing"
-                  }
-                  onClick={() => {
-                    postMessage({
-                      id: agent.id,
-                      type:
-                        agent.managed === true ? "checkAgent" : "installAgent",
-                    });
-                  }}
-                >
-                  {agent.managed === true ? null : (
-                    <SvgIcon
-                      className="interaction-action-icon"
-                      kind="download"
-                    />
-                  )}
-                  {agent.managed === true
-                    ? "Check for updates"
-                    : "Install managed"}
-                </button>
-              </div>
-            ))}
-          </div>
-          <p className="settings-description">
-            Managed Agents install in Mischief storage. After you approve an
-            install, Mischief updates it automatically; running Threads keep
-            their current process.
-          </p>
-        </section>
-      </dialog>
+      <SettingsDialog icons={snapshot.agentIcons} />
       <ButtonTooltip />
     </>
   );

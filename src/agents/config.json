@@ -1,6 +1,7 @@
 {
   "magpi-acp": {
     "bin": "dist/index.js",
+    "icon": "media/agents/magpi-acp.svg",
     "icons": {
       "model": "bot",
       "role": "user",
@@ -11,6 +12,7 @@
   },
   "claude-agent-acp": {
     "bin": "dist/index.js",
+    "icon": "media/agents/claude-acp.svg",
     "icons": {
       "agent": "user",
       "effort": "brain",
@@ -23,6 +25,7 @@
   },
   "codex-acp": {
     "bin": "dist/index.js",
+    "icon": "media/agents/codex-acp.svg",
     "icons": {
       "mode": "shieldCheck",
       "collaboration_mode": "plan",

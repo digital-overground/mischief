@@ -55,6 +55,8 @@ import {
 
 const VIEW_ID = "mischief.view";
 const START_WORKSPACES_KEY = "mischief.startWorkspaces";
+// ponytail: one pending Project focus; use request IDs if launches overlap.
+const FOCUS_WORKSPACE_KEY = "mischief.focusWorkspace";
 const COPY_IGNORED_ITEMS_KEY = "mischief.copyIgnoredItems";
 
 interface PendingWorkspaceStart {
@@ -340,6 +342,16 @@ export class MischiefView implements vscode.WebviewViewProvider {
       isNonEmpty(folder) ? this.projects.open(folder) : this.projects.refresh()
     );
     await this.syncThreads();
+    const focusWorkspace = this.storage.get<string>(FOCUS_WORKSPACE_KEY);
+    if (
+      isNonEmpty(focusWorkspace) &&
+      focusWorkspace ===
+        this.workspaces().find((workspace) => workspace.current)?.path
+    ) {
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined removes a VS Code Memento key.
+      await this.storage.update(FOCUS_WORKSPACE_KEY, undefined);
+      await vscode.commands.executeCommand("workbench.view.extension.mischief");
+    }
     if (
       this.threads.snapshot().selected?.id === null &&
       this.agentManager?.availableAgents().length === 0
@@ -737,10 +749,10 @@ export class MischiefView implements vscode.WebviewViewProvider {
     } satisfies HostToWebviewMessage);
   }
 
-  toggleActionsMenu(): void {
+  toggleProjectsMenu(): void {
     const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
     void postMessage?.({
-      type: "toggleActionsMenu",
+      type: "toggleProjectsMenu",
     } satisfies HostToWebviewMessage);
   }
 
@@ -940,19 +952,30 @@ export class MischiefView implements vscode.WebviewViewProvider {
       await this.continueSetup(selected);
       return true;
     }
-    if (data.type === "openIssues" && typeof data.path === "string") {
+    return await this.handleWorkspaceNavigationMessage(data);
+  }
+
+  private async handleWorkspaceNavigationMessage(
+    data: Record<string, unknown>
+  ): Promise<boolean> {
+    if (typeof data.path !== "string") {
+      return false;
+    }
+    if (data.type === "openIssues") {
       await this.openIssues(data.path);
       return true;
     }
-    if (data.type === "newWorkspace" && typeof data.path === "string") {
+    if (data.type === "newWorkspace") {
       await this.newWorkspace(data.path);
       return true;
     }
-    if (data.type === "openWorkspace" && typeof data.path === "string") {
-      await this.openWorkspace(data.path);
+    if (data.type === "openWorkspace" || data.type === "focusWorkspace") {
+      await (data.type === "openWorkspace"
+        ? this.openWorkspace(data.path)
+        : this.focusWorkspace(data.path));
       return true;
     }
-    if (data.type === "closeWorkspace" && typeof data.path === "string") {
+    if (data.type === "closeWorkspace") {
       await this.closeWorkspace(data.path);
       return true;
     }
@@ -1307,6 +1330,23 @@ export class MischiefView implements vscode.WebviewViewProvider {
     );
   }
 
+  private async focusWorkspace(candidate: string): Promise<void> {
+    const workspace = this.workspaces().find((item) => item.path === candidate);
+    if (!workspace) {
+      return;
+    }
+    if (workspace.current) {
+      await vscode.commands.executeCommand("workbench.view.extension.mischief");
+      return;
+    }
+    await this.storage.update(FOCUS_WORKSPACE_KEY, workspace.path);
+    await vscode.commands.executeCommand(
+      "vscode.openFolder",
+      vscode.Uri.file(workspace.path),
+      { forceNewWindow: true }
+    );
+  }
+
   private async closeWorkspace(candidate: string): Promise<void> {
     if (!this.workspaces().some((workspace) => workspace.path === candidate)) {
       return;
@@ -1535,8 +1575,19 @@ export class MischiefView implements vscode.WebviewViewProvider {
         items: threads.selected.items.map(renderTranscriptItem),
       };
     }
-    const postMessage = this.view.webview.postMessage.bind(this.view.webview);
+    const { webview } = this.view;
+    const postMessage = webview.postMessage.bind(webview);
     return postMessage({
+      agentIcons: Object.fromEntries(
+        AGENT_IDS.map((id) => [
+          id,
+          webview
+            .asWebviewUri(
+              vscode.Uri.joinPath(this.extensionUri, AGENTS[id].icon)
+            )
+            .toString(),
+        ])
+      ),
       font:
         font !== undefined && font.length > 0 ? font : DEFAULT_MONO_FONT_FAMILY,
       projects: this.projectsSnapshot,

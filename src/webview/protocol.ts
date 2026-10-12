@@ -1,3 +1,4 @@
+import type { AgentId } from "../agents/update";
 import type { ProjectsSnapshot } from "../projects/projects";
 import type { PromptImage } from "../threads/model";
 import type {
@@ -61,6 +62,7 @@ export type HostToWebviewMessage =
   | {
       type: "state";
       font: string;
+      agentIcons?: Partial<Record<AgentId, string>>;
       projects: ProjectsSnapshot;
       setup?: RenderedSetupStep;
       threads: RenderedThreadsSnapshot;
@@ -78,7 +80,7 @@ export type HostToWebviewMessage =
     }
   | { type: "contextItems"; items: string[] }
   | { type: "setAllExpanded"; expanded: boolean }
-  | { type: "toggleActionsMenu" }
+  | { type: "toggleProjectsMenu" }
   | {
       type: "showSettings";
       assignWorkspaceColors: boolean;
@@ -105,7 +107,12 @@ export type WebviewToHostMessage =
       messageId: string;
     }
   | {
-      type: "closeWorkspace" | "newWorkspace" | "openIssues" | "openWorkspace";
+      type:
+        | "closeWorkspace"
+        | "focusWorkspace"
+        | "newWorkspace"
+        | "openIssues"
+        | "openWorkspace";
       path: string;
     }
   | {

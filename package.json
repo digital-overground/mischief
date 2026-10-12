@@ -91,11 +91,6 @@
         "icon": "$(refresh)"
       },
       {
-        "command": "mischief.actions",
-        "title": "Mischief: Actions",
-        "icon": "$(kebab-vertical)"
-      },
-      {
         "command": "mischief.expandAll",
         "title": "Mischief: Expand Current Workspace",
         "icon": "$(expand-all)"
@@ -138,7 +133,7 @@
       ],
       "view/title": [
         {
-          "command": "mischief.actions",
+          "command": "mischief.settings",
           "when": "view == mischief.view",
           "group": "navigation@1"
         }

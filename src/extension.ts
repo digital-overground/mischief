@@ -274,7 +274,10 @@ export const activate = async (
       await view.refresh();
     }),
     vscode.commands.registerCommand("mischief.actions", () => {
-      view.toggleActionsMenu();
+      view.toggleProjectsMenu();
+    }),
+    vscode.commands.registerCommand("mischief.projects", () => {
+      view.toggleProjectsMenu();
     }),
     vscode.commands.registerCommand("mischief.expandAll", () => {
       view.setAllExpanded(true);
