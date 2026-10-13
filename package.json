@@ -1,7 +1,7 @@
 {
   "name": "mischief",
   "displayName": "Mischief",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A VS Code Workspace and Agent Thread browser for MagPi, Claude Agent, and Codex.",
   "categories": [
     "Chat",
@@ -12,7 +12,12 @@
     "agent",
     "magpi",
     "magpie",
-    "workspace"
+    "workspace",
+    "pi",
+    "claude",
+    "herdr",
+    "codex",
+    "manager"
   ],
   "homepage": "https://github.com/digital-overground/mischief#readme",
   "bugs": {
