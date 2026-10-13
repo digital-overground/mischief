@@ -10,14 +10,14 @@
   "keywords": [
     "acp",
     "agent",
+    "claude",
+    "codex",
+    "herdr",
     "magpi",
     "magpie",
-    "workspace",
+    "manager",
     "pi",
-    "claude",
-    "herdr",
-    "codex",
-    "manager"
+    "workspace"
   ],
   "homepage": "https://github.com/digital-overground/mischief#readme",
   "bugs": {
