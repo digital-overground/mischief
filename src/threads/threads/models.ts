@@ -117,6 +117,9 @@ export interface ThreadsSnapshot {
 
 export type ThreadsChange =
   | {
+      type: "remoteSelection";
+    }
+  | {
       type: "transcript";
       threadId: string;
       item: TranscriptItem;

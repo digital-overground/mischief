@@ -254,14 +254,11 @@ export const activate = async (
     context.globalState,
     database,
     softwareSetup(manager, context.globalState),
-    manager.snapshot(),
     manager
   );
   manager.onChange((statuses) => {
     threads.setPreferredAgent(configuredAvailableAgent(manager));
-    for (const status of statuses) {
-      view.setAgentStatus(status);
-    }
+    view.forwardAgentStatuses(statuses);
   });
   context.subscriptions.push(output);
   registerMischiefView(context, view);
@@ -272,6 +269,12 @@ export const activate = async (
     }),
     vscode.commands.registerCommand("mischief.refresh", async () => {
       await view.refresh();
+    }),
+    vscode.commands.registerCommand("mischief.actions", () => {
+      view.toggleProjectsMenu();
+    }),
+    vscode.commands.registerCommand("mischief.projects", () => {
+      view.toggleProjectsMenu();
     }),
     vscode.commands.registerCommand("mischief.expandAll", () => {
       view.setAllExpanded(true);

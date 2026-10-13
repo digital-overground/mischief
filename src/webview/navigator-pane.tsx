@@ -1,12 +1,10 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import type { AgentId } from "../agents/update";
 import { isNonEmpty } from "../present";
-import type {
-  Project,
-  ProjectsSnapshot,
-  Workspace,
-} from "../projects/projects";
+import type { ProjectsSnapshot, Workspace } from "../projects/projects";
 import type { ThreadIndicator, ThreadSummary } from "../threads/threads/models";
+import { AgentIcon } from "./agent-icon";
 import { postMessage } from "./bridge";
 import { SvgIcon } from "./icon";
 import type { RenderedThreadsSnapshot } from "./protocol";
@@ -53,7 +51,14 @@ export const StatusIndicator = ({
     title={label}
     role="img"
     aria-label={label}
-  />
+  >
+    {kind === "waiting" ? (
+      <SvgIcon
+        className="thread-status-question"
+        kind="messageCircleQuestionMark"
+      />
+    ) : null}
+  </span>
 );
 
 const compactTime = (value: string, now: number): string => {
@@ -69,54 +74,219 @@ const compactTime = (value: string, now: number): string => {
   return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
 };
 
+const menuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") {
+    return;
+  }
+  event.preventDefault();
+  const items = [
+    ...event.currentTarget.querySelectorAll<HTMLButtonElement>("button"),
+  ];
+  const index = items.findIndex((item) =>
+    item.contains(document.activeElement)
+  );
+  if (index === -1) {
+    items[event.key === "ArrowDown" ? 0 : items.length - 1]?.focus();
+    return;
+  }
+  items[
+    (index + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length
+  ]?.focus();
+};
+
+const WorkspaceMenu = ({
+  close,
+  dismiss,
+  position,
+  projectRoot,
+}: {
+  close: () => void;
+  dismiss: () => void;
+  position: { left: number; top: number };
+  projectRoot?: string;
+}): React.JSX.Element => (
+  <div
+    className="workspace-menu"
+    role="menu"
+    aria-label="Workspace actions"
+    style={position}
+    onKeyDown={menuKeyDown}
+  >
+    {isNonEmpty(projectRoot) ? (
+      <>
+        <button
+          autoFocus
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            postMessage({ path: projectRoot, type: "openIssues" });
+            dismiss();
+          }}
+        >
+          <SvgIcon kind="folderGit2" /> Start work on issue
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            postMessage({ path: projectRoot, type: "newWorkspace" });
+            dismiss();
+          }}
+        >
+          <SvgIcon kind="plus" /> Add Workspace
+        </button>
+      </>
+    ) : null}
+    <button
+      autoFocus={!isNonEmpty(projectRoot)}
+      type="button"
+      role="menuitem"
+      onClick={() => {
+        postMessage({ type: "threadHistory" });
+        dismiss();
+      }}
+    >
+      <SvgIcon kind="history" /> Thread History
+    </button>
+    <hr />
+    <button type="button" role="menuitem" onClick={close}>
+      <SvgIcon kind="x" /> Close Workspace
+    </button>
+  </div>
+);
+
+// oxlint-disable-next-line complexity -- Workspace menu and Thread row actions share this rendering path
 const WorkspaceNode = ({
+  agentIcons,
+  parentMenuOpen,
   expanded,
+  flyout,
   now,
+  onNavigate,
   onToggle,
+  projectRoot,
   selectedId,
   threads,
   workspace,
 }: {
+  agentIcons?: Partial<Record<AgentId, string>>;
+  parentMenuOpen: boolean;
   expanded: boolean;
+  flyout: boolean;
   now: number;
+  onNavigate?: () => void;
   onToggle: () => void;
+  projectRoot?: string;
   selectedId?: string | null;
   threads: ThreadSummary[];
   workspace: Workspace;
 }): React.JSX.Element => {
-  const attention = (["waiting", "error", "completed"] as const).filter(
-    (indicator) => threads.some((thread) => thread.indicator === indicator)
-  );
-  const workspaceAction = `${expanded ? "Collapse" : "Expand"} ${workspace.name}`;
+  const [closing, setClosing] = useState(false);
+  const nodeRef = useRef<HTMLDivElement>(null);
+  const [menu, setMenu] = useState<{ left: number; top: number } | null>(null);
+  useEffect(() => {
+    if (parentMenuOpen) {
+      setMenu(null);
+    }
+  }, [parentMenuOpen]);
+  useEffect(() => {
+    const dismissOutside = (event: MouseEvent): void => {
+      if (
+        menu === null ||
+        (event.target instanceof Element &&
+          event.target
+            .closest('.workspace-menu, [aria-haspopup="menu"]')
+            ?.closest(".workspace-node") === nodeRef.current)
+      ) {
+        return;
+      }
+      setMenu(null);
+    };
+    const escape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        setMenu(null);
+      }
+    };
+    document.addEventListener("click", dismissOutside, true);
+    document.addEventListener("contextmenu", dismissOutside, true);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("click", dismissOutside, true);
+      document.removeEventListener("contextmenu", dismissOutside, true);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [menu]);
+  const showMenu = (x: number, y: number): void => {
+    setMenu({
+      left: Math.max(4, Math.min(x, window.innerWidth - 216)),
+      top: Math.max(
+        4,
+        Math.min(y, window.innerHeight - Math.min(window.innerHeight - 8, 152))
+      ),
+    });
+  };
+  const closeWorkspace = (): void => {
+    setMenu(null);
+    setClosing(true);
+    postMessage({ path: workspace.path, type: "closeWorkspace" });
+    onNavigate?.();
+  };
+  let workspaceAction = `Open ${workspace.name} Window`;
+  if (flyout) {
+    workspaceAction = `Open ${workspace.name} in Mischief`;
+  } else if (workspace.current) {
+    workspaceAction = `${expanded ? "Collapse" : "Expand"} ${workspace.name}`;
+  }
   return (
-    <div className={`workspace-node${workspace.current ? " current" : ""}`}>
+    <div
+      ref={nodeRef}
+      className={`workspace-node${workspace.current ? " current" : ""}${closing ? " closing" : ""}`}
+    >
       <div
-        className={`row workspace-row${workspace.current && !expanded ? " selected" : ""}`}
+        aria-busy={closing}
+        className={`row workspace-row${workspace.current && !expanded ? " selected" : ""}${closing ? " closing" : ""}`}
+        onContextMenu={(event) => {
+          if (workspace.current && !closing) {
+            event.preventDefault();
+            showMenu(event.clientX, event.clientY);
+          }
+        }}
       >
-        <button
-          className="workspace-disclosure workspace-toggle"
-          type="button"
-          title={`${expanded ? "Collapse" : "Expand"} ${workspace.name}`}
-          aria-label={`${expanded ? "Collapse" : "Expand"} ${workspace.name}`}
-          aria-expanded={expanded}
-          onClick={onToggle}
-        >
-          {expanded ? "▾" : "▸"}
-        </button>
+        {workspace.current && !flyout ? (
+          <button
+            className="workspace-disclosure workspace-toggle"
+            type="button"
+            disabled={closing}
+            title={workspaceAction}
+            aria-label={workspaceAction}
+            aria-expanded={expanded}
+            onClick={onToggle}
+          >
+            {expanded ? "▾" : "▸"}
+          </button>
+        ) : (
+          <span
+            aria-hidden="true"
+            className="workspace-disclosure workspace-disclosure-placeholder"
+          />
+        )}
         <button
           className="row-open workspace-open"
           type="button"
+          disabled={closing}
           title={workspaceAction}
           aria-label={workspaceAction}
-          onClick={onToggle}
+          onClick={() => {
+            if (flyout) {
+              postMessage({ path: workspace.path, type: "focusWorkspace" });
+              onNavigate?.();
+            } else if (workspace.current) {
+              onToggle();
+            } else {
+              postMessage({ path: workspace.path, type: "openWorkspace" });
+            }
+          }}
         >
-          {isNonEmpty(workspace.color) ? (
-            <span
-              aria-hidden="true"
-              className="workspace-color"
-              style={{ backgroundColor: workspace.color }}
-            />
-          ) : null}
           <span className="workspace-label">
             <span className="name">{workspace.name}</span>
             {isNonEmpty(workspace.branch) ? (
@@ -126,90 +296,105 @@ const WorkspaceNode = ({
               </span>
             ) : null}
           </span>
-          <span className="workspace-statuses">
-            {attention.map((indicator) => (
-              <StatusIndicator kind={indicator} key={indicator} />
-            ))}
-          </span>
         </button>
-        {workspace.current ? null : (
+        {workspace.current && !flyout ? (
           <IconButton
-            title={`Open ${workspace.name} Window`}
+            title="New Thread"
             onClick={() => {
-              postMessage({ path: workspace.path, type: "openWorkspace" });
+              postMessage({ type: "newThread" });
+              onNavigate?.();
             }}
           >
-            <SvgIcon className="thread-action-icon" kind="externalLink" />
+            <SvgIcon className="thread-action-icon" kind="chat" />
           </IconButton>
-        )}
-        {workspace.current ? (
-          <>
-            <IconButton
-              title="Thread History"
-              onClick={() => {
-                postMessage({ type: "threadHistory" });
-              }}
-            >
-              <SvgIcon className="thread-action-icon" kind="history" />
-            </IconButton>
-            <IconButton
-              title="New Thread"
-              onClick={() => {
-                postMessage({ type: "newThread" });
-              }}
-            >
-              <SvgIcon className="thread-action-icon" kind="chat" />
-            </IconButton>
-          </>
         ) : null}
-        <IconButton
-          title="Close Workspace"
-          onClick={() => {
-            postMessage({ path: workspace.path, type: "deactivateWorkspace" });
-          }}
-        >
-          <SvgIcon className="thread-action-icon" kind="x" />
-        </IconButton>
+        {closing ? (
+          <span
+            className="workspace-close-spinner"
+            title="Closing Workspace"
+            role="status"
+            aria-label="Closing Workspace"
+          >
+            <span className="thread-status active" aria-hidden="true" />
+          </span>
+        ) : null}
+        {workspace.current ? (
+          <button
+            className="icon workspace-menu-trigger"
+            type="button"
+            title="Workspace actions"
+            aria-label="Workspace actions"
+            aria-haspopup="menu"
+            aria-expanded={menu !== null}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (menu) {
+                setMenu(null);
+              } else {
+                const rect = event.currentTarget.getBoundingClientRect();
+                showMenu(rect.right - 208, rect.bottom);
+              }
+            }}
+          >
+            <SvgIcon className="thread-action-icon" kind="moreVertical" />
+          </button>
+        ) : null}
       </div>
-      {expanded ? (
+      {menu && workspace.current ? (
+        <WorkspaceMenu
+          close={closeWorkspace}
+          dismiss={() => {
+            setMenu(null);
+            onNavigate?.();
+          }}
+          position={menu}
+          projectRoot={projectRoot}
+        />
+      ) : null}
+      {(workspace.current || flyout) && expanded ? (
         <div className="workspace-threads">
           {threads.map((thread) => (
             <div
-              className={`row thread-row${selectedId === thread.id ? " selected" : ""}`}
+              className={`row thread-row${selectedId === thread.id ? " selected" : ""}${!flyout && thread.indicator !== "idle" ? " has-status" : ""}`}
               key={thread.id}
             >
+              {!flyout && thread.indicator !== "idle" ? (
+                <StatusIndicator kind={thread.indicator} />
+              ) : null}
               <button
                 className="row-open"
+                type="button"
                 title="Open Thread"
                 onClick={() => {
                   postMessage({ id: thread.id, type: "selectThread" });
+                  onNavigate?.();
                 }}
               >
-                <StatusIndicator kind={thread.indicator} />
                 <span className="name">{thread.name}</span>
                 <span className="meta thread-activity">
                   {compactTime(thread.updatedAt, now)}
+                  <AgentIcon
+                    id={thread.agentId ?? "magpi-acp"}
+                    icons={agentIcons}
+                  />
                 </span>
               </button>
               {workspace.current ? (
-                <>
-                  <IconButton
-                    title="Rename Thread"
-                    onClick={() => {
-                      postMessage({ id: thread.id, type: "renameThread" });
-                    }}
-                  >
-                    <SvgIcon className="thread-action-icon" kind="pencil" />
-                  </IconButton>
-                  <IconButton
-                    title="Remove Thread"
-                    onClick={() => {
-                      postMessage({ id: thread.id, type: "removeThread" });
-                    }}
-                  >
-                    <SvgIcon className="thread-action-icon" kind="archive" />
-                  </IconButton>
-                </>
+                <button
+                  className="icon"
+                  type="button"
+                  title="Close Thread"
+                  aria-label="Close Thread"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    postMessage({ id: thread.id, type: "removeThread" });
+                  }}
+                >
+                  <SvgIcon className="thread-action-icon" kind="x" />
+                </button>
+              ) : null}
+              {flyout && thread.indicator !== "idle" ? (
+                <StatusIndicator kind={thread.indicator} />
               ) : null}
             </div>
           ))}
@@ -219,143 +404,115 @@ const WorkspaceNode = ({
   );
 };
 
-const ProjectGroup = ({
+const WorkspaceList = ({
+  agentIcons,
+  parentMenuOpen,
+  emptyMessage,
   expanded,
+  flyout,
+  workspaces,
+  now,
+  onNavigate,
   onToggle,
-  project,
-  renderWorkspace,
+  projectRoot,
+  threads,
 }: {
+  agentIcons?: Partial<Record<AgentId, string>>;
+  parentMenuOpen: boolean;
+  emptyMessage: string;
   expanded: boolean;
+  flyout: boolean;
+  workspaces: Workspace[];
+  now: number;
+  onNavigate?: () => void;
   onToggle: () => void;
-  project: Project;
-  renderWorkspace: (workspace: Workspace) => React.ReactNode;
+  projectRoot?: string;
+  threads: RenderedThreadsSnapshot;
 }): React.JSX.Element => (
-  <div className="navigator-group">
-    <div className="group-row">
-      <button
-        className="workspace-disclosure project-toggle"
-        type="button"
-        title={`${expanded ? "Collapse" : "Expand"} ${project.name}`}
-        aria-label={`${expanded ? "Collapse" : "Expand"} ${project.name}`}
-        aria-expanded={expanded}
-        onClick={onToggle}
-      >
-        {expanded ? "▾" : "▸"}
-      </button>
-      <button
-        className="row-open project-title"
-        type="button"
-        title={`${expanded ? "Collapse" : "Expand"} ${project.name}`}
-        aria-label={`${expanded ? "Collapse" : "Expand"} ${project.name}`}
-        onClick={onToggle}
-      >
-        <span className="name">{project.name}</span>
-      </button>
-      <IconButton
-        title="Open GitHub Issues"
-        onClick={() => {
-          postMessage({ path: project.root, type: "openIssues" });
-        }}
-      >
-        <SvgIcon className="project-action-icon" kind="folderGit2" />
-      </IconButton>
-      <IconButton
-        title="New Workspace"
-        onClick={() => {
-          postMessage({ path: project.root, type: "newWorkspace" });
-        }}
-      >
-        <SvgIcon className="thread-action-icon" kind="plus" />
-      </IconButton>
-    </div>
-    {expanded ? project.workspaces.map(renderWorkspace) : null}
+  <div
+    className="content workspace-list"
+    id={flyout ? "navigator-flyout-list" : "navigator-list"}
+  >
+    {workspaces.map((workspace) => (
+      <WorkspaceNode
+        agentIcons={agentIcons}
+        parentMenuOpen={parentMenuOpen}
+        expanded={flyout || (workspace.current && expanded)}
+        flyout={flyout}
+        key={workspace.path}
+        now={now}
+        onNavigate={onNavigate}
+        onToggle={onToggle}
+        projectRoot={workspace.current ? projectRoot : undefined}
+        selectedId={threads.selected?.id}
+        threads={threads.threads.filter(
+          (thread) => thread.workspace === workspace.path
+        )}
+        workspace={workspace}
+      />
+    ))}
+    {workspaces.length > 0 ? null : <div className="empty">{emptyMessage}</div>}
   </div>
 );
 
-const UNGROUPED_GROUP = "ungrouped";
-const projectGroup = (root: string): string => `project:${root}`;
-
 const NavigatorPaneView = ({
+  agentIcons,
   collapseAll,
   expandAllRequest,
+  onDismissProjectsMenu,
   onExpand,
+  onToggleProjectsMenu,
   projects,
+  projectsMenuOpen,
   threads,
 }: {
+  agentIcons?: Partial<Record<AgentId, string>>;
   collapseAll: boolean;
   expandAllRequest: number;
+  onDismissProjectsMenu: () => void;
   onExpand: () => void;
+  onToggleProjectsMenu: () => void;
   projects: ProjectsSnapshot;
+  projectsMenuOpen: boolean;
   threads: RenderedThreadsSnapshot;
 }): React.JSX.Element => {
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
-    new Set()
-  );
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ left: 4, top: 36 });
+  const projectsMenuRef = useRef<HTMLDivElement>(null);
   const [now, setNow] = useState(Date.now());
   const previousCurrent = useRef<string | null>(null);
   const previousExpandAllRequest = useRef(expandAllRequest);
-  const workspaces = [
-    ...projects.projects.flatMap((project) => project.workspaces),
-    ...projects.ungrouped,
-  ];
-  const currentPath = workspaces.find((workspace) => workspace.current)?.path;
-  const currentProject = projects.projects.find((project) =>
-    project.workspaces.some((workspace) => workspace.path === currentPath)
+  const { current, workspaces } = projects.navigation;
+  const currentPath = current?.workspace.path;
+  const currentProjectRoot = current?.projectRoot;
+  const visibleWorkspaces = current ? [current.workspace] : [];
+  const needsAttention = threads.threads.some(
+    (thread) => thread.needsAttention
   );
-  let currentGroup: string | undefined;
-  if (isNonEmpty(currentPath)) {
-    currentGroup = currentProject
-      ? projectGroup(currentProject.root)
-      : UNGROUPED_GROUP;
-  }
-  const currentSelection =
-    isNonEmpty(currentGroup) && isNonEmpty(currentPath)
-      ? `${currentGroup}\0${currentPath}`
-      : null;
+  const pendingQuestion = threads.threads.some(
+    (thread) => thread.indicator === "waiting"
+  );
+  const attentionLabel = pendingQuestion
+    ? "A Thread is waiting for your response"
+    : "Threads need attention";
   useEffect(() => {
-    if (
-      isNonEmpty(currentPath) &&
-      currentSelection !== previousCurrent.current
-    ) {
-      setExpanded((paths) => new Set(paths).add(currentPath));
-      setCollapsedGroups((groups) => {
-        if (!isNonEmpty(currentGroup) || !groups.has(currentGroup)) {
-          return groups;
-        }
-        const next = new Set(groups);
-        next.delete(currentGroup);
-        return next;
-      });
+    if (currentPath !== previousCurrent.current) {
+      previousCurrent.current = currentPath ?? null;
+      setExpanded(isNonEmpty(currentPath) && !collapseAll);
     }
-    previousCurrent.current = currentSelection;
-  }, [currentGroup, currentPath, currentSelection]);
+  }, [collapseAll, currentPath]);
   useEffect(() => {
     if (collapseAll) {
-      setCollapsedGroups(
-        new Set([
-          ...projects.projects.map((project) => projectGroup(project.root)),
-          ...(projects.ungrouped.length ? [UNGROUPED_GROUP] : []),
-        ])
-      );
-      setExpanded(new Set());
+      setExpanded(false);
     }
-  }, [collapseAll, projects]);
+  }, [collapseAll]);
   useEffect(() => {
     if (expandAllRequest === previousExpandAllRequest.current) {
       return;
     }
     previousExpandAllRequest.current = expandAllRequest;
-    setCollapsedGroups(new Set());
-    setExpanded(
-      new Set(
-        [
-          ...projects.projects.flatMap((project) => project.workspaces),
-          ...projects.ungrouped,
-        ].map((workspace) => workspace.path)
-      )
-    );
-  }, [expandAllRequest, projects]);
+    setExpanded(isNonEmpty(currentPath));
+  }, [currentPath, expandAllRequest]);
   useEffect(() => {
     const clock = window.setInterval(() => {
       setNow(Date.now());
@@ -364,102 +521,171 @@ const NavigatorPaneView = ({
       window.clearInterval(clock);
     };
   }, []);
-  const toggleGroup = (group: string, groupExpanded: boolean): void => {
-    if (!groupExpanded) {
-      onExpand();
-    }
-    setCollapsedGroups((groups) => {
-      const next = new Set(groups);
-      if (groupExpanded) {
-        next.add(group);
-      } else {
-        next.delete(group);
-      }
-      return next;
-    });
-  };
-  const renderWorkspace = (workspace: Workspace): React.ReactNode => {
-    const workspaceExpanded = expanded.has(workspace.path);
-    return (
-      <WorkspaceNode
-        expanded={workspaceExpanded}
-        key={workspace.path}
-        now={now}
-        onToggle={() => {
-          if (!workspaceExpanded) {
-            onExpand();
-          }
-          setExpanded((paths) => {
-            const next = new Set(paths);
-            if (workspaceExpanded) {
-              next.delete(workspace.path);
-            } else {
-              next.add(workspace.path);
-            }
-            return next;
-          });
-        }}
-        selectedId={threads.selected?.id}
-        threads={threads.threads.filter(
-          (thread) => thread.workspace === workspace.path
-        )}
-        workspace={workspace}
-      />
-    );
-  };
-  const ungroupedExpanded = !collapsedGroups.has(UNGROUPED_GROUP);
-  const allExpanded =
-    Boolean(projects.projects.length || projects.ungrouped.length) &&
-    projects.projects.every(
-      (project) => !collapsedGroups.has(projectGroup(project.root))
-    ) &&
-    (projects.ungrouped.length === 0 || ungroupedExpanded) &&
-    workspaces.every((workspace) => expanded.has(workspace.path));
   useEffect(() => {
-    postMessage({ expanded: allExpanded, type: "navigatorExpanded" });
-  }, [allExpanded]);
+    if (projectsMenuOpen) {
+      projectsMenuRef.current?.focus();
+    }
+  }, [projectsMenuOpen]);
+  useLayoutEffect(() => {
+    if (!projectsMenuOpen || !projectsMenuRef.current) {
+      return;
+    }
+    const menu = projectsMenuRef.current;
+    const { width, height } = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(4, Math.min(menuPosition.left, window.innerWidth - width - 4))}px`;
+    menu.style.top = `${Math.max(4, Math.min(menuPosition.top, window.innerHeight - height - 4))}px`;
+  }, [menuPosition, projectsMenuOpen]);
+  useEffect(() => {
+    const dismissOutside = (event: MouseEvent): void => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest("#workspace-header button") !== null
+      ) {
+        return;
+      }
+      if (
+        projectsMenuOpen &&
+        event.target instanceof Node &&
+        projectsMenuRef.current?.contains(event.target) === false
+      ) {
+        onDismissProjectsMenu();
+      }
+    };
+    const escape = (event: KeyboardEvent): void => {
+      if (projectsMenuOpen && event.key === "Escape") {
+        onDismissProjectsMenu();
+      }
+    };
+    document.addEventListener("click", dismissOutside, true);
+    document.addEventListener("contextmenu", dismissOutside, true);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("click", dismissOutside, true);
+      document.removeEventListener("contextmenu", dismissOutside, true);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [onDismissProjectsMenu, projectsMenuOpen]);
+  const toggleCurrentWorkspace = (): void => {
+    if (expanded) {
+      setExpanded(false);
+      return;
+    }
+    onExpand();
+    setExpanded(true);
+  };
   return (
     <section id="navigator">
-      <div className="content" id="navigator-list">
-        {projects.projects.map((project) => {
-          const group = projectGroup(project.root);
-          const groupExpanded = !collapsedGroups.has(group);
-          return (
-            <ProjectGroup
-              expanded={groupExpanded}
-              key={project.root}
-              onToggle={() => {
-                toggleGroup(group, groupExpanded);
+      <header id="workspace-header">
+        <button
+          id="workspace-header-trigger"
+          type="button"
+          title="Browse Workspaces and Threads"
+          aria-label="Browse Workspaces and Threads"
+          aria-controls="navigator-flyout-list"
+          aria-expanded={projectsMenuOpen}
+          aria-haspopup="dialog"
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            setMenuPosition({
+              left:
+                event.detail === 0 ? rect.left + rect.width / 2 : event.clientX,
+              top: event.detail === 0 ? rect.bottom : event.clientY,
+            });
+            onToggleProjectsMenu();
+          }}
+        >
+          <span id="workspace-title">Workspaces</span>
+          {needsAttention ? (
+            <span
+              className={`thread-status ${pendingQuestion ? "waiting" : "needs-attention"} workspace-attention-indicator`}
+              title={attentionLabel}
+              role="img"
+              aria-label={attentionLabel}
+            >
+              {pendingQuestion ? (
+                <SvgIcon
+                  className="thread-status-question"
+                  kind="messageCircleQuestionMark"
+                />
+              ) : null}
+            </span>
+          ) : null}
+          <SvgIcon
+            className="thread-action-icon workspace-header-more"
+            kind="moreVertical"
+          />
+        </button>
+      </header>
+      {projectsMenuOpen ? (
+        <div
+          ref={projectsMenuRef}
+          className="workspace-menu projects-menu"
+          role="dialog"
+          aria-label="Workspaces and Threads"
+          tabIndex={-1}
+          style={menuPosition}
+          onKeyDown={(event) => {
+            if (
+              event.target instanceof Element &&
+              event.target.closest('[role="menu"]') !== null
+            ) {
+              return;
+            }
+            menuKeyDown(event);
+          }}
+        >
+          <div className="projects-menu-actions">
+            <button
+              type="button"
+              onClick={() => {
+                postMessage({ type: "addWorkspace" });
+                onDismissProjectsMenu();
               }}
-              project={project}
-              renderWorkspace={renderWorkspace}
-            />
-          );
-        })}
-        {projects.ungrouped.length ? (
-          <div className="navigator-group">
-            <div className="group-row">
-              <button
-                className="workspace-disclosure project-toggle"
-                type="button"
-                title={`${ungroupedExpanded ? "Collapse" : "Expand"} Ungrouped`}
-                aria-label={`${ungroupedExpanded ? "Collapse" : "Expand"} Ungrouped`}
-                aria-expanded={ungroupedExpanded}
-                onClick={() => {
-                  toggleGroup(UNGROUPED_GROUP, ungroupedExpanded);
-                }}
-              >
-                {ungroupedExpanded ? "▾" : "▸"}
-              </button>
-              <span className="name">Ungrouped</span>
-            </div>
-            {ungroupedExpanded ? projects.ungrouped.map(renderWorkspace) : null}
+            >
+              <SvgIcon kind="plus" /> Add Workspace…
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                postMessage({ type: "refresh" });
+                onDismissProjectsMenu();
+              }}
+            >
+              <SvgIcon kind="history" /> Refresh
+            </button>
           </div>
-        ) : null}
-        {!projects.projects.length && !projects.ungrouped.length ? (
-          <div className="empty">No active Workspaces. Add one with ＋.</div>
-        ) : null}
-      </div>
+          <hr />
+          <WorkspaceList
+            agentIcons={agentIcons}
+            parentMenuOpen={projectsMenuOpen}
+            emptyMessage="No active Workspaces. Add one with ＋."
+            expanded={expanded}
+            flyout
+            workspaces={workspaces}
+            now={now}
+            onNavigate={onDismissProjectsMenu}
+            onToggle={toggleCurrentWorkspace}
+            projectRoot={currentProjectRoot}
+            threads={threads}
+          />
+        </div>
+      ) : null}
+      <WorkspaceList
+        agentIcons={agentIcons}
+        parentMenuOpen={projectsMenuOpen}
+        emptyMessage={
+          workspaces.length > 0
+            ? "No current Workspace. Browse Workspaces from the header."
+            : "No active Workspaces. Add one from the header."
+        }
+        expanded={expanded}
+        flyout={false}
+        workspaces={visibleWorkspaces}
+        now={now}
+        onToggle={toggleCurrentWorkspace}
+        projectRoot={currentProjectRoot}
+        threads={threads}
+      />
     </section>
   );
 };

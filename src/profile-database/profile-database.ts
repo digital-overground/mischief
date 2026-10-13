@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { watch } from "node:fs";
+import type { FSWatcher } from "node:fs";
 import { mkdir, open, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -53,6 +55,7 @@ export interface DatabaseThread {
 export interface DatabaseSelection {
   readonly workspace: string;
   readonly threadId?: string;
+  readonly focusRequest?: string;
 }
 
 export interface ProfileDatabaseSnapshot {
@@ -258,6 +261,9 @@ const copyThread = (thread: DatabaseThread): DatabaseThread => ({
 
 const copySelection = (selection: DatabaseSelection): DatabaseSelection => ({
   ...(isNonEmpty(selection.threadId) ? { threadId: selection.threadId } : {}),
+  ...(isNonEmpty(selection.focusRequest)
+    ? { focusRequest: selection.focusRequest }
+    : {}),
   workspace: selection.workspace,
 });
 
@@ -335,6 +341,10 @@ const parseSelectionRecord = (source: string): SelectionRecord | undefined => {
     (value.threadId !== undefined &&
       (typeof value.threadId !== "string" ||
         !UUID_PATTERN.test(value.threadId))) ||
+    (value.focusRequest !== undefined &&
+      (typeof value.focusRequest !== "string" ||
+        !UUID_PATTERN.test(value.focusRequest) ||
+        value.threadId === undefined)) ||
     !Number.isSafeInteger(value.writtenAt) ||
     Number(value.writtenAt) < 0
   ) {
@@ -342,6 +352,9 @@ const parseSelectionRecord = (source: string): SelectionRecord | undefined => {
   }
   return {
     ...(typeof value.threadId === "string" ? { threadId: value.threadId } : {}),
+    ...(typeof value.focusRequest === "string"
+      ? { focusRequest: value.focusRequest }
+      : {}),
     version: 1,
     workspace: value.workspace,
     writtenAt: Number(value.writtenAt),
@@ -406,6 +419,10 @@ export class ProfileDatabase {
   private readonly listeners = new Set<() => void>();
   private readonly log: (message: string) => void;
   private pollTimer?: ReturnType<typeof setInterval>;
+  private readonly watchers: FSWatcher[] = [];
+  private watchTimer?: ReturnType<typeof setTimeout>;
+  private refreshing = false;
+  private refreshPending = false;
   private selectionRecords = new Map<string, SelectionRecord>();
   private readonly selectionsDirectory: string;
   private threadRecords = new Map<string, ThreadRecord>();
@@ -467,7 +484,35 @@ export class ProfileDatabase {
       selectionsDirectory
     );
     await database.refresh();
-    // ponytail: profile-local polling is enough; add IPC or indexing only when scan cost or latency is measurable
+    for (const directory of [
+      workspacesDirectory,
+      threadsDirectory,
+      selectionsDirectory,
+    ]) {
+      try {
+        const watcher = watch(directory, () => {
+          if (database.watchTimer !== undefined) {
+            clearTimeout(database.watchTimer);
+          }
+          database.watchTimer = setTimeout(() => {
+            database.watchTimer = undefined;
+            void database.refresh();
+          }, 20);
+        });
+        watcher.on("error", (error) => {
+          options.log(
+            `Profile Database watcher failed: ${errorMessage(error)}`
+          );
+          watcher.close();
+        });
+        database.watchers.push(watcher);
+      } catch (error) {
+        options.log(
+          `Profile Database watcher unavailable: ${errorMessage(error)}`
+        );
+      }
+    }
+    // Polling remains a fallback when file notifications are missed or unavailable.
     database.pollTimer = setInterval(() => {
       void database.refresh();
     }, POLL_INTERVAL_MS);
@@ -552,6 +597,12 @@ export class ProfileDatabase {
     if (change.threadId !== undefined && !UUID_PATTERN.test(change.threadId)) {
       throw new TypeError("Selected Thread ID is invalid");
     }
+    if (
+      change.focusRequest !== undefined &&
+      (!UUID_PATTERN.test(change.focusRequest) || !isNonEmpty(change.threadId))
+    ) {
+      throw new TypeError("Focus request ID is invalid");
+    }
     if (!isNonEmpty(change.threadId)) {
       this.requireThreadOwner(change.workspace);
     }
@@ -602,6 +653,13 @@ export class ProfileDatabase {
   }
 
   async dispose(): Promise<void> {
+    for (const watcher of this.watchers) {
+      watcher.close();
+    }
+    if (this.watchTimer !== undefined) {
+      clearTimeout(this.watchTimer);
+      this.watchTimer = undefined;
+    }
     if (this.pollTimer !== undefined) {
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
@@ -706,6 +764,26 @@ export class ProfileDatabase {
   }
 
   private async refresh(): Promise<void> {
+    if (this.refreshing) {
+      this.refreshPending = true;
+      return;
+    }
+    this.refreshing = true;
+    try {
+      do {
+        this.refreshPending = false;
+        // oxlint-disable-next-line no-await-in-loop -- coalesce notifications received during a scan
+        await this.readAndUpdate();
+      } while (this.refreshPending);
+    } finally {
+      this.refreshing = false;
+      if (this.refreshPending) {
+        void this.refresh();
+      }
+    }
+  }
+
+  private async readAndUpdate(): Promise<void> {
     try {
       const [workspaces, threads, selections] = await Promise.all([
         this.readRecords(

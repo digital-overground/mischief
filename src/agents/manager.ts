@@ -7,7 +7,6 @@ import { exec } from "../exec";
 import { isNonEmpty } from "../present";
 import { commandExists } from "../setup";
 import type { AgentLaunch } from "../threads/acp/models";
-import type { AgentSetting } from "../webview/protocol";
 import {
   AGENTS,
   AGENT_IDS,
@@ -50,6 +49,24 @@ const npmInstall = async (spec: string, cwd: string): Promise<void> => {
   );
 };
 
+export interface AgentStatus {
+  id: AgentId;
+  name: string;
+  installedVersion?: string;
+  latestVersion?: string;
+  managed?: boolean;
+  error?: string;
+  state:
+    | "waiting"
+    | "checking"
+    | "installing"
+    | "updateAvailable"
+    | "current"
+    | "newer"
+    | "unknown"
+    | "missing";
+}
+
 export class AgentManager {
   private readonly root: string;
   private readonly extensionPath: string;
@@ -58,10 +75,10 @@ export class AgentManager {
   private readonly probe: (launch: AgentLaunch) => Promise<void>;
   private readonly version: (spec: string) => Promise<string>;
   private readonly log: (message: string) => void;
-  private readonly statuses = new Map<AgentId, AgentSetting>();
+  private readonly statuses = new Map<AgentId, AgentStatus>();
   private readonly pending = new Map<AgentId, Promise<void>>();
   private readonly lastChecked = new Map<AgentId, number>();
-  private readonly listeners = new Set<(statuses: AgentSetting[]) => void>();
+  private readonly listeners = new Set<(statuses: AgentStatus[]) => void>();
   private interval?: ReturnType<typeof setInterval>;
 
   constructor(
@@ -103,14 +120,14 @@ export class AgentManager {
   private static initialStatus(
     id: AgentId,
     version?: string
-  ): AgentSetting["state"] {
+  ): AgentStatus["state"] {
     if (version !== undefined) {
       return "checking";
     }
     return id === "magpi-acp" ? "waiting" : "missing";
   }
 
-  snapshot(): AgentSetting[] {
+  snapshot(): AgentStatus[] {
     return [...this.statuses.values()];
   }
 
@@ -120,14 +137,14 @@ export class AgentManager {
     }
   }
 
-  onChange(listener: (statuses: AgentSetting[]) => void): () => void {
+  onChange(listener: (statuses: AgentStatus[]) => void): () => void {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
     };
   }
 
-  private set(id: AgentId, status: Partial<AgentSetting>): void {
+  private set(id: AgentId, status: Partial<AgentStatus>): void {
     const previous = this.statuses.get(id);
     if (!previous) {
       return;
@@ -288,7 +305,7 @@ export class AgentManager {
           installedVersion ?? current?.installedVersion ?? "",
           latestVersion
         );
-        let state: AgentSetting["state"] = AgentManager.initialStatus(
+        let state: AgentStatus["state"] = AgentManager.initialStatus(
           id,
           installedVersion
         );

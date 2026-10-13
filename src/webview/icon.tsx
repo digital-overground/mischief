@@ -9,12 +9,11 @@ export type IconKind =
   | "download"
   | "draftingCompass"
   | "history"
-  | "maximize"
-  | "minimize"
+  | "moreVertical"
+  | "messageCircleQuestionMark"
   | "fork"
   | "circleCheck"
   | "eye"
-  | "externalLink"
   | "file"
   | "folderGit2"
   | "github"
@@ -112,13 +111,6 @@ const paths: Record<IconKind, React.ReactNode> = {
       <circle cx="12" cy="5" r="2" />
     </>
   ),
-  externalLink: (
-    <>
-      <path d="M15 3h6v6" />
-      <path d="M10 14 21 3" />
-      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-    </>
-  ),
   eye: (
     <>
       <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
@@ -175,20 +167,18 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M12 7v5l4 2" />
     </>
   ),
-  maximize: (
+  messageCircleQuestionMark: (
     <>
-      <path d="M8 3H5a2 2 0 0 0-2 2v3" />
-      <path d="M16 3h3a2 2 0 0 1 2 2v3" />
-      <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
-      <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+      <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" />
+      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+      <path d="M12 17h.01" />
     </>
   ),
-  minimize: (
+  moreVertical: (
     <>
-      <path d="M8 3v3a2 2 0 0 1-2 2H3" />
-      <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
-      <path d="M3 16h3a2 2 0 0 1 2 2v3" />
-      <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
+      <circle cx="12" cy="5" r="1" />
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="12" cy="19" r="1" />
     </>
   ),
   package: (

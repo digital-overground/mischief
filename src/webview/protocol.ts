@@ -1,3 +1,5 @@
+import type { AgentStatus } from "../agents/manager";
+import type { AgentId } from "../agents/update";
 import type { ProjectsSnapshot } from "../projects/projects";
 import type { PromptImage } from "../threads/model";
 import type {
@@ -7,24 +9,6 @@ import type {
   ThreadsSnapshot,
   TranscriptItem,
 } from "../threads/threads/models";
-
-export interface AgentSetting {
-  id: string;
-  name: string;
-  installedVersion?: string;
-  latestVersion?: string;
-  managed?: boolean;
-  error?: string;
-  state:
-    | "waiting"
-    | "checking"
-    | "installing"
-    | "updateAvailable"
-    | "current"
-    | "newer"
-    | "unknown"
-    | "missing";
-}
 
 export interface RenderedTranscriptItem extends TranscriptItem {
   html?: string;
@@ -61,6 +45,7 @@ export type HostToWebviewMessage =
   | {
       type: "state";
       font: string;
+      agentIcons?: Partial<Record<AgentId, string>>;
       projects: ProjectsSnapshot;
       setup?: RenderedSetupStep;
       threads: RenderedThreadsSnapshot;
@@ -78,19 +63,23 @@ export type HostToWebviewMessage =
     }
   | { type: "contextItems"; items: string[] }
   | { type: "setAllExpanded"; expanded: boolean }
+  | { type: "toggleProjectsMenu" }
   | {
       type: "showSettings";
       assignWorkspaceColors: boolean;
       defaultAgent: string;
-      agents: AgentSetting[];
+      agents: AgentStatus[];
     }
-  | { type: "agents"; agents: AgentSetting[] };
+  | { type: "agents"; agents: AgentStatus[] };
 
 export type WebviewToHostMessage =
   | {
       type:
         | "ready"
         | "contextItems"
+        | "addWorkspace"
+        | "refresh"
+        | "showSettings"
         | "newThread"
         | "threadHistory"
         | "chooseAgent";
@@ -102,7 +91,8 @@ export type WebviewToHostMessage =
     }
   | {
       type:
-        | "deactivateWorkspace"
+        | "closeWorkspace"
+        | "focusWorkspace"
         | "newWorkspace"
         | "openIssues"
         | "openWorkspace";
@@ -123,7 +113,6 @@ export type WebviewToHostMessage =
     }
   | { type: "prompt"; text: string; images: PromptImage[] }
   | { type: "setupContinue"; selected: string[] }
-  | { type: "navigatorExpanded"; expanded: boolean }
   | { type: "setAssignWorkspaceColors"; value: boolean }
   | { type: "setDefaultAgent"; id: string }
   | { type: "installAgent" | "checkAgent"; id: string }

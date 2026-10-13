@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { AgentManager } from "./manager";
+import type { AgentStatus } from "./manager";
 
 const directories: string[] = [];
 
@@ -15,6 +16,37 @@ describe("managed Agent installations", () => {
         await rm(directory, { force: true, recursive: true });
       })
     );
+  });
+
+  test("publishes one ordered full snapshot when an Agent changes", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "mischief-agents-"));
+    directories.push(root);
+    const manager = new AgentManager(root, root, undefined, async () => {
+      await Promise.resolve();
+    });
+    const initial = manager.snapshot();
+    expect(initial.map(({ id }) => id)).toStrictEqual([
+      "magpi-acp",
+      "claude-agent-acp",
+      "codex-acp",
+    ]);
+    expect(initial.map(({ state }) => state)).toStrictEqual([
+      "waiting",
+      "missing",
+      "missing",
+    ]);
+    const updates: AgentStatus[][] = [];
+    const unsubscribe = manager.onChange((statuses) => {
+      updates.push(statuses);
+    });
+    manager.connected("codex-acp", "2.1.1");
+    expect(updates).toStrictEqual([
+      [initial[0], initial[1], { ...initial[2], installedVersion: "2.1.1" }],
+    ]);
+    expect(manager.snapshot()).toStrictEqual(updates[0]);
+    unsubscribe();
+    manager.connected("codex-acp", "2.1.2");
+    expect(updates).toHaveLength(1);
   });
 
   test("requires opt-in, verifies updates and retains the previous version on failure", async () => {
@@ -79,12 +111,20 @@ describe("managed Agent installations", () => {
     failProbe = true;
     await manager.check("codex-acp", true);
     expect({
-      error: manager.snapshot().find(({ id }) => id === "codex-acp")?.error,
       launch: manager.launch("codex-acp"),
+      status: manager.snapshot().find(({ id }) => id === "codex-acp"),
     }).toStrictEqual({
-      error:
-        "Update check failed; the previous version is still available. See Mischief output.",
       launch: first,
+      status: {
+        error:
+          "Update check failed; the previous version is still available. See Mischief output.",
+        id: "codex-acp",
+        installedVersion: "2.1.1",
+        latestVersion: "2.1.2",
+        managed: true,
+        name: "Codex",
+        state: "unknown",
+      },
     });
     failProbe = false;
     await manager.check("codex-acp", true);

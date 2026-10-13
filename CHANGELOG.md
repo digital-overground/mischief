@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1
+
+- Replaced Project-grouped navigation with a current-Workspace view and an alphabetical Workspace menu.
+- Moved Workspace ordering and Project association into Projects; fixed concurrent Workspace imports.
+- Made cross-window updates faster with file notifications and polling fallback, and improved Thread focus across windows.
+- Refined Thread headers, status indicators, and Agent icons.
+- Moved Agent status ownership into AgentManager and removed the view’s mirrored list.
+- Expanded navigation and status-flow tests.
+
 ## 0.3.0
 
 - Run Threads with MagPi, Claude Agent, or Codex; choose an Agent for each new Thread or set a default.

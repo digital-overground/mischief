@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { act } from "react";
 // @vitest-environment jsdom
 import { createRoot } from "react-dom/client";
@@ -5,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import type { AgentId } from "../agents/update";
 import { isDefined } from "../present";
+import { projectsFixture } from "../projects/projects-fixture";
 import { testValue } from "../test-value";
 import type { HostToWebviewMessage } from "./protocol";
 
@@ -27,9 +30,9 @@ const threadState = (
   id: string,
   drafts: string[],
   agentId: AgentId | null = "magpi-acp"
-): HostToWebviewMessage => ({
+): Extract<HostToWebviewMessage, { type: "state" }> => ({
   font: "Test Mono",
-  projects: { projects: [], ungrouped: [] },
+  projects: projectsFixture({ projects: [], ungrouped: [] }),
   threads: {
     selected: {
       ...(agentId === null ? {} : { agentId }),
@@ -49,6 +52,37 @@ const threadState = (
   type: "state",
 });
 
+const workspaceSummary = (name: string, current = false) => ({
+  ahead: 0,
+  behind: 0,
+  changes: 0,
+  current,
+  linked: false,
+  name,
+  path: `/${name}`,
+});
+
+const threadSummary = (id: string, name: string, workspace: string) => ({
+  id,
+  indicator: "idle" as const,
+  name,
+  needsAttention: false,
+  updatedAt: "2025-01-01T00:00:00.000Z",
+  workspace,
+});
+
+const toggleProjectsMenu = (): void => {
+  const button = document.querySelector<HTMLButtonElement>(
+    "#workspace-header-trigger"
+  );
+  if (!button) {
+    throw new Error("Missing Workspace header trigger");
+  }
+  act(() => {
+    button.click();
+  });
+};
+
 const renderApp = async (): Promise<() => Promise<void>> => {
   await Promise.resolve();
   const container = document.querySelector("#root");
@@ -65,6 +99,21 @@ const renderApp = async (): Promise<() => Promise<void>> => {
       root.unmount();
     });
   };
+};
+
+const sendTranscriptItem = (threadId: string, text: string): void => {
+  act(() => {
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: {
+          item: { id: `${threadId}-message`, kind: "assistant", text },
+          streaming: true,
+          threadId,
+          type: "transcript",
+        } satisfies HostToWebviewMessage,
+      })
+    );
+  });
 };
 
 describe("React webview", () => {
@@ -86,7 +135,7 @@ describe("React webview", () => {
         new MessageEvent<HostToWebviewMessage>("message", {
           data: {
             font: "Test Mono",
-            projects: { projects: [], ungrouped: [] },
+            projects: projectsFixture({ projects: [], ungrouped: [] }),
             setup: {
               id: "addons",
               item: {
@@ -208,14 +257,14 @@ describe("React webview", () => {
     await unmount();
   });
 
-  test("keeps the Project list visible while maximizing the current Thread", async () => {
+  test("Workspace expansion still works without a Thread title-bar toggle", async () => {
     const unmount = await renderApp();
     act(() => {
       window.dispatchEvent(
         new MessageEvent<HostToWebviewMessage>("message", {
           data: {
             font: "Test Mono",
-            projects: {
+            projects: projectsFixture({
               projects: [
                 {
                   name: "project",
@@ -243,67 +292,22 @@ describe("React webview", () => {
                 },
               ],
               ungrouped: [],
-            },
+            }),
             threads: { threads: [], workspace: "/workspace" },
             type: "state",
           },
         })
       );
     });
-    const navigator = document.querySelector<HTMLElement>("#navigator");
-    const thread = document.querySelector<HTMLElement>("#thread");
-    const maximize =
-      document.querySelector<HTMLButtonElement>("#maximize-thread");
-    if (!navigator || !thread || !maximize) {
-      throw new Error("Missing pane controls");
+    const toggle = document.querySelector<HTMLButtonElement>(
+      ".workspace-node.current .workspace-toggle"
+    );
+    if (!toggle) {
+      throw new Error("Missing Workspace toggle");
     }
-    const maximizeIcon = maximize.innerHTML;
+    expect(document.querySelector("#maximize-thread")).toBeNull();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
 
-    act(() => {
-      maximize.click();
-    });
-    expect({
-      iconChanged: maximize.innerHTML !== maximizeIcon,
-      maximized: maximize.getAttribute("aria-pressed"),
-      navigatorHidden: navigator.classList.contains("collapsed"),
-      projectExpanded: document
-        .querySelector(".project-toggle")
-        ?.getAttribute("aria-expanded"),
-      projectNames: [...document.querySelectorAll(".group-row .name")].map(
-        (name) => name.textContent
-      ),
-      resizer: document.querySelector(".resizer"),
-      threadHidden: thread.classList.contains("collapsed"),
-      workspaces: document.querySelectorAll(".workspace-node").length,
-    }).toStrictEqual({
-      iconChanged: true,
-      maximized: "true",
-      navigatorHidden: false,
-      projectExpanded: "false",
-      projectNames: ["project"],
-      resizer: null,
-      threadHidden: false,
-      workspaces: 0,
-    });
-
-    act(() => {
-      maximize.click();
-    });
-    expect({
-      maximized: maximize.getAttribute("aria-pressed"),
-      projectExpanded: document
-        .querySelector(".project-toggle")
-        ?.getAttribute("aria-expanded"),
-      workspacesExpanded: [
-        ...document.querySelectorAll(".workspace-toggle"),
-      ].map((toggle) => toggle.getAttribute("aria-expanded")),
-    }).toStrictEqual({
-      maximized: "false",
-      projectExpanded: "true",
-      workspacesExpanded: ["true", "true"],
-    });
-
-    postMessage.mockClear();
     act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
@@ -311,43 +315,164 @@ describe("React webview", () => {
         })
       );
     });
-    expect({
-      maximized: maximize.getAttribute("aria-pressed"),
-      navigatorState: postMessage.mock.calls,
-      projectExpanded: document
-        .querySelector(".project-toggle")
-        ?.getAttribute("aria-expanded"),
-      workspaces: document.querySelectorAll(".workspace-node").length,
-    }).toStrictEqual({
-      maximized: "true",
-      navigatorState: [[{ expanded: false, type: "navigatorExpanded" }]],
-      projectExpanded: "false",
-      workspaces: 0,
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    act(() => {
+      toggle.click();
     });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    await unmount();
+  });
 
-    postMessage.mockClear();
+  test("does not tint the Thread header with the Workspace window color", async () => {
+    const unmount = await renderApp();
     act(() => {
       window.dispatchEvent(
-        new MessageEvent("message", {
-          data: { expanded: true, type: "setAllExpanded" },
+        new MessageEvent<HostToWebviewMessage>("message", {
+          data: {
+            font: "Test Mono",
+            projects: projectsFixture({
+              projects: [],
+              ungrouped: [
+                { ...workspaceSummary("workspace", true), color: "#123abc" },
+              ],
+            }),
+            threads: { threads: [], workspace: "/workspace" },
+            type: "state",
+          },
         })
       );
     });
-    expect({
-      maximized: maximize.getAttribute("aria-pressed"),
-      navigatorState: postMessage.mock.calls,
-      projectExpanded: document
-        .querySelector(".project-toggle")
-        ?.getAttribute("aria-expanded"),
-      workspacesExpanded: [
-        ...document.querySelectorAll(".workspace-toggle"),
-      ].map((toggle) => toggle.getAttribute("aria-expanded")),
-    }).toStrictEqual({
-      maximized: "false",
-      navigatorState: [[{ expanded: true, type: "navigatorExpanded" }]],
-      projectExpanded: "true",
-      workspacesExpanded: ["true", "true"],
+    expect(
+      document.querySelector<HTMLElement>("#thread-header")?.style
+        .backgroundColor
+    ).toBe("");
+    await unmount();
+  });
+
+  test("puts the Agent on the left and makes the full title Rename", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("selected", []) })
+      );
     });
+    const header = document.querySelector("#thread-header");
+    const rename = document.querySelector<HTMLButtonElement>("#rename-thread");
+    const title = document.querySelector<HTMLElement>("#thread-title");
+    const close = document.querySelector<HTMLButtonElement>("#close-thread");
+    if (!header || !rename || !title || !close) {
+      throw new Error("Missing Thread title actions");
+    }
+    expect({
+      actions: [
+        ...(header.querySelector(".thread-header-actions")?.children ?? []),
+      ].map((child) => child.id),
+      agent: [
+        ...(header.querySelector(".thread-header-agent")?.children ?? []),
+      ].map((child) => child.className),
+      header: [...header.children].map((child) => child.className),
+      titleClickable: rename.contains(title),
+      titleContents: [...rename.children].map(
+        (child) => child.id || child.getAttribute("class")
+      ),
+    }).toStrictEqual({
+      actions: ["close-thread"],
+      agent: ["thread-agent"],
+      header: [
+        "thread-header-agent",
+        "thread-title-group",
+        "thread-header-actions",
+      ],
+      titleClickable: true,
+      titleContents: ["thread-title", "lucide thread-action-icon"],
+    });
+    postMessage.mockClear();
+    act(() => {
+      title.click();
+      close.click();
+    });
+    expect(postMessage.mock.calls).toStrictEqual([
+      [{ id: "selected", type: "renameThread" }],
+      [{ id: "selected", type: "removeThread" }],
+    ]);
+    await unmount();
+  });
+
+  test("shows the configured Agent icons in the title and beside each Thread time", async () => {
+    const unmount = await renderApp();
+    const base = threadState("selected", [], "codex-acp");
+    const icons = {
+      "claude-agent-acp": "webview:/media/agents/claude-acp.svg",
+      "codex-acp": "webview:/media/agents/codex-acp.svg",
+      "magpi-acp": "webview:/media/agents/magpi-acp.svg",
+    };
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            ...base,
+            agentIcons: icons,
+            projects: projectsFixture({
+              projects: [],
+              ungrouped: [workspaceSummary("workspace", true)],
+            }),
+            threads: {
+              ...base.threads,
+              threads: [
+                {
+                  ...threadSummary("first", "First", "/workspace"),
+                  agentId: "magpi-acp",
+                },
+                {
+                  ...threadSummary("second", "Second", "/workspace"),
+                  agentId: "claude-agent-acp",
+                },
+                {
+                  ...threadSummary("third", "Third", "/workspace"),
+                  agentId: "codex-acp",
+                },
+              ],
+            },
+          },
+        })
+      );
+    });
+    expect(document.querySelector(".thread-header-agent")?.textContent).toBe(
+      ""
+    );
+    expect(
+      document
+        .querySelector(".thread-header-agent .agent-icon")
+        ?.getAttribute("aria-label")
+    ).toBe("Codex");
+    expect(
+      [...document.querySelectorAll("#navigator-list .thread-activity")].map(
+        (activity) => ({
+          agent: activity
+            .querySelector(".agent-icon")
+            ?.getAttribute("aria-label"),
+          icon: activity.querySelector<HTMLElement>(".agent-icon")?.style
+            .maskImage,
+          time: activity.firstChild?.textContent,
+        })
+      )
+    ).toStrictEqual([
+      {
+        agent: "MagPi",
+        icon: `url("${icons["magpi-acp"]}")`,
+        time: testValue<unknown>(expect.any(String)),
+      },
+      {
+        agent: "Claude Agent",
+        icon: `url("${icons["claude-agent-acp"]}")`,
+        time: testValue<unknown>(expect.any(String)),
+      },
+      {
+        agent: "Codex",
+        icon: `url("${icons["codex-acp"]}")`,
+        time: testValue<unknown>(expect.any(String)),
+      },
+    ]);
     await unmount();
   });
 
@@ -355,14 +480,18 @@ describe("React webview", () => {
     vi.useFakeTimers();
     const unmount = await renderApp();
     try {
-      const maximize =
-        document.querySelector<HTMLButtonElement>("#maximize-thread");
-      if (!maximize) {
-        throw new Error("Missing maximize button");
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent("message", { data: threadState("selected", []) })
+        );
+      });
+      const close = document.querySelector<HTMLButtonElement>("#close-thread");
+      if (!close) {
+        throw new Error("Missing Close Thread button");
       }
 
       void act(() =>
-        maximize.dispatchEvent(
+        close.dispatchEvent(
           new MouseEvent("mouseover", {
             bubbles: true,
             clientX: 20,
@@ -374,19 +503,19 @@ describe("React webview", () => {
       expect(document.querySelector('[role="tooltip"]')).toBeNull();
       void act(() => vi.advanceTimersByTime(350));
       expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(
-        "Maximize Current Thread"
+        "Close Thread"
       );
       void act(() =>
-        maximize.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }))
+        close.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }))
       );
       expect(document.querySelector('[role="tooltip"]')).toBeNull();
       act(() => {
-        maximize.focus();
+        close.focus();
       });
       expect(document.querySelector('[role="tooltip"]')).toBeNull();
       void act(() => vi.advanceTimersByTime(350));
       expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(
-        "Maximize Current Thread"
+        "Close Thread"
       );
     } finally {
       await unmount();
@@ -402,7 +531,7 @@ describe("React webview", () => {
       'input[type="checkbox"]'
     );
     const defaultAgent =
-      dialog?.querySelector<HTMLSelectElement>("#default-agent");
+      dialog?.querySelector<HTMLButtonElement>("#default-agent");
     const close = dialog?.querySelector<HTMLButtonElement>(
       '[aria-label="Close Settings"]'
     );
@@ -447,7 +576,7 @@ describe("React webview", () => {
     expect({
       agent: dialog.querySelector(".settings-agent")?.textContent,
       checked: checkbox.checked,
-      defaultAgent: defaultAgent.value,
+      defaultAgent: defaultAgent.textContent?.trim(),
       defaultChecked,
       description: dialog.querySelector(".settings-description")?.textContent,
       open: dialog.open,
@@ -455,7 +584,7 @@ describe("React webview", () => {
     }).toStrictEqual({
       agent: "MagPiInstalled 0.3.0 · Latest 0.3.0 · Up to dateInstall managed",
       checked: false,
-      defaultAgent: "",
+      defaultAgent: "Choose each time",
       defaultChecked: true,
       description:
         "Automatically assigns colors from the active theme to Workspace windows that do not already define them.",
@@ -465,9 +594,21 @@ describe("React webview", () => {
 
     postMessage.mockClear();
     act(() => {
-      defaultAgent.value = "magpi-acp";
-      defaultAgent.dispatchEvent(new Event("change", { bubbles: true }));
+      defaultAgent.click();
     });
+    const magpiOption = [
+      ...dialog.querySelectorAll<HTMLButtonElement>('[role="option"]'),
+    ].find((option) => option.textContent?.includes("MagPi"));
+    if (!magpiOption) {
+      throw new Error("Missing MagPi option");
+    }
+    act(() => {
+      magpiOption.click();
+    });
+    expect({
+      expanded: defaultAgent.getAttribute("aria-expanded"),
+      label: defaultAgent.textContent?.trim(),
+    }).toStrictEqual({ expanded: "false", label: "MagPi" });
     expect(postMessage).toHaveBeenCalledExactlyOnceWith({
       id: "magpi-acp",
       type: "setDefaultAgent",
@@ -485,6 +626,140 @@ describe("React webview", () => {
       close.click();
     });
     expect(dialog.open).toBeFalsy();
+    await unmount();
+  });
+
+  test("shows Agent icons beside Default Agent choices", async () => {
+    const unmount = await renderApp();
+    const icons = {
+      "claude-agent-acp": "webview:/media/agents/claude-acp.svg",
+      "codex-acp": "webview:/media/agents/codex-acp.svg",
+      "magpi-acp": "webview:/media/agents/magpi-acp.svg",
+    };
+    const dialog =
+      document.querySelector<HTMLDialogElement>("#settings-dialog");
+    if (!dialog) {
+      throw new Error("Missing Settings dialog");
+    }
+    Object.defineProperty(dialog, "showModal", {
+      value: () => {
+        dialog.setAttribute("open", "");
+      },
+    });
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { ...threadState("selected", []), agentIcons: icons },
+        })
+      );
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            agents: [
+              { id: "magpi-acp", name: "MagPi", state: "current" },
+              {
+                id: "claude-agent-acp",
+                name: "Claude Agent",
+                state: "current",
+              },
+              { id: "codex-acp", name: "Codex", state: "current" },
+            ],
+            assignWorkspaceColors: true,
+            defaultAgent: "",
+            type: "showSettings",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    act(() => {
+      document.querySelector<HTMLButtonElement>("#default-agent")?.click();
+    });
+    expect(
+      [...document.querySelectorAll(".default-agent-menu [role='option']")].map(
+        (option) => ({
+          icon: option.querySelector<HTMLElement>(".agent-icon")?.style
+            .maskImage,
+          name: option.textContent?.trim(),
+        })
+      )
+    ).toStrictEqual([
+      { icon: undefined, name: "✓Choose each time" },
+      { icon: `url("${icons["magpi-acp"]}")`, name: "MagPi" },
+      { icon: `url("${icons["claude-agent-acp"]}")`, name: "Claude Agent" },
+      { icon: `url("${icons["codex-acp"]}")`, name: "Codex" },
+    ]);
+    await unmount();
+  });
+
+  test("positions the Default Agent menu under its trigger", async () => {
+    const unmount = await renderApp();
+    const style = document.createElement("style");
+    style.textContent = readFileSync("media/webview.css", "utf-8");
+    document.head.append(style);
+    const picker = document.querySelector(".settings-agent-picker");
+    const trigger = document.querySelector<HTMLButtonElement>("#default-agent");
+    if (!picker || !trigger) {
+      throw new Error("Missing Default Agent control");
+    }
+    act(() => {
+      trigger.click();
+    });
+    const menu = picker.querySelector(".default-agent-menu");
+    expect(menu && getComputedStyle(menu).position).toBe("absolute");
+    style.remove();
+    await unmount();
+  });
+
+  test("supports keyboard navigation in the Default Agent menu", async () => {
+    const unmount = await renderApp();
+    const dialog =
+      document.querySelector<HTMLDialogElement>("#settings-dialog");
+    const trigger = dialog?.querySelector<HTMLButtonElement>("#default-agent");
+    if (!dialog || !trigger) {
+      throw new Error("Missing Default Agent control");
+    }
+    Object.defineProperty(dialog, "showModal", {
+      value: () => {
+        dialog.setAttribute("open", "");
+      },
+    });
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            agents: [{ id: "magpi-acp", name: "MagPi", state: "current" }],
+            assignWorkspaceColors: true,
+            defaultAgent: "magpi-acp",
+            type: "showSettings",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    act(() => {
+      trigger.click();
+    });
+    act(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })
+      );
+    });
+    expect(document.activeElement?.textContent).toContain("Choose each time");
+    act(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })
+      );
+    });
+    expect({
+      expanded: trigger.getAttribute("aria-expanded"),
+      focusReturned: document.activeElement === trigger,
+    }).toStrictEqual({ expanded: "false", focusReturned: true });
+    act(() => {
+      trigger.click();
+    });
+    act(() => {
+      trigger.click();
+    });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
     await unmount();
   });
 
@@ -543,32 +818,56 @@ describe("React webview", () => {
     await unmount();
   });
 
-  test("routes open GitHub issues from a Project", async () => {
+  test("routes internal Project actions from a current linked Workspace", async () => {
     const unmount = await renderApp();
     act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
           data: {
             font: "Test Mono",
-            projects: {
-              projects: [{ name: "project", root: "/project", workspaces: [] }],
+            projects: projectsFixture({
+              projects: [
+                {
+                  name: "project",
+                  root: "/project",
+                  workspaces: [
+                    {
+                      ahead: 0,
+                      behind: 0,
+                      changes: 0,
+                      current: true,
+                      linked: true,
+                      name: "workspace",
+                      path: "/workspace",
+                    },
+                  ],
+                },
+              ],
               ungrouped: [],
-            },
+            }),
             threads: { threads: [] },
             type: "state",
           } satisfies HostToWebviewMessage,
         })
       );
     });
-    const openIssues = document.querySelector<HTMLButtonElement>(
-      '[aria-label="Open GitHub Issues"]'
+    const trigger = document.querySelector<HTMLButtonElement>(
+      '.workspace-node.current [aria-label="Workspace actions"]'
     );
+    if (!trigger) {
+      throw new Error("Missing Workspace actions control");
+    }
+    act(() => {
+      trigger.click();
+    });
+    const openIssues = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ].find((button) => button.textContent?.includes("Start work on issue"));
     const icon = openIssues?.querySelector("svg");
     if (!openIssues || !icon) {
-      throw new Error("Missing Open GitHub Issues control");
+      throw new Error("Missing Start work on issue control");
     }
     postMessage.mockClear();
-
     act(() => {
       openIssues.click();
     });
@@ -580,21 +879,632 @@ describe("React webview", () => {
       paths: icon.querySelectorAll("path").length,
     }).toStrictEqual({
       circles: 2,
-      className: "lucide project-action-icon",
+      className: "lucide",
       message: [[{ path: "/project", type: "openIssues" }]],
       paths: 2,
+    });
+    act(() => {
+      trigger.click();
+    });
+    const newWorkspace = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ].find((button) => button.textContent?.includes("Add Workspace"));
+    if (!newWorkspace) {
+      throw new Error("Missing New Workspace control");
+    }
+    postMessage.mockClear();
+    act(() => {
+      newWorkspace.click();
+    });
+    expect(postMessage.mock.calls).toStrictEqual([
+      [{ path: "/project", type: "newWorkspace" }],
+    ]);
+    const row = document.querySelector<HTMLElement>(
+      ".workspace-node.current .workspace-row"
+    );
+    if (!row) {
+      throw new Error("Missing current Workspace row");
+    }
+    act(() => {
+      row.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          clientX: 60,
+          clientY: 80,
+        })
+      );
+    });
+    expect(
+      [...document.querySelectorAll('.workspace-menu [role="menuitem"]')].map(
+        (button) => button.textContent?.trim()
+      )
+    ).toStrictEqual([
+      "Start work on issue",
+      "Add Workspace",
+      "Thread History",
+      "Close Workspace",
+    ]);
+    act(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })
+      );
+    });
+    expect(document.activeElement?.textContent?.trim()).toBe("Add Workspace");
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })
+      );
+    });
+    act(() => {
+      trigger.click();
+    });
+    const close = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ].find((button) => button.textContent?.includes("Close Workspace"));
+    postMessage.mockClear();
+    act(() => {
+      close?.click();
+    });
+    expect({
+      message: postMessage.mock.calls,
+      spinner: row
+        .querySelector(".workspace-close-spinner")
+        ?.getAttribute("aria-label"),
+    }).toStrictEqual({
+      message: [[{ path: "/workspace", type: "closeWorkspace" }]],
+      spinner: "Closing Workspace",
     });
     await unmount();
   });
 
-  test("renders nested Navigator controls and attention", async () => {
+  test("shows only the exact current Workspace outside the folder flyout", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent<HostToWebviewMessage>("message", {
+          data: {
+            font: "Test Mono",
+            projects: projectsFixture({
+              projects: [
+                {
+                  name: "current-project",
+                  root: "/current-project",
+                  workspaces: [
+                    workspaceSummary("current", true),
+                    workspaceSummary("current-linked"),
+                  ],
+                },
+                {
+                  name: "other-project",
+                  root: "/other-project",
+                  workspaces: [workspaceSummary("other")],
+                },
+              ],
+              ungrouped: [workspaceSummary("loose")],
+            }),
+            threads: { threads: [] },
+            type: "state",
+          },
+        })
+      );
+    });
+    expect(document.querySelector("#workspace-title")?.textContent).toBe(
+      "Workspaces"
+    );
+    expect(
+      [...document.querySelectorAll(".workspace-open .name")].map(
+        (name) => name.textContent
+      )
+    ).toStrictEqual(["current"]);
+    toggleProjectsMenu();
+    expect(
+      [
+        ...document.querySelectorAll(
+          "#navigator-flyout-list .workspace-open .name"
+        ),
+      ].map((name) => name.textContent)
+    ).toStrictEqual(["current", "current-linked", "loose", "other"]);
+    await unmount();
+  });
+
+  test("shows one alphabetical Workspace list without Project grouping", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent<HostToWebviewMessage>("message", {
+          data: {
+            font: "Test Mono",
+            projects: projectsFixture({
+              projects: [
+                {
+                  name: "z-project",
+                  root: "/z-project",
+                  workspaces: [
+                    workspaceSummary("Zulu", true),
+                    workspaceSummary("Alpha"),
+                  ],
+                },
+                {
+                  name: "a-project",
+                  root: "/a-project",
+                  workspaces: [workspaceSummary("Bravo")],
+                },
+              ],
+              ungrouped: [workspaceSummary("Charlie")],
+            }),
+            threads: { threads: [] },
+            type: "state",
+          },
+        })
+      );
+    });
+    toggleProjectsMenu();
+    expect({
+      children: document.querySelector("#navigator-flyout-list")?.children
+        .length,
+      expandableRows: document.querySelectorAll(".workspace-toggle").length,
+      main: document.querySelector("#navigator-list .workspace-open .name")
+        ?.textContent,
+      rows: [
+        ...document.querySelectorAll(
+          "#navigator-flyout-list .workspace-open .name"
+        ),
+      ].map((row) => row.textContent),
+    }).toStrictEqual({
+      children: 4,
+      expandableRows: 1,
+      main: "Zulu",
+      rows: ["Alpha", "Bravo", "Charlie", "Zulu"],
+    });
+    await unmount();
+  });
+
+  test("does not show other Workspaces or offer their actions in the main list", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent<HostToWebviewMessage>("message", {
+          data: {
+            font: "Test Mono",
+            projects: projectsFixture({
+              projects: [],
+              ungrouped: [workspaceSummary("Alpha"), workspaceSummary("Bravo")],
+            }),
+            threads: { threads: [] },
+            type: "state",
+          },
+        })
+      );
+    });
+    expect(
+      document.querySelectorAll("#navigator-list .workspace-node")
+    ).toHaveLength(0);
+    expect(document.querySelector("#navigator-list .empty")?.textContent).toBe(
+      "No current Workspace. Browse Workspaces from the header."
+    );
+    toggleProjectsMenu();
+    const alpha = document.querySelector<HTMLElement>(
+      "#navigator-flyout-list .workspace-row"
+    );
+    if (!alpha) {
+      throw new Error("Missing Workspace row");
+    }
+    const rightClick = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      alpha.dispatchEvent(rightClick);
+    });
+    expect({
+      menus: document.querySelectorAll(
+        "#navigator-flyout-list .workspace-node .workspace-menu"
+      ).length,
+      prevented: rightClick.defaultPrevented,
+      triggers: document.querySelectorAll(
+        '.workspace-node [aria-label="Workspace actions"]'
+      ).length,
+    }).toStrictEqual({ menus: 0, prevented: false, triggers: 0 });
+    await unmount();
+  });
+
+  test("combines Workspace actions and the list under the header", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent<HostToWebviewMessage>("message", {
+          data: {
+            font: "Test Mono",
+            projects: projectsFixture({
+              projects: [],
+              ungrouped: [workspaceSummary("Alpha", true)],
+            }),
+            threads: { threads: [] },
+            type: "state",
+          },
+        })
+      );
+    });
+    const workspaceTrigger = document.querySelector<HTMLButtonElement>(
+      '.workspace-row [aria-label="Workspace actions"]'
+    );
+    if (!workspaceTrigger) {
+      throw new Error("Missing Workspace action trigger");
+    }
+    postMessage.mockClear();
+    act(() => {
+      workspaceTrigger.click();
+    });
+    expect(
+      [...document.querySelectorAll('[role="menuitem"]')].map((item) =>
+        item.textContent?.trim()
+      )
+    ).toStrictEqual(["Thread History", "Close Workspace"]);
+    toggleProjectsMenu();
+    expect({
+      header: document.querySelector("#workspace-title")?.textContent,
+      menu:
+        document.querySelector(
+          '.projects-menu[aria-label="Workspaces and Threads"]'
+        ) !== null,
+      menus: document.querySelectorAll(".workspace-menu").length,
+    }).toStrictEqual({
+      header: "Workspaces",
+      menu: true,
+      menus: 1,
+    });
+    toggleProjectsMenu();
+    expect(document.querySelector(".projects-menu")).toBeNull();
+    const actions = [
+      ["Add Workspace…", "addWorkspace"],
+      ["Refresh", "refresh"],
+    ] as const;
+    for (const [label, type] of actions) {
+      toggleProjectsMenu();
+      const action = [
+        ...document.querySelectorAll<HTMLButtonElement>(
+          ".projects-menu-actions button"
+        ),
+      ].find((item) => item.textContent?.trim() === label);
+      if (!action) {
+        throw new Error(`Missing ${label} action`);
+      }
+      act(() => {
+        action.click();
+      });
+      expect(document.querySelector(".projects-menu")).toBeNull();
+      expect(postMessage).toHaveBeenLastCalledWith({ type });
+    }
+    toggleProjectsMenu();
+    act(() => {
+      document.body.click();
+    });
+    expect(document.querySelector(".projects-menu")).toBeNull();
+    await unmount();
+  });
+
+  test("browses Workspaces and focuses a selected Workspace or Thread", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent<HostToWebviewMessage>("message", {
+          data: {
+            font: "Test Mono",
+            projects: projectsFixture({
+              projects: [
+                {
+                  name: "Alpha Project",
+                  root: "/alpha",
+                  workspaces: [
+                    workspaceSummary("alpha", true),
+                    workspaceSummary("linked"),
+                  ],
+                },
+                {
+                  name: "Beta Project",
+                  root: "/beta",
+                  workspaces: [workspaceSummary("beta")],
+                },
+              ],
+              ungrouped: [workspaceSummary("loose")],
+            }),
+            threads: {
+              threads: [
+                {
+                  ...threadSummary("alpha-thread", "Alpha Thread", "/alpha"),
+                  indicator: "active" as const,
+                },
+                threadSummary("linked-thread", "Linked Thread", "/linked"),
+                threadSummary("beta-thread", "Beta Thread", "/beta"),
+                threadSummary("loose-thread", "Loose Thread", "/loose"),
+              ],
+            },
+            type: "state",
+          },
+        })
+      );
+    });
+    toggleProjectsMenu();
+    expect({
+      flyout: [
+        ...document.querySelectorAll(
+          "#navigator-flyout-list .workspace-open .name"
+        ),
+      ].map((name) => name.textContent),
+      flyoutIndicatorAtEnd: (() => {
+        const indicator = document.querySelector(
+          "#navigator-flyout-list .thread-row .thread-status"
+        );
+        return indicator?.parentElement?.lastElementChild === indicator;
+      })(),
+      main: [
+        ...document.querySelectorAll("#navigator-list .workspace-open .name"),
+      ].map((name) => name.textContent),
+      menu: document
+        .querySelector(".projects-menu")
+        ?.getAttribute("aria-label"),
+      menuSections: [
+        ...(document.querySelector(".projects-menu")?.children ?? []),
+      ].map((child) => child.className || child.tagName),
+      newThreadButtons: document.querySelectorAll(
+        '#navigator-flyout-list [aria-label="New Thread"]'
+      ).length,
+      remoteMenus: document.querySelectorAll(
+        '#navigator-flyout-list .workspace-node:not(.current) [aria-label="Workspace actions"]'
+      ).length,
+      sameListControl:
+        document.querySelector("#navigator-list")?.className ===
+        document.querySelector("#navigator-flyout-list")?.className,
+      statusIcons: document.querySelectorAll(
+        "#navigator-flyout-list .thread-row .thread-status"
+      ).length,
+      threadRows: [
+        ...document.querySelectorAll(
+          "#navigator-flyout-list .thread-row .name"
+        ),
+      ].map((name) => name.textContent),
+      toggles: document.querySelectorAll(
+        "#navigator-flyout-list .workspace-toggle"
+      ).length,
+    }).toStrictEqual({
+      flyout: ["alpha", "beta", "linked", "loose"],
+      flyoutIndicatorAtEnd: true,
+      main: ["alpha"],
+      menu: "Workspaces and Threads",
+      menuSections: ["projects-menu-actions", "HR", "content workspace-list"],
+      newThreadButtons: 0,
+      remoteMenus: 0,
+      sameListControl: true,
+      statusIcons: 1,
+      threadRows: [
+        "Alpha Thread",
+        "Beta Thread",
+        "Linked Thread",
+        "Loose Thread",
+      ],
+      toggles: 0,
+    });
+    postMessage.mockClear();
+    const thread = document.querySelector<HTMLButtonElement>(
+      '#navigator-flyout-list .thread-row .row-open[title="Open Thread"]'
+    );
+    if (!thread) {
+      throw new Error("Missing Project Thread item");
+    }
+    act(() => {
+      thread.click();
+    });
+    expect(postMessage).toHaveBeenLastCalledWith({
+      id: "alpha-thread",
+      type: "selectThread",
+    });
+    toggleProjectsMenu();
+    const remoteThread = [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        "#navigator-flyout-list .thread-row .row-open"
+      ),
+    ].find((item) => item.textContent?.includes("Beta Thread"));
+    if (!remoteThread) {
+      throw new Error("Missing remote Thread item");
+    }
+    act(() => {
+      remoteThread.click();
+    });
+    expect(postMessage).toHaveBeenLastCalledWith({
+      id: "beta-thread",
+      type: "selectThread",
+    });
+    toggleProjectsMenu();
+    const workspace = document.querySelector<HTMLButtonElement>(
+      '#navigator-flyout-list .workspace-node:not(.current) .workspace-open[aria-label="Open beta in Mischief"]'
+    );
+    if (!workspace) {
+      throw new Error("Missing Workspace item");
+    }
+    act(() => {
+      workspace.click();
+    });
+    expect(postMessage).toHaveBeenLastCalledWith({
+      path: "/beta",
+      type: "focusWorkspace",
+    });
+    toggleProjectsMenu();
+    const actions = document.querySelector<HTMLButtonElement>(
+      '#navigator-flyout-list .workspace-node.current [aria-label="Workspace actions"]'
+    );
+    if (!actions) {
+      throw new Error("Missing Workspace actions in the flyout");
+    }
+    act(() => {
+      actions.click();
+    });
+    const menu = document.querySelector<HTMLElement>(
+      '.projects-menu .workspace-menu[aria-label="Workspace actions"]'
+    );
+    if (!menu) {
+      throw new Error("Missing Workspace actions menu");
+    }
+    act(() => {
+      menu.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })
+      );
+    });
+    expect(document.activeElement?.textContent).toContain("Add Workspace");
+    await unmount();
+  });
+
+  test("opens the combined menu at the header click and dismisses it", async () => {
+    const unmount = await renderApp();
+    const trigger = document.querySelector<HTMLButtonElement>(
+      "#workspace-header-trigger"
+    );
+    if (!trigger) {
+      throw new Error("Missing Workspace header trigger");
+    }
+    expect(document.querySelectorAll("#workspace-header button")).toHaveLength(
+      1
+    );
+    act(() => {
+      trigger.dispatchEvent(
+        new MouseEvent("click", {
+          bubbles: true,
+          clientX: 120,
+          clientY: 20,
+          detail: 1,
+        })
+      );
+    });
+    const menu = document.querySelector<HTMLElement>(".projects-menu");
+    expect({
+      expanded: trigger.getAttribute("aria-expanded"),
+      left: menu?.style.left,
+      top: menu?.style.top,
+    }).toStrictEqual({ expanded: "true", left: "120px", top: "20px" });
+    act(() => {
+      trigger.click();
+    });
+    expect(document.querySelector(".projects-menu")).toBeNull();
+    const dots = document.querySelector<SVGSVGElement>(
+      "#workspace-header-trigger .workspace-header-more"
+    );
+    if (!dots) {
+      throw new Error("Missing Workspace header dots");
+    }
+    act(() => {
+      dots.dispatchEvent(
+        new MouseEvent("click", {
+          bubbles: true,
+          clientX: 180,
+          clientY: 20,
+          detail: 1,
+        })
+      );
+    });
+    expect({
+      focused:
+        document.activeElement === document.querySelector(".projects-menu"),
+      left: document.querySelector<HTMLElement>(".projects-menu")?.style.left,
+    }).toStrictEqual({ focused: true, left: "180px" });
+    act(() => {
+      document.body.click();
+    });
+    expect(document.querySelector(".projects-menu")).toBeNull();
+    await unmount();
+  });
+
+  test("shows the Workspace header attention rollup across Workspaces", async () => {
+    const unmount = await renderApp();
+    const sendState = (
+      needsAttention: boolean,
+      indicator: "completed" | "waiting" = "completed"
+    ): void => {
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent<HostToWebviewMessage>("message", {
+            data: {
+              font: "Test Mono",
+              projects: projectsFixture({ projects: [], ungrouped: [] }),
+              threads: {
+                threads: [
+                  threadSummary("idle", "Idle", "/current"),
+                  {
+                    ...threadSummary("remote", "Remote", "/remote"),
+                    indicator,
+                    needsAttention,
+                  },
+                ],
+              },
+              type: "state",
+            },
+          })
+        );
+      });
+    };
+
+    sendState(true);
+    const indicator = document.querySelector<HTMLElement>(
+      ".workspace-attention-indicator"
+    );
+    expect({
+      beforeDots: indicator?.nextElementSibling?.classList.contains(
+        "workspace-header-more"
+      ),
+      label: indicator?.getAttribute("aria-label"),
+    }).toStrictEqual({
+      beforeDots: true,
+      label: "Threads need attention",
+    });
+
+    sendState(true, "waiting");
+    const pendingQuestion = document.querySelector<HTMLElement>(
+      ".workspace-attention-indicator"
+    );
+    expect({
+      icon: Boolean(pendingQuestion?.querySelector(".thread-status-question")),
+      label: pendingQuestion?.getAttribute("aria-label"),
+      waiting: pendingQuestion?.classList.contains("waiting"),
+    }).toStrictEqual({
+      icon: true,
+      label: "A Thread is waiting for your response",
+      waiting: true,
+    });
+
+    sendState(false);
+    expect(document.querySelector(".workspace-attention-indicator")).toBeNull();
+    await unmount();
+  });
+
+  test("opens Workspace actions without preselecting a menu item", async () => {
+    const unmount = await renderApp();
+    toggleProjectsMenu();
+    const menu = document.querySelector<HTMLElement>(".projects-menu");
+    if (!menu) {
+      throw new Error("Missing Workspace menu");
+    }
+    expect(document.activeElement).toBe(menu);
+    act(() => {
+      menu.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })
+      );
+    });
+    expect(document.activeElement?.textContent).toContain("Add Workspace");
+    act(() => {
+      menu.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" })
+      );
+    });
+    expect(document.activeElement?.textContent).toContain("Refresh");
+    await unmount();
+  });
+
+  test("shows current Workspace Threads without decorations on Workspace rows", async () => {
     const unmount = await renderApp();
     act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
           data: {
             font: "Test Mono",
-            projects: {
+            projects: projectsFixture({
               projects: [
                 {
                   name: "project",
@@ -625,7 +1535,7 @@ describe("React webview", () => {
                 },
               ],
               ungrouped: [],
-            },
+            }),
             threads: {
               selected: {
                 commands: [],
@@ -676,273 +1586,215 @@ describe("React webview", () => {
       [...document.querySelectorAll(".workspace-node")].map((node) => ({
         branch: node.querySelector(".workspace-branch")?.textContent,
         current: node.classList.contains("current"),
+        decorations: node.querySelectorAll(
+          ".workspace-color, .workspace-statuses, .workspace-thread-count"
+        ).length,
+        expandable: Boolean(node.querySelector(".workspace-toggle")),
         expanded: node
           .querySelector(".workspace-toggle")
           ?.getAttribute("aria-expanded"),
-        headerSelected: node
+        selected: node
           .querySelector(".workspace-row")
           ?.classList.contains("selected"),
         threads: [...node.querySelectorAll(".thread-row")].map((thread) => ({
           activity: thread.querySelector(".thread-activity")?.textContent,
+          closeButtonAtEnd:
+            thread.lastElementChild?.getAttribute("aria-label") ===
+            "Close Thread",
+          indicatorBeforeTitle:
+            thread.firstElementChild?.classList.contains("thread-status") ??
+            false,
           name: thread.querySelector(".name")?.textContent,
+          questionIcon:
+            thread.querySelector(".thread-status-question") !== null,
           selected: thread.classList.contains("selected"),
+          status: thread
+            .querySelector(".thread-status")
+            ?.getAttribute("aria-label"),
         })),
       }))
     ).toStrictEqual([
       {
         branch: "feature/ui",
         current: true,
+        decorations: 0,
+        expandable: true,
         expanded: "true",
-        headerSelected: false,
+        selected: false,
         threads: [
           {
             activity: testValue<unknown>(
               expect.stringMatching(/^(?:now|\d+(?:min|h|d))$/u)
             ),
+            closeButtonAtEnd: true,
+            indicatorBeforeTitle: true,
             name: "Current",
+            questionIcon: true,
             selected: true,
+            status: "Waiting for user input",
           },
           {
             activity: testValue<unknown>(
               expect.stringMatching(/^(?:now|\d+(?:min|h|d))$/u)
             ),
+            closeButtonAtEnd: true,
+            indicatorBeforeTitle: true,
             name: "Error",
+            questionIcon: false,
             selected: false,
+            status: "Agent error — needs attention",
           },
         ],
       },
-      {
-        branch: "main",
-        current: false,
-        expanded: "false",
-        headerSelected: false,
-        threads: [],
-      },
     ]);
     expect({
-      archiveIcons: document.querySelectorAll(
-        '.workspace-node.current [aria-label="Remove Thread"] .thread-action-icon'
-      ).length,
-      attention: document.querySelectorAll(
-        ".workspace-node.current .workspace-statuses .thread-status"
-      ).length,
-      branchIcons: document.querySelectorAll(".workspace-branch-icon").length,
-      closeIcons: document.querySelectorAll(
-        '[aria-label="Close Workspace"] .thread-action-icon'
-      ).length,
-      footerNewThread: document.querySelectorAll("#footer-new-thread").length,
-      history: document.querySelectorAll(
-        '.workspace-node.current [aria-label="Thread History"]'
+      expandableRows: document.querySelectorAll(".workspace-toggle").length,
+      menuTriggers: document.querySelectorAll(
+        '.workspace-node.current [aria-label="Workspace actions"]'
       ).length,
       newThread: document.querySelectorAll(
         '.workspace-node.current [aria-label="New Thread"]'
       ).length,
-      newWorkspaceIcons: document.querySelectorAll(
-        '[aria-label="New Workspace"] .thread-action-icon'
+      openWorkspaceRow: document.querySelectorAll(
+        '.workspace-node:not(.current) .workspace-open[aria-label="Open remote Window"]'
       ).length,
-      openWorkspaceWindows: document.querySelectorAll(
-        '.workspace-node:not(.current) [aria-label$=" Window"]'
+      projectRows: document.querySelectorAll(".group-row").length,
+      remoteMenuTriggers: document.querySelectorAll(
+        '.workspace-node:not(.current) [aria-label="Workspace actions"]'
       ).length,
-      remoteHistory: document.querySelectorAll(
-        '.workspace-node:not(.current) [aria-label="Thread History"]'
+      remoteThreads: document.querySelectorAll(
+        ".workspace-node:not(.current) .thread-row"
       ).length,
-      remove: document.querySelectorAll(
-        '.workspace-node.current [aria-label="Remove Thread"]'
-      ).length,
-      rename: document.querySelectorAll(
-        '.workspace-node.current [aria-label="Rename Thread"]'
+      threadCloseButtons: document.querySelectorAll(
+        '.workspace-node.current .thread-row [aria-label="Close Thread"]'
       ).length,
       untitledButtons: document.querySelectorAll("button:not([title])").length,
     }).toStrictEqual({
-      archiveIcons: 2,
-      attention: 2,
-      branchIcons: 2,
-      closeIcons: 2,
-      footerNewThread: 0,
-      history: 1,
+      expandableRows: 1,
+      menuTriggers: 1,
       newThread: 1,
-      newWorkspaceIcons: 1,
-      openWorkspaceWindows: 1,
-      remoteHistory: 0,
-      remove: 2,
-      rename: 2,
+      openWorkspaceRow: 0,
+      projectRows: 0,
+      remoteMenuTriggers: 0,
+      remoteThreads: 0,
+      threadCloseButtons: 2,
       untitledButtons: 0,
     });
 
-    const projectTitle = document.querySelector<HTMLElement>(
-      ".navigator-group > .group-row .name"
+    const trigger = document.querySelector<HTMLButtonElement>(
+      '.workspace-node.current [aria-label="Workspace actions"]'
     );
-    const projectToggle = document.querySelector<HTMLButtonElement>(
-      ".navigator-group > .group-row .project-toggle"
+    const [firstThread, errorThread] = document.querySelectorAll<HTMLElement>(
+      ".workspace-node.current .thread-row"
     );
-    if (!projectTitle || !projectToggle) {
-      throw new Error("Missing Project toggle");
-    }
-    act(() => {
-      projectTitle.click();
-    });
-    const projectCollapsed = {
-      expanded: projectToggle.getAttribute("aria-expanded"),
-      workspaces: document.querySelectorAll(".workspace-node").length,
-    };
-    act(() => {
-      projectTitle.click();
-    });
-    expect({
-      collapsed: projectCollapsed,
-      expanded: {
-        expanded: projectToggle.getAttribute("aria-expanded"),
-        workspaces: document.querySelectorAll(".workspace-node").length,
-      },
-    }).toStrictEqual({
-      collapsed: { expanded: "false", workspaces: 0 },
-      expanded: { expanded: "true", workspaces: 2 },
-    });
-
-    const history = document.querySelector<HTMLButtonElement>(
-      '.workspace-node.current [aria-label="Thread History"]'
+    const currentToggle = document.querySelector<HTMLButtonElement>(
+      ".workspace-node.current .workspace-toggle"
     );
-    if (!history) {
-      throw new Error("Missing Thread History control");
+    const currentWorkspaceRow = document.querySelector<HTMLButtonElement>(
+      ".workspace-node.current .workspace-open"
+    );
+    if (
+      !trigger ||
+      !isDefined(firstThread) ||
+      !isDefined(errorThread) ||
+      !currentToggle ||
+      !currentWorkspaceRow
+    ) {
+      throw new Error("Missing Workspace controls");
     }
     postMessage.mockClear();
+    act(() => {
+      trigger.click();
+    });
+    const history = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ].find((button) => button.textContent?.includes("Thread History"));
+    if (!history) {
+      throw new Error("Missing Thread History menu item");
+    }
     act(() => {
       history.click();
     });
-    const historyMessage = [...postMessage.mock.calls];
+    const historyMessages = postMessage.mock.calls;
 
-    const [, renameError] = document.querySelectorAll<HTMLButtonElement>(
-      '.workspace-node.current [aria-label="Rename Thread"]'
+    const contextMenu = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 80,
+      clientY: 100,
+    });
+    act(() => {
+      errorThread.dispatchEvent(contextMenu);
+    });
+    const threadActionMenu = document.querySelector(
+      '.workspace-menu[aria-label="Thread actions"]'
     );
-    if (!isDefined(renameError)) {
-      throw new Error("Missing Thread rename control");
+    const closeThread = firstThread.querySelector<HTMLButtonElement>(
+      '[aria-label="Close Thread"]'
+    );
+    if (!closeThread) {
+      throw new Error("Missing Close Thread button");
     }
     postMessage.mockClear();
     act(() => {
-      renameError.click();
+      closeThread.click();
+    });
+    const closeMessages = [...postMessage.mock.calls];
+    expect({
+      closeButtons: document.querySelectorAll(
+        '.workspace-node.current .thread-row [aria-label="Close Thread"]'
+      ).length,
+      closeMessages,
+      contextPrevented: contextMenu.defaultPrevented,
+      historyMessages,
+      threadActionMenu,
+    }).toStrictEqual({
+      closeButtons: 2,
+      closeMessages: [[{ id: "current-thread", type: "removeThread" }]],
+      contextPrevented: false,
+      historyMessages: [[{ type: "threadHistory" }]],
+      threadActionMenu: null,
     });
 
-    const [currentToggle, remoteToggle] =
-      document.querySelectorAll<HTMLButtonElement>(".workspace-toggle");
-    const currentWorkspaceTitle = document.querySelector<HTMLElement>(
-      ".workspace-node.current .workspace-label"
-    );
-    if (
-      !(
-        isDefined(currentToggle) &&
-        isDefined(remoteToggle) &&
-        currentWorkspaceTitle
-      )
-    ) {
-      throw new Error("Missing Workspace toggles");
-    }
+    postMessage.mockClear();
     act(() => {
-      currentWorkspaceTitle.click();
+      currentWorkspaceRow.click();
     });
     const collapsed = {
       expanded: currentToggle.getAttribute("aria-expanded"),
-      headerSelected: document
+      messages: postMessage.mock.calls,
+      selected: document
         .querySelector(".workspace-node.current .workspace-row")
         ?.classList.contains("selected"),
       selectedThread: document.querySelector(
         ".workspace-node.current .thread-row.selected"
       ),
     };
+    postMessage.mockClear();
     act(() => {
-      currentWorkspaceTitle.click();
+      currentToggle.click();
     });
     const reexpanded = {
       expanded: currentToggle.getAttribute("aria-expanded"),
-      headerSelected: document
-        .querySelector(".workspace-node.current .workspace-row")
-        ?.classList.contains("selected"),
+      messages: postMessage.mock.calls,
       selectedThread: document.querySelector(
         ".workspace-node.current .thread-row.selected .name"
       )?.textContent,
     };
-    act(() => {
-      remoteToggle.click();
-    });
-    const toggleMessages = [...postMessage.mock.calls];
-    const remoteThread = document.querySelector<HTMLButtonElement>(
-      ".workspace-node:not(.current) .thread-row .row-open"
-    );
-    if (!remoteThread) {
-      throw new Error("Missing remote Thread");
-    }
-    postMessage.mockClear();
-    act(() => {
-      remoteThread.click();
-    });
-    expect({
-      collapsed,
-      historyMessage,
-      reexpanded,
-      remoteMessage: postMessage.mock.calls,
-      remoteRemove: document.querySelector(
-        '.workspace-node:not(.current) [aria-label="Remove Thread"]'
-      ),
-      remoteRename: document.querySelector(
-        '.workspace-node:not(.current) [aria-label="Rename Thread"]'
-      ),
-      toggleMessages,
-    }).toStrictEqual({
+    expect({ collapsed, reexpanded }).toStrictEqual({
       collapsed: {
         expanded: "false",
-        headerSelected: true,
+        messages: [],
+        selected: true,
         selectedThread: null,
       },
-      historyMessage: [[{ type: "threadHistory" }]],
       reexpanded: {
         expanded: "true",
-        headerSelected: false,
+        messages: [],
         selectedThread: "Current",
       },
-      remoteMessage: [[{ id: "remote-thread", type: "selectThread" }]],
-      remoteRemove: null,
-      remoteRename: null,
-      toggleMessages: [
-        [{ id: "error-thread", type: "renameThread" }],
-        [{ expanded: true, type: "navigatorExpanded" }],
-      ],
     });
-    const remoteWorkspaceTitle = document.querySelector<HTMLElement>(
-      ".workspace-node:not(.current) .workspace-label"
-    );
-    const openWorkspaceWindow = document.querySelector<HTMLButtonElement>(
-      '.workspace-node:not(.current) [aria-label="Open remote Window"]'
-    );
-    if (!remoteWorkspaceTitle || !openWorkspaceWindow) {
-      throw new Error("Missing remote Workspace controls");
-    }
-    postMessage.mockClear();
-    act(() => {
-      remoteWorkspaceTitle.click();
-    });
-    const remoteCollapsed = {
-      expanded: remoteToggle.getAttribute("aria-expanded"),
-      messages: [...postMessage.mock.calls],
-    };
-    postMessage.mockClear();
-    act(() => {
-      openWorkspaceWindow.click();
-    });
-    expect({
-      collapsed: remoteCollapsed,
-      opened: {
-        expanded: remoteToggle.getAttribute("aria-expanded"),
-        messages: postMessage.mock.calls,
-      },
-    }).toStrictEqual({
-      collapsed: {
-        expanded: "false",
-        messages: [[{ expanded: false, type: "navigatorExpanded" }]],
-      },
-      opened: {
-        expanded: "false",
-        messages: [[{ path: "/remote", type: "openWorkspace" }]],
-      },
-    });
+
     await unmount();
   });
 
@@ -1389,7 +2241,7 @@ describe("React webview", () => {
         new MessageEvent("message", {
           data: {
             font: "Test Mono",
-            projects: { projects: [], ungrouped: [] },
+            projects: projectsFixture({ projects: [], ungrouped: [] }),
             threads: {
               selected: {
                 commands: [],
@@ -1418,6 +2270,27 @@ describe("React webview", () => {
     expect(document.querySelector("#transcript")?.textContent).not.toContain(
       "Message 0"
     );
+    const lastEntry = document.querySelector('[data-message-id="item-209"]');
+    if (!lastEntry) {
+      throw new Error("Missing last Thread entry");
+    }
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            item: { id: "item-0", kind: "assistant", text: "Updated first" },
+            streaming: true,
+            threadId: "long",
+            type: "transcript",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    expect({
+      count: document.querySelectorAll("#transcript .entry").length,
+      preserved:
+        document.querySelector('[data-message-id="item-209"]') === lastEntry,
+    }).toStrictEqual({ count: 100, preserved: true });
     const chat = document.querySelector<HTMLDivElement>("#chat");
     if (!chat) {
       throw new Error("Missing chat");
@@ -1426,6 +2299,60 @@ describe("React webview", () => {
       chat.dispatchEvent(new Event("scroll", { bubbles: true }));
     });
     expect(document.querySelectorAll("#transcript .entry")).toHaveLength(200);
+    act(() => {
+      chat.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    expect({
+      count: document.querySelectorAll("#transcript .entry").length,
+      first: [...document.querySelectorAll('[data-message-id="item-0"]')].map(
+        (entry) => entry.textContent
+      ),
+    }).toStrictEqual({ count: 210, first: ["Updated first"] });
+    await unmount();
+  });
+
+  test("requests context only when the current Workspace changes", async () => {
+    const unmount = await renderApp();
+    const state = (
+      workspace?: string
+    ): Extract<HostToWebviewMessage, { type: "state" }> => ({
+      font: "Test Mono",
+      projects: projectsFixture({
+        projects: [],
+        ungrouped:
+          workspace === undefined ? [] : [workspaceSummary(workspace, true)],
+      }),
+      threads: { threads: [] },
+      type: "state",
+    });
+    const contextRequests = (): unknown[][] =>
+      postMessage.mock.calls.filter(
+        ([message]) =>
+          testValue<{ type?: string }>(message).type === "contextItems"
+      );
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: state("alpha") })
+      );
+    });
+    expect(contextRequests()).toHaveLength(1);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: state("alpha") })
+      );
+    });
+    expect(contextRequests()).toHaveLength(1);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: state("beta") })
+      );
+    });
+    expect(contextRequests()).toHaveLength(2);
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state() }));
+    });
+    expect(contextRequests()).toHaveLength(3);
     await unmount();
   });
 
@@ -1433,7 +2360,7 @@ describe("React webview", () => {
     const unmount = await renderApp();
     const state: HostToWebviewMessage = {
       font: "Test Mono",
-      projects: {
+      projects: projectsFixture({
         projects: [],
         ungrouped: [
           {
@@ -1446,7 +2373,7 @@ describe("React webview", () => {
             path: "/workspace",
           },
         ],
-      },
+      }),
       threads: {
         selected: {
           commands: [],
@@ -1534,6 +2461,103 @@ describe("React webview", () => {
       scrollHeight: scrollHeight.mock.calls.length,
       scrollTop: scrollTop.mock.calls.length,
     }).toStrictEqual({ clientHeight: 0, scrollHeight: 0, scrollTop: 0 });
+    await unmount();
+  });
+
+  test("keeps the selected Thread's stream when another Thread updates", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("first", []) })
+      );
+    });
+    sendTranscriptItem("first", "Live first");
+    const refreshed = threadState("first", []);
+    if (!refreshed.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    refreshed.threads.selected.items = [
+      { id: "first-message", kind: "assistant", text: "Committed first" },
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: refreshed }));
+    });
+    expect(document.querySelector("#transcript")?.textContent).toBe(
+      "Committed first"
+    );
+
+    const second = threadState("second", []);
+    if (!second.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    second.threads.selected.status = "running";
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: second }));
+    });
+    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+    if (!composer) {
+      throw new Error("Missing composer");
+    }
+    composer.value = "Unsent draft";
+    sendTranscriptItem("second", "Live second");
+    sendTranscriptItem("first", "Background update");
+
+    expect({
+      draft: composer.value,
+      processingHidden:
+        document.querySelector<HTMLElement>("#processing")?.hidden,
+      transcript: [...document.querySelectorAll("#transcript .entry")].map(
+        (entry) => entry.textContent
+      ),
+    }).toStrictEqual({
+      draft: "Unsent draft",
+      processingHidden: true,
+      transcript: ["Live second"],
+    });
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: refreshed }));
+    });
+    expect(document.querySelector("#transcript")?.textContent).toBe(
+      "Committed first"
+    );
+    await unmount();
+  });
+
+  test("renders the latest non-tail transcript item once in its original position", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (!state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    state.threads.selected.items = [
+      { id: "earlier", kind: "assistant", text: "Partial" },
+      { id: "later", kind: "user", text: "Later" },
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+      for (const item of [
+        { id: "earlier", kind: "assistant" as const, text: "Updated" },
+        { id: "earlier", kind: "assistant" as const, text: "Final" },
+        { id: "new", kind: "assistant" as const, text: "New" },
+      ]) {
+        window.dispatchEvent(
+          new MessageEvent("message", {
+            data: {
+              item,
+              streaming: true,
+              threadId: "selected",
+              type: "transcript",
+            } satisfies HostToWebviewMessage,
+          })
+        );
+      }
+    });
+
+    expect(
+      [...document.querySelectorAll("#transcript .entry")].map(
+        (entry) => entry.textContent
+      )
+    ).toStrictEqual(["Final", "Later", "New"]);
     await unmount();
   });
 
@@ -1821,7 +2845,7 @@ describe("React webview", () => {
         new MessageEvent("message", {
           data: {
             font: "Test Mono",
-            projects: { projects: [], ungrouped: [] },
+            projects: projectsFixture({ projects: [], ungrouped: [] }),
             threads: {
               selected: {
                 commands: [],
@@ -1963,7 +2987,7 @@ describe("React webview", () => {
         new MessageEvent("message", {
           data: {
             font: "Test Mono",
-            projects: { projects: [], ungrouped: [] },
+            projects: projectsFixture({ projects: [], ungrouped: [] }),
             threads: {
               selected: {
                 commands: [
@@ -2020,7 +3044,7 @@ describe("React webview", () => {
         new MessageEvent("message", {
           data: {
             font: "Test Mono",
-            projects: { projects: [], ungrouped: [] },
+            projects: projectsFixture({ projects: [], ungrouped: [] }),
             threads: {
               selected: {
                 commands: [
@@ -2145,7 +3169,7 @@ describe("React webview", () => {
     };
     const state: HostToWebviewMessage = {
       font: "Test Mono",
-      projects: { projects: [], ungrouped: [] },
+      projects: projectsFixture({ projects: [], ungrouped: [] }),
       threads: {
         selected: {
           agentId: "magpi-acp",
@@ -2220,12 +3244,63 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("uses streamed Thread items for the plan, transcript and message history", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (!state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    state.threads.selected.items = [
+      { id: "plan", kind: "plan", text: "Old plan" },
+      { id: "reply", kind: "assistant", text: "Old reply" },
+      { id: "follow-up", kind: "user", text: "Follow-up" },
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+      for (const item of [
+        { id: "plan", kind: "plan" as const, text: "" },
+        { id: "reply", kind: "assistant" as const, text: "Latest reply" },
+      ]) {
+        window.dispatchEvent(
+          new MessageEvent("message", {
+            data: {
+              item,
+              streaming: true,
+              threadId: "selected",
+              type: "transcript",
+            } satisfies HostToWebviewMessage,
+          })
+        );
+      }
+    });
+    act(() => {
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="Message history"]')
+        ?.click();
+    });
+
+    expect({
+      history: [
+        ...document.querySelectorAll("#history-list .history-entry"),
+      ].map((entry) => entry.textContent),
+      plan: document.querySelector("#plan"),
+      transcript: [...document.querySelectorAll("#transcript .entry")].map(
+        (entry) => entry.textContent
+      ),
+    }).toStrictEqual({
+      history: ["Latest reply", "Follow-up"],
+      plan: null,
+      transcript: ["Latest reply", "Follow-up"],
+    });
+    await unmount();
+  });
+
   test("renders snapshots and routes steering and plan actions", async () => {
     const unmount = await renderApp();
 
     const state: HostToWebviewMessage = {
       font: "Test Mono",
-      projects: { projects: [], ungrouped: [] },
+      projects: projectsFixture({ projects: [], ungrouped: [] }),
       threads: {
         selected: {
           commands: [],
@@ -2346,7 +3421,7 @@ describe("React webview", () => {
     const unmount = await renderApp();
     const state: HostToWebviewMessage = {
       font: "Test Mono",
-      projects: { projects: [], ungrouped: [] },
+      projects: projectsFixture({ projects: [], ungrouped: [] }),
       threads: {
         selected: {
           commands: [],
@@ -2504,7 +3579,7 @@ describe("React webview", () => {
     const unmount = await renderApp();
     const state: HostToWebviewMessage = {
       font: "Test Mono",
-      projects: { projects: [], ungrouped: [] },
+      projects: projectsFixture({ projects: [], ungrouped: [] }),
       threads: {
         selected: {
           commands: [],

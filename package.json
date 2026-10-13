@@ -1,8 +1,8 @@
 {
   "name": "mischief",
   "displayName": "Mischief",
-  "version": "0.3.0",
-  "description": "A VS Code project, workspace, and Agent Thread browser for MagPi, Claude Agent, and Codex.",
+  "version": "0.3.1",
+  "description": "A VS Code Workspace and Agent Thread browser for MagPi, Claude Agent, and Codex.",
   "categories": [
     "Chat",
     "Other"
@@ -10,8 +10,13 @@
   "keywords": [
     "acp",
     "agent",
+    "claude",
+    "codex",
+    "herdr",
     "magpi",
     "magpie",
+    "manager",
+    "pi",
     "workspace"
   ],
   "homepage": "https://github.com/digital-overground/mischief#readme",
@@ -92,12 +97,12 @@
       },
       {
         "command": "mischief.expandAll",
-        "title": "Mischief: Expand All",
+        "title": "Mischief: Expand Current Workspace",
         "icon": "$(expand-all)"
       },
       {
         "command": "mischief.collapseAll",
-        "title": "Mischief: Collapse All",
+        "title": "Mischief: Collapse Current Workspace",
         "icon": "$(collapse-all)"
       },
       {
@@ -133,29 +138,9 @@
       ],
       "view/title": [
         {
-          "command": "mischief.addWorkspace",
-          "when": "view == mischief.view",
-          "group": "navigation@1"
-        },
-        {
-          "command": "mischief.refresh",
-          "when": "view == mischief.view",
-          "group": "navigation@2"
-        },
-        {
-          "command": "mischief.expandAll",
-          "when": "view == mischief.view && !mischief.navigatorAllExpanded",
-          "group": "navigation@3"
-        },
-        {
-          "command": "mischief.collapseAll",
-          "when": "view == mischief.view && mischief.navigatorAllExpanded",
-          "group": "navigation@3"
-        },
-        {
           "command": "mischief.settings",
           "when": "view == mischief.view",
-          "group": "navigation@10"
+          "group": "navigation@1"
         }
       ]
     },

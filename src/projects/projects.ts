@@ -35,15 +35,11 @@ export interface Workspace {
   current: boolean;
 }
 
-export interface Project {
-  name: string;
-  root: string;
-  workspaces: Workspace[];
-}
-
 export interface ProjectsSnapshot {
-  projects: Project[];
-  ungrouped: Workspace[];
+  navigation: {
+    workspaces: Workspace[];
+    current?: { workspace: Workspace; projectRoot?: string };
+  };
 }
 
 export const locateWorkspace = async (
@@ -142,17 +138,15 @@ export class Projects {
       this.database.snapshot().workspaces.map((workspace) => workspace.path)
     );
     const locations = imported.flat();
-    await Promise.all(
-      [
-        ...new Map(
-          locations.map((location) => [location.path, location])
-        ).values(),
-      ]
-        .filter((workspace) => !existing.has(workspace.path))
-        .map(async (workspace) => {
-          await this.activate(workspace);
-        })
-    );
+    const missing = [
+      ...new Map(
+        locations.map((location) => [location.path, location])
+      ).values(),
+    ].filter((workspace) => !existing.has(workspace.path));
+    for (const workspace of missing) {
+      // oxlint-disable-next-line no-await-in-loop -- serialize imports to avoid concurrent profile writes
+      await this.activate(workspace);
+    }
   }
 
   async listOpenIssues(
@@ -278,23 +272,14 @@ export class Projects {
       }
     }
 
-    const projects = [...grouped]
-      .map(([root, workspaces]) => ({
-        name: path.basename(root),
-        root,
-        workspaces: workspaces
-          .map((workspace) => ({
-            name: path.basename(workspace.path),
-            ...workspace,
-            current: workspace.path === this.currentWorkspace,
-          }))
-          .toSorted(
-            (left, right) =>
-              Number(left.linked) - Number(right.linked) ||
-              left.name.localeCompare(right.name)
-          ),
-      }))
-      .toSorted((left, right) => left.name.localeCompare(right.name));
+    const projects = [...grouped].map(([root, workspaces]) => ({
+      root,
+      workspaces: workspaces.map((workspace) => ({
+        name: path.basename(workspace.path),
+        ...workspace,
+        current: workspace.path === this.currentWorkspace,
+      })),
+    }));
     const ungrouped = untracked
       .map((workspacePath) => ({
         ahead: 0,
@@ -306,6 +291,26 @@ export class Projects {
         path: workspacePath,
       }))
       .toSorted((left, right) => left.name.localeCompare(right.name));
-    return { projects, ungrouped };
+    const workspaces = [
+      ...projects.flatMap((project) => project.workspaces),
+      ...ungrouped,
+    ].toSorted((left, right) => left.name.localeCompare(right.name));
+    const workspace = workspaces.find((candidate) => candidate.current);
+    const projectRoot = workspace
+      ? projects.find((project) => project.workspaces.includes(workspace))?.root
+      : undefined;
+    return {
+      navigation: {
+        workspaces,
+        ...(workspace
+          ? {
+              current: {
+                workspace,
+                ...(projectRoot === undefined ? {} : { projectRoot }),
+              },
+            }
+          : {}),
+      },
+    };
   }
 }

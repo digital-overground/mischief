@@ -7,8 +7,10 @@ import { pathToFileURL } from "node:url";
 
 import { describe, expect, test, vi } from "vitest";
 
+import type { AgentStatus } from "./agents/manager";
 import { exec } from "./exec";
 import { isNonEmpty } from "./present";
+import { projectsFixture } from "./projects/projects-fixture";
 import { testValue } from "./test-value";
 import { MischiefView } from "./view";
 
@@ -143,10 +145,10 @@ describe("view provider", () => {
         path.join(parent, "first"),
         path.join(parent, "second"),
       ];
-      const snapshot = {
+      const snapshot = projectsFixture({
         projects: [{ name: "project", root, workspaces: [] }],
         ungrouped: [],
-      };
+      });
       vscode.assignWorkspaceColors = false;
       vscode.showInputBox.mockReset().mockResolvedValue("new");
       vscode.showQuickPick.mockReset().mockImplementation(async (items) => {
@@ -279,7 +281,7 @@ describe("view provider", () => {
     const projects = {
       open: vi.fn<() => Promise<unknown>>(async () => {
         await Promise.resolve();
-        return {
+        return projectsFixture({
           projects: [],
           ungrouped: [
             {
@@ -292,7 +294,7 @@ describe("view provider", () => {
               path: folder,
             },
           ],
-        };
+        });
       }),
     };
     const threads = {
@@ -380,7 +382,7 @@ describe("view provider", () => {
       testValue<never>({
         open: async () => {
           await Promise.resolve();
-          return {
+          return projectsFixture({
             projects: [],
             ungrouped: [
               {
@@ -393,7 +395,7 @@ describe("view provider", () => {
                 path: folder,
               },
             ],
-          };
+          });
         },
       }),
       testValue<never>(threads),
@@ -543,7 +545,7 @@ describe("view provider", () => {
         { current: false, name: "origin/release", remoteOnly: true },
       ];
     });
-    const snapshot = {
+    const snapshot = projectsFixture({
       projects: [
         {
           name: "project",
@@ -562,7 +564,7 @@ describe("view provider", () => {
         },
       ],
       ungrouped: [],
-    };
+    });
     const listOpenIssues = vi.fn<
       (
         root: string,
@@ -594,10 +596,10 @@ describe("view provider", () => {
       listOpenIssues,
       open: vi.fn<() => Promise<unknown>>(async () => {
         await Promise.resolve();
-        return {
+        return projectsFixture({
           projects: [{ name: "project", root: "/project", workspaces: [] }],
           ungrouped: [],
-        };
+        });
       }),
       refresh: vi.fn<() => Promise<unknown>>(async () => {
         await Promise.resolve();
@@ -859,7 +861,7 @@ describe("view provider", () => {
       testValue<never>({
         open: async () => {
           await Promise.resolve();
-          return { projects: [], ungrouped: [] };
+          return projectsFixture({ projects: [], ungrouped: [] });
         },
       }),
       testValue<never>({
@@ -995,10 +997,10 @@ describe("view provider", () => {
         listOpenIssues,
         open: async () => {
           await Promise.resolve();
-          return {
+          return projectsFixture({
             projects: [{ name: "project", root: "/project", workspaces: [] }],
             ungrouped: [],
-          };
+          });
         },
         sourceBranches,
       }),
@@ -1141,10 +1143,10 @@ describe("view provider", () => {
           },
           open: async () => {
             await Promise.resolve();
-            return {
+            return projectsFixture({
               projects: [{ name: "project", root: "/project", workspaces: [] }],
               ungrouped: [],
-            };
+            });
           },
           sourceBranches,
         }),
@@ -1388,7 +1390,6 @@ describe("view provider", () => {
         },
         prompt: () => ({ id: "agents", message: "Choose an Agent" }),
       },
-      [],
       testValue<never>({ availableAgents: () => available })
     );
     await provider.newThread(true, "Read issue");
@@ -1398,25 +1399,68 @@ describe("view provider", () => {
     expect(newThread.mock.calls).toStrictEqual([["codex-acp"]]);
   });
 
-  test("opens the owning Workspace only after a remote Thread selection", async () => {
+  test("focuses Mischief when a selected Workspace starts in a new window", async () => {
     vscode.executeCommand.mockClear();
-    const select = vi
-      .fn<(id: string) => Promise<string | undefined>>()
-      .mockResolvedValueOnce("/current")
-      .mockResolvedValueOnce("/remote");
-    const threads = {
-      onChange: vi.fn<() => void>(),
-      openWorkspace: vi.fn<() => Promise<void>>(async () => {
+    const storage = {
+      get: (key: string, fallback: unknown) =>
+        key === "mischief.focusWorkspace" ? "/remote" : fallback,
+      update: vi.fn<() => Promise<void>>(async () => {
         await Promise.resolve();
       }),
-      select,
-      snapshot: () => ({ threads: [], workspace: "/current" }),
+    };
+    const provider = new MischiefView(
+      testValue<never>({
+        open: async () => {
+          await Promise.resolve();
+          return projectsFixture({
+            projects: [],
+            ungrouped: [
+              {
+                ahead: 0,
+                behind: 0,
+                changes: 0,
+                current: true,
+                linked: false,
+                name: "remote",
+                path: "/remote",
+              },
+            ],
+          });
+        },
+      }),
+      testValue<never>({
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({ threads: [], workspace: "/remote" }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>(storage),
+      testValue<never>(profileDatabase())
+    );
+
+    await provider.initialize("/remote");
+
+    expect(storage.update).toHaveBeenCalledWith(
+      "mischief.focusWorkspace",
+      undefined
+    );
+    expect(vscode.executeCommand).toHaveBeenCalledExactlyOnceWith(
+      "workbench.view.extension.mischief"
+    );
+  });
+
+  test("focuses the VS Code window selected from the Project menu", async () => {
+    vscode.executeCommand.mockClear();
+    const storage = {
+      get: (_key: string, fallback: unknown) => fallback,
+      update: vi.fn<() => Promise<void>>(async () => {
+        await Promise.resolve();
+      }),
     };
     const provider = new MischiefView(
       testValue<never>({
         refresh: async () => {
           await Promise.resolve();
-          return {
+          return projectsFixture({
             projects: [],
             ungrouped: [
               {
@@ -1438,7 +1482,91 @@ describe("view provider", () => {
                 path: "/remote",
               },
             ],
-          };
+          });
+        },
+      }),
+      testValue<never>({
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({ threads: [], workspace: "/current" }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>(storage),
+      testValue<never>(profileDatabase())
+    );
+    await provider.initialize();
+    const handle = testValue<{
+      handleWorkspaceMessage: (
+        data: Record<string, unknown>
+      ) => Promise<boolean>;
+    }>(testValue<unknown>(provider)).handleWorkspaceMessage.bind(provider);
+
+    await handle({ path: "/remote", type: "focusWorkspace" });
+    await handle({ path: "/current", type: "focusWorkspace" });
+
+    expect(storage.update).toHaveBeenCalledExactlyOnceWith(
+      "mischief.focusWorkspace",
+      "/remote"
+    );
+    expect(vscode.executeCommand.mock.calls).toStrictEqual([
+      ["vscode.openFolder", { fsPath: "/remote" }, { forceNewWindow: true }],
+      ["workbench.view.extension.mischief"],
+    ]);
+  });
+
+  test("opens the owning Workspace before requesting its Thread focus", async () => {
+    vscode.executeCommand.mockClear();
+    let remoteSelectedAfterWindow = false;
+    const select = vi.fn<(id: string) => Promise<string | undefined>>(
+      async (id) => {
+        await Promise.resolve();
+        if (id === "remote-thread") {
+          remoteSelectedAfterWindow =
+            vscode.executeCommand.mock.calls.length > 0;
+        }
+        return id === "remote-thread" ? "/remote" : "/current";
+      }
+    );
+    const threads = {
+      onChange: vi.fn<() => void>(),
+      openWorkspace: vi.fn<() => Promise<void>>(async () => {
+        await Promise.resolve();
+      }),
+      select,
+      snapshot: () => ({
+        threads: [
+          { id: "local-thread", workspace: "/current" },
+          { id: "remote-thread", workspace: "/remote" },
+        ],
+        workspace: "/current",
+      }),
+    };
+    const provider = new MischiefView(
+      testValue<never>({
+        refresh: async () => {
+          await Promise.resolve();
+          return projectsFixture({
+            projects: [],
+            ungrouped: [
+              {
+                ahead: 0,
+                behind: 0,
+                changes: 0,
+                current: true,
+                linked: false,
+                name: "current",
+                path: "/current",
+              },
+              {
+                ahead: 0,
+                behind: 0,
+                changes: 0,
+                current: false,
+                linked: false,
+                name: "remote",
+                path: "/remote",
+              },
+            ],
+          });
         },
       }),
       testValue<never>(threads),
@@ -1454,15 +1582,59 @@ describe("view provider", () => {
     await handle({ id: "local-thread", type: "selectThread" });
     await handle({ id: "remote-thread", type: "selectThread" });
 
-    expect(select.mock.calls).toStrictEqual([
-      ["local-thread"],
-      ["remote-thread"],
-    ]);
+    expect({
+      remoteSelectedAfterWindow,
+      selects: select.mock.calls,
+    }).toStrictEqual({
+      remoteSelectedAfterWindow: true,
+      selects: [["local-thread"], ["remote-thread"]],
+    });
     expect(vscode.executeCommand).toHaveBeenCalledExactlyOnceWith(
       "vscode.openFolder",
       { fsPath: "/remote" },
       { forceNewWindow: true }
     );
+  });
+
+  test("focuses Mischief when the owning Instance receives a remote Thread selection", async () => {
+    let emit: ((change?: { type: "remoteSelection" }) => void) | undefined;
+    const provider = new MischiefView(
+      testValue<never>({}),
+      testValue<never>({
+        onChange: (
+          listener: (change?: { type: "remoteSelection" }) => void
+        ) => {
+          emit = listener;
+        },
+        snapshot: () => ({ threads: [] }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase())
+    );
+    const show = vi.fn<(preserveFocus: boolean) => void>();
+    Object.assign(provider, {
+      view: {
+        show,
+        webview: {
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => uri.fsPath,
+          }),
+          postMessage: vi.fn<() => void>(),
+        },
+      },
+    });
+    vscode.executeCommand.mockClear();
+    emit?.({ type: "remoteSelection" });
+    await vi.waitFor(() => {
+      expect({
+        commands: vscode.executeCommand.mock.calls,
+        show: show.mock.calls,
+      }).toStrictEqual({
+        commands: [["workbench.view.extension.mischief"]],
+        show: [[false]],
+      });
+    });
   });
 
   test("renames the clicked Thread instead of the selected Thread", async () => {
@@ -1515,7 +1687,7 @@ describe("view provider", () => {
     });
   });
 
-  test("contributes editor and Mischief title-bar menu actions", () => {
+  test("keeps Settings as the only native view title action", () => {
     const manifest = testValue<{
       contributes: {
         commands: { command: string; icon?: string; title: string }[];
@@ -1531,29 +1703,39 @@ describe("view provider", () => {
         {
           command: "mischief.expandAll",
           icon: "$(expand-all)",
-          title: "Mischief: Expand All",
+          title: "Mischief: Expand Current Workspace",
         },
         {
           command: "mischief.collapseAll",
           icon: "$(collapse-all)",
-          title: "Mischief: Collapse All",
+          title: "Mischief: Collapse Current Workspace",
         },
       ])
     );
-    expect(manifest.contributes.menus["view/title"]).toStrictEqual(
-      expect.arrayContaining([
-        {
-          command: "mischief.expandAll",
-          group: "navigation@3",
-          when: "view == mischief.view && !mischief.navigatorAllExpanded",
-        },
-        {
-          command: "mischief.collapseAll",
-          group: "navigation@3",
-          when: "view == mischief.view && mischief.navigatorAllExpanded",
-        },
-      ])
-    );
+    expect(manifest.contributes.commands).toContainEqual({
+      command: "mischief.settings",
+      icon: "$(gear)",
+      title: "Mischief: Settings",
+    });
+    expect(
+      manifest.contributes.commands.map(({ command }) => command)
+    ).toStrictEqual([
+      "mischief.addWorkspace",
+      "mischief.refresh",
+      "mischief.expandAll",
+      "mischief.collapseAll",
+      "mischief.newThread",
+      "mischief.addSelectionToCurrentThread",
+      "mischief.addSelectionToNewThread",
+      "mischief.settings",
+    ]);
+    expect(manifest.contributes.menus["view/title"]).toStrictEqual([
+      {
+        command: "mischief.settings",
+        group: "navigation@1",
+        when: "view == mischief.view",
+      },
+    ]);
     expect(manifest.contributes.menus["editor/context"]).toStrictEqual(
       expect.arrayContaining([
         {
@@ -1578,11 +1760,71 @@ describe("view provider", () => {
     expect(html).toContain('href="{{styleUri}}"');
   });
 
+  test("opens a content-width Workspace menu from its clickable header", () => {
+    const css = readFileSync("media/webview.css", "utf-8");
+    const flyout = /\.projects-menu \{[^}]*\}/u.exec(css)?.[0];
+
+    expect(flyout).toContain("width: max-content;");
+    expect(flyout).toContain("max-width: calc(100vw - 8px);");
+    expect(flyout).not.toContain("right: 4px;");
+    expect(flyout).not.toContain("top: 36px;");
+    expect(/#workspace-header-trigger \{[^}]*\}/u.exec(css)?.[0]).toContain(
+      "cursor: pointer;"
+    );
+  });
+
+  test("uses transparent monospace headers and a clear Thread divider", () => {
+    const css = readFileSync("media/webview.css", "utf-8");
+    const headers = /#thread-header,\s*#workspace-header \{[^}]*\}/u.exec(
+      css
+    )?.[0];
+    const thread = /#thread \{[^}]*\}/u.exec(css)?.[0];
+
+    expect(headers).toContain("background: transparent;");
+    expect(headers).toContain("font-family: var(--mischief-mono-font);");
+    expect(headers).toContain(
+      "border-bottom: 1px solid var(--thread-frame-border);"
+    );
+    expect(headers).not.toContain("border-top:");
+    expect(thread).toContain(
+      "border-top: 2px solid var(--vscode-panel-border);"
+    );
+  });
+
+  test("styles both Workspace lists like neutral menus with indented Threads", () => {
+    const css = readFileSync("media/webview.css", "utf-8");
+    const list = /\.workspace-list \{[^}]*\}/u.exec(css)?.[0];
+    const selected = /\.workspace-list \.row\.selected \{[^}]*\}/u.exec(
+      css
+    )?.[0];
+
+    expect(list).toContain("--vscode-menu-foreground");
+    expect(list).toContain("--vscode-menu-background");
+    expect(selected).toContain("--vscode-menu-background");
+    expect(css).toMatch(/\.thread-row \{\s*padding-left: 32px;/u);
+  });
+
   test("caps composer height relative to a short webview", () => {
     const css = readFileSync("media/webview.css", "utf-8");
     const composerRule = /#composer \{[\s\S]*?\n\}/u.exec(css)?.[0];
 
     expect(composerRule).toContain("max-height: min(400px, 45vh);");
+  });
+
+  test("greys the Workspace row and hides its actions while closing", () => {
+    const css = readFileSync("media/webview.css", "utf-8");
+    expect({
+      actionsHidden:
+        /\.workspace-row\.closing > \.icon\s*\{\s*display: none;/u.test(css),
+      rowGreyed: /\.workspace-row\.closing\s*\{[\s\S]*?opacity: 0\.65;/u.test(
+        css
+      ),
+      spinner: css.includes(".workspace-close-spinner"),
+    }).toStrictEqual({
+      actionsHidden: true,
+      rowGreyed: true,
+      spinner: true,
+    });
   });
 
   test("sends only the changed transcript item while streaming", async () => {
@@ -1697,7 +1939,7 @@ describe("view provider", () => {
       testValue<never>({
         refresh: async () => {
           await Promise.resolve();
-          return {
+          return projectsFixture({
             projects: [],
             ungrouped: [
               {
@@ -1710,7 +1952,7 @@ describe("view provider", () => {
                 path: "/workspace",
               },
             ],
-          };
+          });
         },
       }),
       testValue<never>(threads),
@@ -1731,9 +1973,18 @@ describe("view provider", () => {
       tooltip: "",
       value: 0,
     });
+    expect(postMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        agentIcons: {
+          "claude-agent-acp": `webview:${process.cwd()}/media/agents/claude-acp.svg`,
+          "codex-acp": `webview:${process.cwd()}/media/agents/codex-acp.svg`,
+          "magpi-acp": `webview:${process.cwd()}/media/agents/magpi-acp.svg`,
+        },
+      })
+    );
     expect(webview.html).toContain('id="root"');
     expect({
-      csp: webview.html.includes("webview-csp"),
+      csp: webview.html.includes("img-src data: webview-csp"),
       placeholders: webview.html.includes("{{"),
       uris: webview.html.includes("webview:/"),
     }).toStrictEqual({ csp: true, placeholders: false, uris: true });
@@ -1743,7 +1994,7 @@ describe("view provider", () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     let databaseChanged: (() => void) | undefined;
     let workspaces: unknown[] = [];
-    const projectsSnapshot = {
+    const projectsSnapshot = projectsFixture({
       projects: [],
       ungrouped: [
         {
@@ -1756,7 +2007,7 @@ describe("view provider", () => {
           path: "/remote",
         },
       ],
-    };
+    });
     const provider = new MischiefView(
       testValue<never>({
         refresh: async () => {
@@ -1822,7 +2073,125 @@ describe("view provider", () => {
     });
   });
 
-  test("posts Expand All and Collapse All requests to the Navigator", async () => {
+  test("uses Projects navigation facts without rebuilding Project groups", async () => {
+    const workspace = {
+      ahead: 0,
+      behind: 0,
+      changes: 0,
+      current: true,
+      linked: true,
+      name: "linked",
+      path: "/linked",
+    };
+    const snapshot = {
+      navigation: {
+        current: { projectRoot: "/root", workspace },
+        workspaces: [workspace],
+      },
+    };
+    const openWorkspace = vi.fn<() => Promise<void>>(async () => {
+      await Promise.resolve();
+    });
+    vscode.assignWorkspaceColors = false;
+    const provider = new MischiefView(
+      testValue<never>({
+        open: async () => {
+          await Promise.resolve();
+          return snapshot;
+        },
+      }),
+      testValue<never>({
+        onChange: vi.fn<() => void>(),
+        openWorkspace,
+        snapshot: () => ({ threads: [] }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({ get: (_key: string, fallback: unknown) => fallback }),
+      testValue<never>(profileDatabase())
+    );
+
+    await provider.initialize("/linked");
+
+    expect(openWorkspace.mock.calls).toStrictEqual([["/linked"]]);
+    expect(Object.hasOwn(workspace, "color")).toBeTruthy();
+    vscode.assignWorkspaceColors = true;
+  });
+
+  test("closes the owning VS Code window when another Instance closes its Workspace", async () => {
+    let databaseChanged: (() => void) | undefined;
+    let workspaces: { path: string; status: "active" | "inactive" }[] = [
+      { path: "/workspace", status: "active" },
+    ];
+    let currentWorkspace: string | undefined = "/workspace";
+    const snapshot = projectsFixture({
+      projects: [],
+      ungrouped: [
+        {
+          ahead: 0,
+          behind: 0,
+          changes: 0,
+          current: true,
+          linked: false,
+          name: "workspace",
+          path: "/workspace",
+        },
+      ],
+    });
+    const closeWorkspace = vi.fn<() => Promise<void>>(async () => {
+      await Promise.resolve();
+      currentWorkspace = undefined;
+    });
+    const provider = new MischiefView(
+      testValue<never>({
+        open: async () => {
+          await Promise.resolve();
+          return snapshot;
+        },
+        refresh: async () => {
+          await Promise.resolve();
+          return workspaces.some((workspace) => workspace.status === "active")
+            ? snapshot
+            : projectsFixture({ projects: [], ungrouped: [] });
+        },
+      }),
+      testValue<never>({
+        closeWorkspace,
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({
+          ...(isNonEmpty(currentWorkspace)
+            ? { workspace: currentWorkspace }
+            : {}),
+          threads: [],
+        }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({
+        get: (_key: string, fallback: unknown) => fallback,
+      }),
+      testValue<never>({
+        onChange: (listener: () => void) => {
+          databaseChanged = listener;
+        },
+        snapshot: () => ({ workspaces }),
+      })
+    );
+    await provider.initialize("/workspace");
+    vscode.executeCommand.mockClear();
+    workspaces = [{ path: "/workspace", status: "inactive" }];
+    databaseChanged?.();
+
+    await vi.waitFor(() => {
+      expect({
+        closes: closeWorkspace.mock.calls,
+        commands: vscode.executeCommand.mock.calls,
+      }).toStrictEqual({
+        closes: [[]],
+        commands: [["workbench.action.closeWindow"]],
+      });
+    });
+  });
+
+  test("posts command controls to the Navigator", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     const provider = new MischiefView(
       testValue<never>({}),
@@ -1853,14 +2222,24 @@ describe("view provider", () => {
 
     provider.setAllExpanded(true);
     provider.setAllExpanded(false);
+    provider.toggleProjectsMenu();
+    provider.configurationChanged();
+    expect(postMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: "state" })
+    );
 
-    expect(postMessage.mock.calls).toStrictEqual([
+    expect(
+      postMessage.mock.calls.filter(
+        ([message]) => testValue<{ type: string }>(message).type !== "state"
+      )
+    ).toStrictEqual([
       [{ expanded: true, type: "setAllExpanded" }],
       [{ expanded: false, type: "setAllExpanded" }],
+      [{ type: "toggleProjectsMenu" }],
     ]);
   });
 
-  test("updates the native toggle after Navigator expansion changes", async () => {
+  test("routes webview action-menu choices to host actions", async () => {
     let receive: ((message: unknown) => void) | undefined;
     const provider = new MischiefView(
       testValue<never>({}),
@@ -1889,16 +2268,26 @@ describe("view provider", () => {
         },
       })
     );
-    vscode.executeCommand.mockClear();
+    const addWorkspace = vi.spyOn(provider, "addWorkspace").mockResolvedValue();
+    const refresh = vi.spyOn(provider, "refresh").mockResolvedValue();
+    const showSettings = vi
+      .spyOn(provider, "showSettings")
+      .mockImplementation(() => {});
 
-    receive?.({ expanded: true, type: "navigatorExpanded" });
-    receive?.({ expanded: false, type: "navigatorExpanded" });
+    receive?.({ type: "addWorkspace" });
+    receive?.({ type: "refresh" });
+    receive?.({ type: "showSettings" });
 
     await vi.waitFor(() => {
-      expect(vscode.executeCommand.mock.calls).toStrictEqual([
-        ["setContext", "mischief.navigatorAllExpanded", true],
-        ["setContext", "mischief.navigatorAllExpanded", false],
-      ]);
+      expect({
+        addWorkspace: addWorkspace.mock.calls,
+        refresh: refresh.mock.calls,
+        showSettings: showSettings.mock.calls,
+      }).toStrictEqual({
+        addWorkspace: [[]],
+        refresh: [[]],
+        showSettings: [[]],
+      });
     });
   });
 
@@ -1919,9 +2308,8 @@ describe("view provider", () => {
       testValue<never>({ fsPath: process.cwd() }),
       testValue<never>({}),
       testValue<never>(profileDatabase()),
-      // oxlint-disable-next-line unicorn/no-useless-undefined -- omit the setup slot before Agent settings
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- omit the setup slot before Agent manager
       undefined,
-      [],
       testValue<never>({
         availableAgents: () => [],
         install,
@@ -1970,11 +2358,80 @@ describe("view provider", () => {
           /* No setup for an installed Agent. */
         },
       }),
-      [],
       testValue<never>({ availableAgents: () => ["codex-acp"] })
     );
     await provider.newThread(true, "Read issue");
     expect(newThread.mock.calls).toStrictEqual([["codex-acp"]]);
+  });
+
+  test("forwards one full Agent snapshot and reads the latest snapshot for Settings", async () => {
+    const postMessage = vi.fn<(message: unknown) => void>();
+    const magpi: AgentStatus = {
+      id: "magpi-acp",
+      name: "MagPi",
+      state: "waiting",
+    };
+    const codex: AgentStatus = {
+      id: "codex-acp",
+      name: "Codex",
+      state: "missing",
+    };
+    let statuses = [magpi, codex];
+    const provider = new MischiefView(
+      testValue<never>({}),
+      testValue<never>({
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({ threads: [] }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase()),
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- omit the setup slot before Agent manager
+      undefined,
+      testValue<never>({ snapshot: () => statuses })
+    );
+    // Changes before the webview exists are read from the manager on open.
+    statuses = [magpi, { ...codex, state: "checking" }];
+    provider.forwardAgentStatuses(statuses);
+    await provider.resolveWebviewView(
+      testValue<never>({
+        onDidDispose: vi.fn<() => void>(),
+        webview: {
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => `webview:${uri.fsPath}`,
+          }),
+          cspSource: "webview-csp",
+          html: "",
+          onDidReceiveMessage: vi.fn<() => void>(),
+          options: {},
+          postMessage,
+        },
+      })
+    );
+    postMessage.mockClear();
+    provider.showSettings();
+    statuses = [magpi, { ...codex, state: "current" }];
+    provider.forwardAgentStatuses(statuses);
+    provider.showSettings();
+    expect(postMessage.mock.calls).toStrictEqual([
+      [
+        {
+          agents: [magpi, { ...codex, state: "checking" }],
+          assignWorkspaceColors: vscode.assignWorkspaceColors,
+          defaultAgent: "",
+          type: "showSettings",
+        },
+      ],
+      [{ agents: statuses, type: "agents" }],
+      [
+        {
+          agents: statuses,
+          assignWorkspaceColors: vscode.assignWorkspaceColors,
+          defaultAgent: "",
+          type: "showSettings",
+        },
+      ],
+    ]);
   });
 
   test("persists Workspace color assignment from Settings", async () => {

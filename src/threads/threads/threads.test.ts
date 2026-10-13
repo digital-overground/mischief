@@ -42,6 +42,7 @@ class FakeAgent {
   createCalls = 0;
   authenticatedMethods: string[] = [];
   loadCalls = 0;
+  loadGate?: Deferred;
   loadRequests: { sessionId: string; cwd: string }[] = [];
   initialConfigOptions: ThreadConfigOption[] = [];
   operations = {
@@ -59,6 +60,8 @@ class FakeAgent {
   richUpdates = false;
   completePlan = false;
   holdPrompts = false;
+  cancelCalls = 0;
+  cancelGate?: Deferred;
   permissionResponse?: unknown;
   elicitationResponse?: unknown;
   configChange?: {
@@ -128,6 +131,8 @@ class FakeAgent {
         this.createError = undefined;
       },
       cancel: async () => {
+        this.cancelCalls += 1;
+        await this.cancelGate?.promise;
         await Promise.resolve();
         for (const resolve of this.promptResolvers.splice(0)) {
           resolve({ stopReason: "cancelled" });
@@ -150,6 +155,9 @@ class FakeAgent {
       },
       dispose: () => {
         this.disposed = true;
+        for (const resolve of this.promptResolvers.splice(0)) {
+          resolve({ stopReason: "cancelled" });
+        }
       },
       forkMessage: async (sessionId, cwd, messageId) => {
         this.forkCalls.push({ cwd, messageId, sessionId });
@@ -169,6 +177,7 @@ class FakeAgent {
         await Promise.resolve();
         this.loadCalls += 1;
         this.loadRequests.push({ cwd, sessionId });
+        await this.loadGate?.promise;
         if (this.failLoad) {
           throw new Error("Load failed");
         }
@@ -435,6 +444,9 @@ describe("threads module", () => {
     const owner = new Threads(remoteDatabase, ownerAgent.factory);
     instances.push(owner);
     await owner.openWorkspace("/remote");
+    const ownerChanges = vi.fn<(change?: ThreadsChange) => void>();
+    owner.onChange(ownerChanges);
+    ownerAgent.loadGate = deferred();
 
     await expect(source.select(secondId)).resolves.toBe("/remote");
     await vi.waitFor(
@@ -443,16 +455,29 @@ describe("threads module", () => {
       },
       { timeout: 2000 }
     );
-    await vi.waitFor(
-      () => {
-        expect(ownerAgent.loadCalls).toBe(2);
-      },
-      { timeout: 2000 }
-    );
+    try {
+      await vi.waitFor(
+        () => {
+          expect(ownerAgent.loadCalls).toBe(2);
+          expect(ownerChanges).toHaveBeenCalledWith({
+            type: "remoteSelection",
+          });
+        },
+        { timeout: 2000 }
+      );
+    } finally {
+      ownerAgent.loadGate.resolve();
+    }
 
     expect(sourceAgent.loadCalls).toBe(0);
     expect(sourceAgent.createCalls).toBe(0);
     expect(ownerAgent.loadCalls).toBe(2);
+    expect(ownerChanges).toHaveBeenCalledWith({ type: "remoteSelection" });
+    ownerChanges.mockClear();
+    await source.select(secondId);
+    await vi.waitFor(() => {
+      expect(ownerChanges).toHaveBeenCalledWith({ type: "remoteSelection" });
+    });
     await remoteDatabase.dispose();
   });
 
@@ -550,6 +575,38 @@ describe("threads module", () => {
     await threads.prompt("Keep the name");
 
     expect(threads.snapshot().selected?.name).toBe("My Thread");
+  });
+
+  test("Workspace shutdown terminates the Agent without waiting for cancellation", async () => {
+    const agent = new FakeAgent();
+    agent.cancelGate = deferred();
+    agent.holdPrompts = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    const prompting = threads.prompt("Keep running");
+    await agent.firstPromptStarted;
+
+    const closing = threads.closeWorkspace();
+    const disposedBeforeCancelRelease = await vi
+      .waitFor(() => {
+        expect(agent.disposed).toBeTruthy();
+      })
+      .then(
+        () => true,
+        () => false
+      );
+    agent.cancelGate.resolve();
+    await Promise.all([closing, prompting]);
+
+    expect({
+      cancelCalls: agent.cancelCalls,
+      disposedBeforeCancelRelease,
+      indicator: threads.snapshot().threads[0]?.indicator,
+    }).toStrictEqual({
+      cancelCalls: 0,
+      disposedBeforeCancelRelease: true,
+      indicator: "idle",
+    });
   });
 
   test("closing a Workspace cancels its running Threads and hides them", async () => {
