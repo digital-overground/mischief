@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.1
+## 0.3.2
 
 - Replaced Project-grouped navigation with a current-Workspace view and an alphabetical Workspace menu.
 - Moved Workspace ordering and Project association into Projects; fixed concurrent Workspace imports.
