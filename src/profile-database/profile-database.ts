@@ -423,6 +423,8 @@ export class ProfileDatabase {
   private watchTimer?: ReturnType<typeof setTimeout>;
   private refreshing = false;
   private refreshPending = false;
+  // File scans and writes share one queue so stale scans cannot erase newer records.
+  private operationTail: Promise<void> = Promise.resolve();
   private selectionRecords = new Map<string, SelectionRecord>();
   private readonly selectionsDirectory: string;
   private threadRecords = new Map<string, ThreadRecord>();
@@ -530,8 +532,14 @@ export class ProfileDatabase {
     };
   }
 
-  // oxlint-disable-next-line complexity -- validates and routes each database change
   async apply(change: ProfileDatabaseChange): Promise<void> {
+    await this.serialize(async () => {
+      await this.applyChange(change);
+    });
+  }
+
+  // oxlint-disable-next-line complexity -- validates and routes each database change
+  private async applyChange(change: ProfileDatabaseChange): Promise<void> {
     if (change.type === "activateWorkspace") {
       if (!isWorkspaceLocation(change.workspace)) {
         throw new TypeError("Workspace is invalid");
@@ -616,6 +624,12 @@ export class ProfileDatabase {
   }
 
   async importPreviousThreads(value: unknown): Promise<void> {
+    await this.serialize(async () => {
+      await this.importPreviousThreadsChange(value);
+    });
+  }
+
+  private async importPreviousThreadsChange(value: unknown): Promise<void> {
     if (!isRecord(value) || !Array.isArray(value.threads)) {
       return;
     }
@@ -674,6 +688,22 @@ export class ProfileDatabase {
       } catch (error) {
         this.log(`Could not make Workspace inactive: ${errorMessage(error)}`);
       }
+    }
+  }
+
+  private async serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.operationTail;
+    let resolver: (() => void) | undefined;
+    // oxlint-disable-next-line promise/avoid-new
+    const next = new Promise<void>((resolve) => {
+      resolver = resolve;
+    });
+    this.operationTail = next;
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      resolver?.();
     }
   }
 
@@ -773,7 +803,9 @@ export class ProfileDatabase {
       do {
         this.refreshPending = false;
         // oxlint-disable-next-line no-await-in-loop -- coalesce notifications received during a scan
-        await this.readAndUpdate();
+        await this.serialize(async () => {
+          await this.readAndUpdate();
+        });
       } while (this.refreshPending);
     } finally {
       this.refreshing = false;
