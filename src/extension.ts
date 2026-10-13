@@ -254,14 +254,11 @@ export const activate = async (
     context.globalState,
     database,
     softwareSetup(manager, context.globalState),
-    manager.snapshot(),
     manager
   );
   manager.onChange((statuses) => {
     threads.setPreferredAgent(configuredAvailableAgent(manager));
-    for (const status of statuses) {
-      view.setAgentStatus(status);
-    }
+    view.forwardAgentStatuses(statuses);
   });
   context.subscriptions.push(output);
   registerMischiefView(context, view);

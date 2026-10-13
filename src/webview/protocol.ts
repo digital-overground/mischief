@@ -1,3 +1,4 @@
+import type { AgentStatus } from "../agents/manager";
 import type { AgentId } from "../agents/update";
 import type { ProjectsSnapshot } from "../projects/projects";
 import type { PromptImage } from "../threads/model";
@@ -8,24 +9,6 @@ import type {
   ThreadsSnapshot,
   TranscriptItem,
 } from "../threads/threads/models";
-
-export interface AgentSetting {
-  id: string;
-  name: string;
-  installedVersion?: string;
-  latestVersion?: string;
-  managed?: boolean;
-  error?: string;
-  state:
-    | "waiting"
-    | "checking"
-    | "installing"
-    | "updateAvailable"
-    | "current"
-    | "newer"
-    | "unknown"
-    | "missing";
-}
 
 export interface RenderedTranscriptItem extends TranscriptItem {
   html?: string;
@@ -85,9 +68,9 @@ export type HostToWebviewMessage =
       type: "showSettings";
       assignWorkspaceColors: boolean;
       defaultAgent: string;
-      agents: AgentSetting[];
+      agents: AgentStatus[];
     }
-  | { type: "agents"; agents: AgentSetting[] };
+  | { type: "agents"; agents: AgentStatus[] };
 
 export type WebviewToHostMessage =
   | {

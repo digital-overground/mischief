@@ -6,7 +6,7 @@ import MarkdownIt from "markdown-it";
 import * as vscode from "vscode";
 
 import { requestAgentInstall } from "./agents/install";
-import type { AgentManager } from "./agents/manager";
+import type { AgentManager, AgentStatus } from "./agents/manager";
 import { AGENTS, AGENT_IDS, isAgentId } from "./agents/update";
 import type { AgentId } from "./agents/update";
 import { isDefined, isNonEmpty, isNonZero, isRecord } from "./present";
@@ -36,11 +36,7 @@ import type {
 } from "./threads/threads/models";
 import type { Threads } from "./threads/threads/threads";
 import { webviewHtml } from "./webview";
-import type {
-  AgentSetting,
-  HostToWebviewMessage,
-  SetupStep,
-} from "./webview/protocol";
+import type { HostToWebviewMessage, SetupStep } from "./webview/protocol";
 import {
   assignWorkspaceColors,
   ensureWorkspaceColors,
@@ -291,7 +287,6 @@ export class MischiefView implements vscode.WebviewViewProvider {
   private readonly projects: Projects;
   private readonly storage: Pick<vscode.Memento, "get" | "update">;
   private readonly threads: Threads;
-  private agents: AgentSetting[];
   private readonly agentManager?: AgentManager;
 
   constructor(
@@ -301,7 +296,6 @@ export class MischiefView implements vscode.WebviewViewProvider {
     storage: Pick<vscode.Memento, "get" | "update">,
     database: ProfileDatabase,
     setup?: ThreadSetup,
-    agents: AgentSetting[] = [],
     agentManager?: AgentManager
   ) {
     this.projects = projects;
@@ -314,7 +308,6 @@ export class MischiefView implements vscode.WebviewViewProvider {
       this.databaseChanged();
     });
     this.setup = setup;
-    this.agents = agents;
     this.agentManager = agentManager;
     threads.onChange((change) => {
       if (change?.type === "transcript") {
@@ -751,20 +744,17 @@ export class MischiefView implements vscode.WebviewViewProvider {
       .getConfiguration("mischief")
       .get<unknown>("defaultAgent");
     void postMessage?.({
-      agents: this.agents,
+      agents: this.agentManager?.snapshot() ?? [],
       assignWorkspaceColors: workspaceColorsEnabled(),
       defaultAgent: isAgentId(defaultAgent) ? defaultAgent : "",
       type: "showSettings",
     } satisfies HostToWebviewMessage);
   }
 
-  setAgentStatus(status: AgentSetting): void {
-    this.agents = this.agents.map((agent) =>
-      agent.id === status.id ? status : agent
-    );
+  forwardAgentStatuses(statuses: AgentStatus[]): void {
     const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
     void postMessage?.({
-      agents: this.agents,
+      agents: statuses,
       type: "agents",
     } satisfies HostToWebviewMessage);
   }

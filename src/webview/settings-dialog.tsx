@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import type { AgentStatus } from "../agents/manager";
 import { isAgentId } from "../agents/update";
 import type { AgentId } from "../agents/update";
 import { AgentIcon } from "./agent-icon";
 import { postMessage } from "./bridge";
 import { SvgIcon } from "./icon";
-import type { AgentSetting, HostToWebviewMessage } from "./protocol";
+import type { HostToWebviewMessage } from "./protocol";
 
-const agentStatus: Record<AgentSetting["state"], string> = {
+const agentStatus: Record<AgentStatus["state"], string> = {
   checking: "Checking for updates…",
   current: "Up to date",
   installing: "Installing…",
@@ -24,7 +25,7 @@ const DefaultAgentControl = ({
   value,
   onChange,
 }: {
-  agents: AgentSetting[];
+  agents: AgentStatus[];
   icons?: Partial<Record<AgentId, string>>;
   value: string;
   onChange: (value: string) => void;
@@ -175,7 +176,7 @@ export const SettingsDialog = ({
 }): React.JSX.Element => {
   const [assignWorkspaceColors, setAssignWorkspaceColors] = useState(true);
   const [defaultAgent, setDefaultAgent] = useState("");
-  const [agents, setAgents] = useState<AgentSetting[]>([]);
+  const [agents, setAgents] = useState<AgentStatus[]>([]);
   const dialog = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {

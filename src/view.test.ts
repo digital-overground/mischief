@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 
 import { describe, expect, test, vi } from "vitest";
 
+import type { AgentStatus } from "./agents/manager";
 import { exec } from "./exec";
 import { isNonEmpty } from "./present";
 import { projectsFixture } from "./projects/projects-fixture";
@@ -1389,7 +1390,6 @@ describe("view provider", () => {
         },
         prompt: () => ({ id: "agents", message: "Choose an Agent" }),
       },
-      [],
       testValue<never>({ availableAgents: () => available })
     );
     await provider.newThread(true, "Read issue");
@@ -2308,9 +2308,8 @@ describe("view provider", () => {
       testValue<never>({ fsPath: process.cwd() }),
       testValue<never>({}),
       testValue<never>(profileDatabase()),
-      // oxlint-disable-next-line unicorn/no-useless-undefined -- omit the setup slot before Agent settings
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- omit the setup slot before Agent manager
       undefined,
-      [],
       testValue<never>({
         availableAgents: () => [],
         install,
@@ -2359,11 +2358,80 @@ describe("view provider", () => {
           /* No setup for an installed Agent. */
         },
       }),
-      [],
       testValue<never>({ availableAgents: () => ["codex-acp"] })
     );
     await provider.newThread(true, "Read issue");
     expect(newThread.mock.calls).toStrictEqual([["codex-acp"]]);
+  });
+
+  test("forwards one full Agent snapshot and reads the latest snapshot for Settings", async () => {
+    const postMessage = vi.fn<(message: unknown) => void>();
+    const magpi: AgentStatus = {
+      id: "magpi-acp",
+      name: "MagPi",
+      state: "waiting",
+    };
+    const codex: AgentStatus = {
+      id: "codex-acp",
+      name: "Codex",
+      state: "missing",
+    };
+    let statuses = [magpi, codex];
+    const provider = new MischiefView(
+      testValue<never>({}),
+      testValue<never>({
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({ threads: [] }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({}),
+      testValue<never>(profileDatabase()),
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- omit the setup slot before Agent manager
+      undefined,
+      testValue<never>({ snapshot: () => statuses })
+    );
+    // Changes before the webview exists are read from the manager on open.
+    statuses = [magpi, { ...codex, state: "checking" }];
+    provider.forwardAgentStatuses(statuses);
+    await provider.resolveWebviewView(
+      testValue<never>({
+        onDidDispose: vi.fn<() => void>(),
+        webview: {
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => `webview:${uri.fsPath}`,
+          }),
+          cspSource: "webview-csp",
+          html: "",
+          onDidReceiveMessage: vi.fn<() => void>(),
+          options: {},
+          postMessage,
+        },
+      })
+    );
+    postMessage.mockClear();
+    provider.showSettings();
+    statuses = [magpi, { ...codex, state: "current" }];
+    provider.forwardAgentStatuses(statuses);
+    provider.showSettings();
+    expect(postMessage.mock.calls).toStrictEqual([
+      [
+        {
+          agents: [magpi, { ...codex, state: "checking" }],
+          assignWorkspaceColors: vscode.assignWorkspaceColors,
+          defaultAgent: "",
+          type: "showSettings",
+        },
+      ],
+      [{ agents: statuses, type: "agents" }],
+      [
+        {
+          agents: statuses,
+          assignWorkspaceColors: vscode.assignWorkspaceColors,
+          defaultAgent: "",
+          type: "showSettings",
+        },
+      ],
+    ]);
   });
 
   test("persists Workspace color assignment from Settings", async () => {
