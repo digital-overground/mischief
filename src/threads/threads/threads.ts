@@ -671,12 +671,18 @@ export class Threads {
     }
     if (record.retryText !== undefined) {
       const runtime = this.runtimes.get(record.id);
+      const images = runtime?.retryImages;
       runtime?.connection.dispose();
-      if (!isNonEmpty(record.sessionId) && runtime) {
-        runtime.items = [];
-        this.runtimes.delete(record.id);
+      this.runtimes.delete(record.id);
+      if (hasSessionId(record)) {
+        const resumed = this.runtime(record);
+        resumed.retryImages = images;
+        await this.reload(record, resumed);
+        if (resumed.status === "error") {
+          return;
+        }
       }
-      await this.prompt(record.retryText, runtime?.retryImages);
+      await this.prompt(record.retryText, images);
       return;
     }
     if (!isNonEmpty(record.sessionId)) {

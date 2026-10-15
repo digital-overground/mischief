@@ -1352,6 +1352,82 @@ describe("threads module", () => {
     }).toStrictEqual({ methods: ["chatgpt"], status: "idle" });
   });
 
+  test("Retry reloads an existing session before resending a failed prompt", async () => {
+    const agent = new FakeAgent();
+    agent.replayOnLoad = true;
+    let failPrompt = true;
+    let sent = 0;
+    const factory: AgentConnectionFactory = (handlers, agentId) => {
+      const connection = agent.factory(handlers, agentId);
+      let ready = false;
+      return {
+        ...connection,
+        create: async (cwd) => {
+          const setup = await connection.create(cwd);
+          ready = true;
+          return setup;
+        },
+        dispose: () => {
+          ready = false;
+          connection.dispose();
+        },
+        load: async (sessionId, cwd) => {
+          const setup = await connection.load(sessionId, cwd);
+          ready = true;
+          return setup;
+        },
+        prompt: async (sessionId, text, images) => {
+          if (!ready) {
+            throw new Error("Session not loaded");
+          }
+          sent += 1;
+          if (text === "Retry me" && failPrompt) {
+            failPrompt = false;
+            throw new Error("Agent exited");
+          }
+          return await connection.prompt(sessionId, text, images);
+        },
+      };
+    };
+    const threads = createThreads(factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Start");
+    const images = [{ data: "c2NyZWVuc2hvdA==", mimeType: "image/png" }];
+    await threads.prompt("Retry me", images);
+    expect(threads.snapshot().selected?.error).toBe("Agent exited");
+
+    agent.failLoad = true;
+    await threads.retry();
+    expect({ error: threads.snapshot().selected?.error, sent }).toStrictEqual({
+      error: "Load failed",
+      sent: 2,
+    });
+
+    agent.failLoad = false;
+    await threads.retry();
+    expect({
+      images: agent.promptImages,
+      loads: agent.loadRequests,
+      sent,
+    }).toStrictEqual({
+      images,
+      loads: [
+        { cwd: "/workspace", sessionId: "session-1" },
+        { cwd: "/workspace", sessionId: "session-1" },
+      ],
+      sent: 3,
+    });
+    expect(threads.snapshot().selected).toMatchObject({
+      items: [
+        { kind: "user", text: "Restore me" },
+        { kind: "assistant", text: "Restored." },
+        { kind: "user", text: "Retry me" },
+        { kind: "assistant", text: "Done." },
+      ],
+      status: "idle",
+    });
+  });
+
   test("a missing Agent stays visible and can be installed before retry", async () => {
     const claude = new FakeAgent();
     let installed = false;
