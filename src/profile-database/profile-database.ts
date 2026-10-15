@@ -7,7 +7,10 @@ import path from "node:path";
 import { LEGACY_THREAD_AGENT, isAgentId } from "../agents/update";
 import type { AgentId } from "../agents/update";
 import { isNonEmpty, isRecord } from "../present";
+import type { PromptImage } from "../threads/model";
 
+const MAX_RETRY_IMAGE_BYTES = 20_000_000;
+const MAX_RETRY_RECORD_BYTES = 21_000_000;
 const MAX_PATH_LENGTH = 32_768;
 const MAX_RECORD_BYTES = 8 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 1_000_000;
@@ -36,6 +39,7 @@ export interface DatabaseThread {
   readonly status: "idle" | "running" | "waiting" | "error";
   readonly error?: string;
   readonly retryText?: string;
+  readonly retryHasImages?: boolean;
   readonly manualName?: boolean;
   readonly unread?: boolean;
   readonly usage?: { used: number; size: number };
@@ -137,6 +141,28 @@ const isWorkspaceLocation = (value: unknown): value is WorkspaceLocation =>
   isAbsolutePath(value.path) &&
   (value.projectRoot === undefined || isAbsolutePath(value.projectRoot));
 
+const isRetryImages = (value: unknown): value is PromptImage[] => {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 10) {
+    return false;
+  }
+  let size = 0;
+  return value.every((image: unknown) => {
+    if (
+      !isRecord(image) ||
+      typeof image.data !== "string" ||
+      typeof image.mimeType !== "string" ||
+      !/^[A-Za-z\d+/]*={0,2}$/u.test(image.data) ||
+      !["image/gif", "image/jpeg", "image/png", "image/webp"].includes(
+        image.mimeType
+      )
+    ) {
+      return false;
+    }
+    size += image.data.length;
+    return size <= MAX_RETRY_IMAGE_BYTES;
+  });
+};
+
 const isUsage = (
   value: unknown
 ): value is NonNullable<DatabaseThread["usage"]> =>
@@ -166,6 +192,8 @@ const isDatabaseThread = (value: unknown): value is DatabaseThread =>
   ["idle", "running", "waiting", "error"].includes(String(value.status)) &&
   (value.error === undefined || isBoundedString(value.error)) &&
   (value.retryText === undefined || isBoundedString(value.retryText)) &&
+  (value.retryHasImages === undefined ||
+    typeof value.retryHasImages === "boolean") &&
   (value.manualName === undefined || typeof value.manualName === "boolean") &&
   (value.unread === undefined || typeof value.unread === "boolean") &&
   (value.usage === undefined || isUsage(value.usage));
@@ -186,6 +214,7 @@ const copyThread = (thread: DatabaseThread): DatabaseThread => ({
   ...(thread.manualName === undefined ? {} : { manualName: thread.manualName }),
   name: thread.name,
   ...(thread.retryText === undefined ? {} : { retryText: thread.retryText }),
+  ...(thread.retryHasImages === true ? { retryHasImages: true } : {}),
   ...(thread.sessionId === undefined ? {} : { sessionId: thread.sessionId }),
   status: thread.status,
   ...(thread.unread === undefined ? {} : { unread: thread.unread }),
@@ -320,12 +349,15 @@ const parseSelectionRecord = (source: string): SelectionRecord | undefined => {
   };
 };
 
-const readBounded = async (filename: string): Promise<string> => {
+const readBounded = async (
+  filename: string,
+  maximum = MAX_RECORD_BYTES
+): Promise<string> => {
   const handle = await open(filename, "r");
   try {
     const stats = await handle.stat();
-    if (stats.size > MAX_RECORD_BYTES) {
-      throw new Error("record exceeds 8 MiB");
+    if (stats.size > maximum) {
+      throw new Error("record exceeds size limit");
     }
     return await handle.readFile({ encoding: "utf-8" });
   } finally {
@@ -377,6 +409,7 @@ export class ProfileDatabase {
   private operationTail: Promise<void> = Promise.resolve();
   private selectionRecords = new Map<string, SelectionRecord>();
   private readonly selectionsDirectory: string;
+  private readonly retryImagesDirectory: string;
   private threadRecords = new Map<string, ThreadRecord>();
   private readonly threadsDirectory: string;
   private workspaceRecords = new Map<string, WorkspaceRecord>();
@@ -389,7 +422,8 @@ export class ProfileDatabase {
     log: (message: string) => void,
     workspacesDirectory: string,
     threadsDirectory: string,
-    selectionsDirectory: string
+    selectionsDirectory: string,
+    retryImagesDirectory: string
   ) {
     this.currentWorkspace = currentWorkspace;
     this.instanceId = instanceId;
@@ -397,6 +431,7 @@ export class ProfileDatabase {
     this.workspacesDirectory = workspacesDirectory;
     this.threadsDirectory = threadsDirectory;
     this.selectionsDirectory = selectionsDirectory;
+    this.retryImagesDirectory = retryImagesDirectory;
   }
 
   static async open(options: ProfileDatabaseOptions): Promise<ProfileDatabase> {
@@ -422,10 +457,14 @@ export class ProfileDatabase {
     const workspacesDirectory = path.join(databaseDirectory, "workspaces");
     const threadsDirectory = path.join(databaseDirectory, "threads");
     const selectionsDirectory = path.join(databaseDirectory, "selections");
+    const retryImagesDirectory = path.join(databaseDirectory, "retry-images");
     await Promise.all(
-      [workspacesDirectory, threadsDirectory, selectionsDirectory].map(
-        async (directory) => await mkdir(directory, { recursive: true })
-      )
+      [
+        workspacesDirectory,
+        threadsDirectory,
+        selectionsDirectory,
+        retryImagesDirectory,
+      ].map(async (directory) => await mkdir(directory, { recursive: true }))
     );
     const database = new ProfileDatabase(
       options.currentWorkspace,
@@ -433,7 +472,8 @@ export class ProfileDatabase {
       options.log,
       workspacesDirectory,
       threadsDirectory,
-      selectionsDirectory
+      selectionsDirectory,
+      retryImagesDirectory
     );
     await database.scrubStoredAuthentication();
     await database.refresh();
@@ -474,6 +514,53 @@ export class ProfileDatabase {
 
   snapshot(): ProfileDatabaseSnapshot {
     return this.currentSnapshot;
+  }
+
+  async readRetryImages(workspace: string, id: string): Promise<PromptImage[]> {
+    this.requireRetryOwner(workspace, id);
+    let source: string;
+    try {
+      source = await readBounded(
+        this.retryFilename(id),
+        MAX_RETRY_RECORD_BYTES
+      );
+    } catch (error) {
+      if (isRecord(error) && error.code === "ENOENT") {
+        throw new Error(
+          "Saved retry images are missing; reattach them before retrying",
+          {
+            cause: error,
+          }
+        );
+      }
+      throw error;
+    }
+    const images = parseJson(source);
+    if (!isRetryImages(images)) {
+      throw new Error(
+        "Saved retry images are invalid; reattach them before retrying"
+      );
+    }
+    return images;
+  }
+
+  async saveRetryImages(
+    workspace: string,
+    id: string,
+    images: PromptImage[]
+  ): Promise<void> {
+    await this.serialize(async () => {
+      this.requireRetryOwner(workspace, id);
+      const filename = this.retryFilename(id);
+      if (images.length === 0) {
+        await rm(filename, { force: true });
+      } else {
+        if (!isRetryImages(images)) {
+          throw new TypeError("Invalid retry images");
+        }
+        await this.replace(filename, images);
+      }
+    });
   }
 
   onChange(listener: () => void): () => void {
@@ -547,6 +634,7 @@ export class ProfileDatabase {
       });
       this.threadRecords.delete(change.id);
       this.updateSnapshot();
+      await rm(this.retryFilename(change.id), { force: true });
       return;
     }
 
@@ -664,10 +752,27 @@ export class ProfileDatabase {
     }
   }
 
+  private requireRetryOwner(workspace: string, id: string): void {
+    this.requireThreadOwner(workspace);
+    if (
+      !UUID_PATTERN.test(id) ||
+      this.threadRecords.get(id)?.workspace !== workspace
+    ) {
+      throw new Error("Unknown Thread for retry images");
+    }
+  }
+
+  private retryFilename(id: string): string {
+    return path.join(this.retryImagesDirectory, `${id}.json`);
+  }
+
   private async replace(filename: string, value: unknown): Promise<void> {
     const temporary = `${filename}.${this.instanceId}.${randomUUID()}.tmp`;
     try {
-      await writeFile(temporary, `${JSON.stringify(value)}\n`, "utf-8");
+      await writeFile(temporary, `${JSON.stringify(value)}\n`, {
+        encoding: "utf-8",
+        mode: 0o600,
+      });
       await rename(temporary, filename);
     } catch (error) {
       await rm(temporary, { force: true }).catch(() => null);
