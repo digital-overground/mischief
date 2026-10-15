@@ -91,7 +91,6 @@ interface ThreadRecord {
   status: "idle" | "running" | "waiting" | "error";
   error?: string;
   retryText?: string;
-  authentication?: TerminalAuthentication;
   manualName?: boolean;
   unread?: boolean;
   usage?: ThreadUsage;
@@ -101,6 +100,7 @@ interface ThreadRecord {
 
 - Only the Instance whose current Workspace equals `workspace` may write the record.
 - Removing a Thread removes it from Mischief without deleting ACP/Pi history.
+- Authentication commands and environment variables stay in memory and are requested again after restart; old Thread files and the legacy aggregate are stripped of authentication on activation.
 - Transcript items, prompt queues, drafts, commands, and live ACP connections stay in memory or ACP storage.
 
 ### Selection record
@@ -182,7 +182,7 @@ Migration reads the old aggregate values once after the new database opens succe
 - Existing Git roots are discovered into active Git Workspace records.
 - Existing untracked folders become active untracked Workspace records.
 - Existing Thread registrations and per-Workspace selections become Thread and selection records.
-- Old values remain untouched for rollback.
+- Old values remain available for rollback, except authentication commands and environment variables, which are stripped on activation.
 - A version marker is written only after the import succeeds.
 - Existing `profile-db-v1` records always win over old values.
 

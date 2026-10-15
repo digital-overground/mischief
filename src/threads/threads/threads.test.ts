@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -666,12 +666,13 @@ describe("threads module", () => {
     });
   });
 
-  test("authentication failures expose the Agent terminal login", async () => {
+  test("keeps Agent authentication in memory and re-requests it after restart", async () => {
     const agent = new FakeAgent();
     agent.createError = Object.assign(new Error("Authentication required"), {
       authentication: {
         args: ["/magpi/index.js", "--terminal-login"],
         command: "node",
+        env: { TOKEN: "secret" },
         label: "Launch Pi",
       },
     });
@@ -684,9 +685,26 @@ describe("threads module", () => {
       authentication: {
         args: ["/magpi/index.js", "--terminal-login"],
         command: "node",
+        env: { TOKEN: "secret" },
         label: "Launch Pi",
       },
       status: "error",
+    });
+    expect(database.snapshot().threads[0]).not.toHaveProperty("authentication");
+    const filename = path.join(
+      profileDirectory,
+      "profile-db-v1",
+      "threads",
+      `${threads.snapshot().selected?.id}.json`
+    );
+    await expect(readFile(filename, "utf-8")).resolves.not.toContain("secret");
+
+    const restored = createThreads(agent.factory);
+    await restored.openWorkspace("/workspace");
+    expect(restored.snapshot().selected?.authentication).toBeUndefined();
+    await restored.retry();
+    expect(restored.snapshot().selected?.authentication).toMatchObject({
+      env: { TOKEN: "secret" },
     });
   });
 

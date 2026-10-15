@@ -36,17 +36,6 @@ export interface DatabaseThread {
   readonly status: "idle" | "running" | "waiting" | "error";
   readonly error?: string;
   readonly retryText?: string;
-  readonly authentication?:
-    | {
-        command: string;
-        args: string[];
-        env?: Record<string, string>;
-        label: string;
-      }
-    | {
-        methodId: string;
-        label: string;
-      };
   readonly manualName?: boolean;
   readonly unread?: boolean;
   readonly usage?: { used: number; size: number };
@@ -148,40 +137,6 @@ const isWorkspaceLocation = (value: unknown): value is WorkspaceLocation =>
   isAbsolutePath(value.path) &&
   (value.projectRoot === undefined || isAbsolutePath(value.projectRoot));
 
-const isAuthentication = (
-  value: unknown
-): value is NonNullable<DatabaseThread["authentication"]> => {
-  if (
-    !isRecord(value) ||
-    !isBoundedString(value.label, 200) ||
-    value.label.length === 0
-  ) {
-    return false;
-  }
-  if (value.methodId !== undefined) {
-    return (
-      isBoundedString(value.methodId, 200) &&
-      value.methodId.length > 0 &&
-      value.command === undefined
-    );
-  }
-  return (
-    isBoundedString(value.command, MAX_PATH_LENGTH) &&
-    value.command.length > 0 &&
-    Array.isArray(value.args) &&
-    value.args.length <= 100 &&
-    value.args.every((argument) =>
-      isBoundedString(argument, MAX_PATH_LENGTH)
-    ) &&
-    (value.env === undefined ||
-      (isRecord(value.env) &&
-        Object.entries(value.env).every(
-          ([key, candidate]) =>
-            key.length <= 1000 && isBoundedString(candidate, MAX_PATH_LENGTH)
-        )))
-  );
-};
-
 const isUsage = (
   value: unknown
 ): value is NonNullable<DatabaseThread["usage"]> =>
@@ -211,8 +166,6 @@ const isDatabaseThread = (value: unknown): value is DatabaseThread =>
   ["idle", "running", "waiting", "error"].includes(String(value.status)) &&
   (value.error === undefined || isBoundedString(value.error)) &&
   (value.retryText === undefined || isBoundedString(value.retryText)) &&
-  (value.authentication === undefined ||
-    isAuthentication(value.authentication)) &&
   (value.manualName === undefined || typeof value.manualName === "boolean") &&
   (value.unread === undefined || typeof value.unread === "boolean") &&
   (value.usage === undefined || isUsage(value.usage));
@@ -227,24 +180,6 @@ const copyWorkspace = (workspace: DatabaseWorkspace): DatabaseWorkspace => ({
 
 const copyThread = (thread: DatabaseThread): DatabaseThread => ({
   agentId: thread.agentId ?? LEGACY_THREAD_AGENT,
-  ...(thread.authentication
-    ? {
-        authentication:
-          "methodId" in thread.authentication
-            ? {
-                label: thread.authentication.label,
-                methodId: thread.authentication.methodId,
-              }
-            : {
-                args: [...thread.authentication.args],
-                command: thread.authentication.command,
-                ...(thread.authentication.env
-                  ? { env: { ...thread.authentication.env } }
-                  : {}),
-                label: thread.authentication.label,
-              },
-      }
-    : {}),
   createdAt: thread.createdAt,
   ...(thread.error === undefined ? {} : { error: thread.error }),
   id: thread.id,
@@ -273,6 +208,30 @@ const parseJson = (source: string): unknown => {
   } catch {
     return undefined;
   }
+};
+
+export const stripLegacyThreadAuthentication = (value: unknown): unknown => {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.threads) ||
+    !value.threads.some(
+      (thread: unknown) =>
+        isRecord(thread) && Object.hasOwn(thread, "authentication")
+    )
+  ) {
+    return value;
+  }
+  return {
+    ...value,
+    threads: value.threads.map((entry: unknown) => {
+      if (!isRecord(entry) || !Object.hasOwn(entry, "authentication")) {
+        return entry;
+      }
+      const thread = { ...entry };
+      delete thread.authentication;
+      return thread;
+    }),
+  };
 };
 
 const parseWorkspaceRecord = (source: string): WorkspaceRecord | undefined => {
@@ -398,15 +357,6 @@ const pathKey = (value: string): string =>
 
 const freezeThread = (thread: DatabaseThread): DatabaseThread => {
   const copy = copyThread(thread);
-  if (copy.authentication) {
-    if ("command" in copy.authentication) {
-      Object.freeze(copy.authentication.args);
-      if (copy.authentication.env) {
-        Object.freeze(copy.authentication.env);
-      }
-    }
-    Object.freeze(copy.authentication);
-  }
   if (copy.usage) {
     Object.freeze(copy.usage);
   }
@@ -485,6 +435,7 @@ export class ProfileDatabase {
       threadsDirectory,
       selectionsDirectory
     );
+    await database.scrubStoredAuthentication();
     await database.refresh();
     for (const directory of [
       workspacesDirectory,
@@ -736,6 +687,33 @@ export class ProfileDatabase {
     );
     this.workspaceRecords.set(record.path, record);
     this.updateSnapshot();
+  }
+
+  private async scrubStoredAuthentication(): Promise<void> {
+    const entries = await readdir(this.threadsDirectory, {
+      withFileTypes: true,
+    });
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) {
+        continue;
+      }
+      const filename = path.join(this.threadsDirectory, entry.name);
+      let record: unknown;
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- clean each old record before loading it
+        record = parseJson(await readBounded(filename));
+      } catch (error) {
+        this.log(
+          `Could not inspect Thread record ${filename}: ${errorMessage(error)}`
+        );
+        continue;
+      }
+      if (isRecord(record) && Object.hasOwn(record, "authentication")) {
+        delete record.authentication;
+        // oxlint-disable-next-line no-await-in-loop -- preserve each record if a later cleanup fails
+        await this.replace(filename, record);
+      }
+    }
   }
 
   private async putThread(thread: DatabaseThread): Promise<void> {

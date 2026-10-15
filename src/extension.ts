@@ -7,7 +7,10 @@ import { AgentManager } from "./agents/manager";
 import { AGENTS, AGENT_IDS, isAgentId } from "./agents/update";
 import type { AgentId } from "./agents/update";
 import { isNonEmpty } from "./present";
-import { ProfileDatabase } from "./profile-database/profile-database";
+import {
+  ProfileDatabase,
+  stripLegacyThreadAuthentication,
+} from "./profile-database/profile-database";
 import { locateWorkspace, Projects } from "./projects/projects";
 import {
   addOnInstallCommand,
@@ -190,11 +193,14 @@ export const activate = async (
     );
     await context.globalState.update(PROJECTS_VERSION_KEY, 1);
   }
+  const previousThreads = context.globalState.get<unknown>(THREADS_KEY);
   if (context.globalState.get<number>(THREADS_VERSION_KEY, 0) < 1) {
-    await database.importPreviousThreads(
-      context.globalState.get<unknown>(THREADS_KEY)
-    );
+    await database.importPreviousThreads(previousThreads);
     await context.globalState.update(THREADS_VERSION_KEY, 1);
+  }
+  const safeThreads = stripLegacyThreadAuthentication(previousThreads);
+  if (safeThreads !== previousThreads) {
+    await context.globalState.update(THREADS_KEY, safeThreads);
   }
   const manager = new AgentManager(
     context.globalStorageUri.fsPath,

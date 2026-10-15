@@ -1510,20 +1510,6 @@ export class Threads {
     return {
       ...record,
       agentId: isAgentId(record.agentId) ? record.agentId : LEGACY_THREAD_AGENT,
-      ...(record.authentication
-        ? {
-            authentication:
-              "methodId" in record.authentication
-                ? { ...record.authentication }
-                : {
-                    ...record.authentication,
-                    args: [...record.authentication.args],
-                    ...(record.authentication.env
-                      ? { env: { ...record.authentication.env } }
-                      : {}),
-                  },
-          }
-        : {}),
       ...(record.usage ? { usage: { ...record.usage } } : {}),
     };
   }
