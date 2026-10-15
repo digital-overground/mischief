@@ -12,7 +12,7 @@ In VS Code, open **Extensions**, search for **Mischief**, and select **Install**
 
 Install these on the machine where the VS Code extension host runs:
 
-- [VS Code desktop](https://code.visualstudio.com/) 1.85 or newer.
+- [VS Code desktop](https://code.visualstudio.com/) 1.90 or newer.
 - [Node.js](https://nodejs.org/) 22.19 or newer. `npm` is included with Node.js.
 - Agent credentials or a configured model provider for the Agent you choose.
 
