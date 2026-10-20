@@ -642,6 +642,7 @@ describe("view provider", () => {
       })
     );
 
+    vscode.showQuickPick.mockResolvedValueOnce("GitHub");
     receive?.({ path: "/project", type: "openIssues" });
     await vi.waitFor(() => {
       expect({
@@ -916,7 +917,7 @@ describe("view provider", () => {
         { label: string; description?: string }[],
         { placeHolder: string; title: string },
       ]
-    >(testValue<unknown>(vscode.showQuickPick.mock.calls[0]));
+    >(testValue<unknown>(vscode.showQuickPick.mock.calls[1]));
     expect(firstCall).toStrictEqual([
       [
         {
@@ -1031,6 +1032,7 @@ describe("view provider", () => {
       })
     );
 
+    vscode.showQuickPick.mockResolvedValueOnce("GitHub");
     receive?.({ path: "/project", type: "openIssues" });
     await vi.waitFor(() => {
       expect(picker.show).toHaveBeenCalledOnce();
@@ -1039,6 +1041,7 @@ describe("view provider", () => {
     await vi.waitFor(() => {
       expect(picker.dispose).toHaveBeenCalledOnce();
     });
+    vscode.showQuickPick.mockResolvedValueOnce("GitHub");
     receive?.({ path: "/project", type: "openIssues" });
     await vi.waitFor(() => {
       expect(vscode.showInformationMessage).toHaveBeenCalledExactlyOnceWith(
@@ -1179,6 +1182,7 @@ describe("view provider", () => {
         })
       );
 
+      vscode.showQuickPick.mockResolvedValueOnce("GitHub");
       receive?.({ path: "/project", type: "openIssues" });
       if (step !== "repository") {
         await vi.waitFor(() => {
