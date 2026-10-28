@@ -24,6 +24,24 @@ testValue<{ IS_REACT_ACT_ENVIRONMENT?: boolean }>(
   globalThis
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
+const FileReaderMock = function FileReaderMock(this: {
+  addEventListener: (type: string, listener: () => void) => void;
+  readAsDataURL: () => void;
+  result: string | null;
+}): void {
+  let load: (() => void) | undefined;
+  this.result = null;
+  this.addEventListener = (type, listener) => {
+    if (type === "load") {
+      load = listener;
+    }
+  };
+  this.readAsDataURL = () => {
+    this.result = "data:image/png;base64,Y29tcG9zZXI=";
+    load?.();
+  };
+};
+
 const { App } = await import("./app");
 
 const threadState = (
@@ -2433,6 +2451,135 @@ describe("React webview", () => {
       type: "openTranscriptLink",
     });
     await unmount();
+  });
+
+  test("opens transcript image previews at full size", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (!state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    state.threads.selected.items = [
+      {
+        id: "assistant",
+        images: [{ data: "aW1hZ2U=", mimeType: "image/png" }],
+        kind: "assistant",
+      },
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    const dialog = document.querySelector<HTMLDialogElement>(
+      ".image-preview-dialog"
+    );
+    const trigger = document.querySelector<HTMLButtonElement>(
+      ".image-preview-trigger"
+    );
+    if (!dialog || !trigger) {
+      throw new Error("Missing transcript image preview");
+    }
+    Object.defineProperties(dialog, {
+      close: {
+        value: () => {
+          dialog.removeAttribute("open");
+        },
+      },
+      showModal: {
+        value: () => {
+          dialog.setAttribute("open", "");
+        },
+      },
+    });
+
+    act(() => {
+      trigger.click();
+    });
+    expect({
+      fullImage: dialog.querySelector("img")?.getAttribute("src"),
+      label: dialog.getAttribute("aria-label"),
+      open: dialog.hasAttribute("open"),
+      preview: trigger.querySelector("img")?.getAttribute("src"),
+    }).toStrictEqual({
+      fullImage: "data:image/png;base64,aW1hZ2U=",
+      label: "Attached image",
+      open: true,
+      preview: "data:image/png;base64,aW1hZ2U=",
+    });
+    act(() => {
+      dialog.querySelector<HTMLButtonElement>(".image-preview-close")?.click();
+    });
+    expect(dialog.hasAttribute("open")).toBeFalsy();
+    await unmount();
+  });
+
+  test("opens pasted composer images at full size", async () => {
+    const NativeFileReader = globalThis.FileReader;
+    vi.stubGlobal("FileReader", FileReaderMock);
+    const unmount = await renderApp();
+    try {
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent("message", { data: threadState("selected", []) })
+        );
+      });
+      const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+      if (!composer) {
+        throw new Error("Missing composer");
+      }
+      const paste = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(paste, "clipboardData", {
+        value: {
+          items: [
+            {
+              getAsFile: () =>
+                new File(["image"], "pasted.png", { type: "image/png" }),
+              type: "image/png",
+            },
+          ],
+        },
+      });
+      act(() => {
+        composer.dispatchEvent(paste);
+      });
+      const attachment = document.querySelector<HTMLElement>(".attachment");
+      const dialog = attachment?.querySelector<HTMLDialogElement>(
+        ".image-preview-dialog"
+      );
+      const trigger = attachment?.querySelector<HTMLButtonElement>(
+        ".image-preview-trigger"
+      );
+      if (!attachment || !dialog || !trigger) {
+        throw new Error("Missing pasted image preview");
+      }
+      Object.defineProperties(dialog, {
+        close: {
+          value: () => {
+            dialog.removeAttribute("open");
+          },
+        },
+        showModal: {
+          value: () => {
+            dialog.setAttribute("open", "");
+          },
+        },
+      });
+
+      act(() => {
+        trigger.click();
+      });
+      expect({
+        image: dialog.querySelector("img")?.getAttribute("src"),
+        open: dialog.hasAttribute("open"),
+        removeButton: attachment.querySelector(".icon")?.getAttribute("title"),
+      }).toStrictEqual({
+        image: "data:image/png;base64,Y29tcG9zZXI=",
+        open: true,
+        removeButton: "Remove pasted image",
+      });
+    } finally {
+      vi.stubGlobal("FileReader", NativeFileReader);
+      await unmount();
+    }
   });
 
   test("renders recent history first and loads older entries on scroll", async () => {

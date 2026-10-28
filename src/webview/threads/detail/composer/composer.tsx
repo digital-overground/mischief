@@ -16,6 +16,7 @@ import type {
   RenderedThreadDetail,
   RenderedTranscriptItem,
 } from "../../../protocol";
+import { ImagePreview } from "../image-preview";
 import { FooterControls } from "./controls/footer-controls";
 
 interface ComposerMatch {
@@ -408,10 +409,7 @@ const ComposerView = ({
       <div id="attachments" aria-live="polite">
         {images.map((image, index) => (
           <div className="attachment" key={`${image.mimeType}:${index}`}>
-            <img
-              alt="Pasted"
-              src={`data:${image.mimeType};base64,${image.data}`}
-            />
+            <ImagePreview image={image} thumbnailAlt="Pasted image preview" />
             <button
               className="icon"
               title="Remove pasted image"

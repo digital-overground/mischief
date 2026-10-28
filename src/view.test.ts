@@ -2230,6 +2230,14 @@ describe("view provider", () => {
     expect(css).toMatch(/\.thread-row \{\s*padding-left: 32px;/u);
   });
 
+  test("keeps the attachment preview close icon compact", () => {
+    const css = readFileSync("media/webview.css", "utf-8");
+    const icon = /\.image-preview-close-icon \{[^}]*\}/u.exec(css)?.[0];
+
+    expect(icon).toContain("width: 16px;");
+    expect(icon).toContain("height: 16px;");
+  });
+
   test("caps composer height relative to a short webview", () => {
     const css = readFileSync("media/webview.css", "utf-8");
     const composerRule = /#composer \{[\s\S]*?\n\}/u.exec(css)?.[0];

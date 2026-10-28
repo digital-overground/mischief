@@ -9,6 +9,7 @@ import type {
   RenderedThreadDetail,
   RenderedTranscriptItem,
 } from "../../protocol";
+import { ImagePreview } from "./image-preview";
 
 const nonEmpty = (value: string | undefined, fallback: string): string =>
   value !== undefined && value.length > 0 ? value : fallback;
@@ -53,10 +54,10 @@ const ImageGallery = ({
 }): React.JSX.Element => (
   <div className="transcript-images">
     {images.map((image, index) => (
-      <img
-        alt="Attached"
-        src={`data:${image.mimeType};base64,${image.data}`}
+      <ImagePreview
+        image={image}
         key={`${image.mimeType}:${index}`}
+        thumbnailAlt="Attached image preview"
       />
     ))}
   </div>
