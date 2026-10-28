@@ -70,7 +70,18 @@ export type HostToWebviewMessage =
       defaultAgent: string;
       agents: AgentStatus[];
     }
-  | { type: "agents"; agents: AgentStatus[] };
+  | { type: "agents"; agents: AgentStatus[] }
+  | {
+      type: "showProjectSetup";
+      project: string;
+      entries: string[];
+      selected: string[];
+      creating: boolean;
+      workspace?: { branch: string; path: string };
+      command: string;
+      suggestions: string[];
+      review: boolean;
+    };
 
 export type WebviewToHostMessage =
   | {
@@ -95,7 +106,8 @@ export type WebviewToHostMessage =
         | "focusWorkspace"
         | "newWorkspace"
         | "openIssues"
-        | "openWorkspace";
+        | "openWorkspace"
+        | "projectSetup";
       path: string;
     }
   | {
@@ -115,6 +127,13 @@ export type WebviewToHostMessage =
   | { type: "setupContinue"; selected: string[] }
   | { type: "setAssignWorkspaceColors"; value: boolean }
   | { type: "setDefaultAgent"; id: string }
+  | {
+      type: "saveProjectSetup";
+      project: string;
+      selected: string[];
+      command: string;
+    }
+  | { type: "dismissProjectSetup"; project: string }
   | { type: "installAgent" | "checkAgent"; id: string }
   | { type: "removeSteering" | "sendSteering"; id: string }
   | { type: "setConfig"; id: string; value: string | boolean }

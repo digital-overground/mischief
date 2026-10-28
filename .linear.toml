@@ -1,2 +1,6 @@
+# linear cli
+# https://github.com/schpet/linear-cli
+
 workspace = "digital-overground"
 team_id = "MIS"
+issue_sort = "manual"

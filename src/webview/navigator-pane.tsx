@@ -135,6 +135,16 @@ const WorkspaceMenu = ({
         >
           <SvgIcon kind="plus" /> Add Workspace
         </button>
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            postMessage({ path: projectRoot, type: "projectSetup" });
+            dismiss();
+          }}
+        >
+          <SvgIcon kind="gear" /> Project Settings
+        </button>
       </>
     ) : null}
     <button

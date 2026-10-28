@@ -165,6 +165,10 @@
           "default": [],
           "description": "Ignored Project files and folders selected for copying to new Workspaces. Stored in the Project root's .vscode/settings.json."
         },
+        "mischief.projectSetup": {
+          "type": "object",
+          "description": "Project-specific setup command, approval, and input hashes. Edit with the Mischief Project setup dialog; stored in the Project root's .vscode/settings.json."
+        },
         "mischief.fontFamily": {
           "type": "string",
           "default": "",

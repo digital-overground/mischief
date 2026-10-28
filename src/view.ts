@@ -26,6 +26,7 @@ import type {
   Projects,
   ProjectsSnapshot,
 } from "./projects/projects";
+import { projectSetupInputs, setupCommandHash } from "./projects/setup";
 import type { AgentTreeNavigationOptions } from "./threads/acp/models";
 import type { PromptImage } from "./threads/model";
 import type {
@@ -52,10 +53,19 @@ const START_WORKSPACES_KEY = "mischief.startWorkspaces";
 // ponytail: one pending Project focus; use request IDs if launches overlap.
 const FOCUS_WORKSPACE_KEY = "mischief.focusWorkspace";
 const COPY_IGNORED_ITEMS_KEY = "mischief.copyIgnoredItems";
+const PROJECT_SETUP_KEY = "mischief.projectSetup";
 
 interface PendingWorkspaceStart {
   path: string;
   prompt?: string;
+  setupCommand?: string;
+  setupInputs?: Record<string, string>;
+}
+
+interface WorkspaceSetupChoice {
+  selected: string[];
+  command: string;
+  hashes: Record<string, string>;
 }
 const DEFAULT_MONO_FONT_FAMILY =
   '"Lilex", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
@@ -273,6 +283,13 @@ export interface ThreadSetup {
 
 export class MischiefView implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
+  private pendingProjectSetup?: {
+    project: string;
+    entries: string[];
+    hashes: Record<string, string>;
+    creating: boolean;
+    resolve: (choice?: WorkspaceSetupChoice) => void;
+  };
   private projectsSnapshot: ProjectsSnapshot = {
     navigation: { workspaces: [] },
   };
@@ -559,45 +576,107 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
   }
 
+  private async showProjectSetup(
+    project: string,
+    creating: boolean,
+    branch?: string
+  ): Promise<WorkspaceSetupChoice | undefined> {
+    if (this.pendingProjectSetup) {
+      throw new Error("A setup dialog is already open");
+    }
+    const root = await realpath(project);
+    const entries = await ignoredWorkspaceFiles(project);
+    const { settings } = await readWorkspaceSettings(project);
+    const saved = settings[COPY_IGNORED_ITEMS_KEY];
+    const setup = settings[PROJECT_SETUP_KEY];
+    const { hashes, suggestions } = await projectSetupInputs(project);
+    const command =
+      isRecord(setup) && typeof setup.command === "string" ? setup.command : "";
+    const review =
+      isRecord(setup) &&
+      (setup.approvedCommandHash !== setupCommandHash(command) ||
+        JSON.stringify(setup.inputHashes) !== JSON.stringify(hashes));
+    const previous = Array.isArray(saved) ? new Set<unknown>(saved) : null;
+    const selected = entries.filter((entry) =>
+      previous
+        ? previous.has(entry)
+        : !entry.endsWith("/") &&
+          !/^(?:\.env(?:\..*)?|\.envrc(?:\.local)?|.*\.xcconfig)$/u.test(
+            entry.split("/").at(-1) ?? ""
+          )
+    );
+    if (!this.view) {
+      return undefined;
+    }
+    const postMessage = this.view.webview.postMessage.bind(this.view.webview);
+    // oxlint-disable-next-line promise/avoid-new
+    return await new Promise<WorkspaceSetupChoice | undefined>((resolve) => {
+      this.pendingProjectSetup = {
+        creating,
+        entries,
+        hashes,
+        project,
+        resolve,
+      };
+      void postMessage({
+        command,
+        creating,
+        ...(branch === undefined
+          ? {}
+          : {
+              workspace: {
+                branch,
+                path: path.join(
+                  path.dirname(root),
+                  "worktrees",
+                  `${path.basename(root)}-${branch}`
+                ),
+              },
+            }),
+        entries,
+        project,
+        review,
+        selected,
+        suggestions,
+        type: "showProjectSetup",
+      } satisfies HostToWebviewMessage);
+    });
+  }
+
   private async createWorkspace(
     projectRoot: string,
     name: string,
     sourceRef?: string,
     prompt?: string
   ): Promise<void> {
+    let choice: WorkspaceSetupChoice | undefined;
+    try {
+      choice = await this.showProjectSetup(
+        projectRoot,
+        true,
+        normalizeWorkspaceName(name)
+      );
+    } catch (error) {
+      void vscode.window.showErrorMessage(
+        `Mischief could not prepare the new Workspace: ${error instanceof Error ? error.message : String(error)}`
+      );
+      return;
+    }
+    if (choice === undefined) {
+      return;
+    }
     const workspace = await this.projects.createWorkspace(
       projectRoot,
       name,
       sourceRef
     );
     try {
-      const entries = await ignoredWorkspaceFiles(projectRoot);
-      if (entries.length > 0) {
-        const { settings } = await readWorkspaceSettings(projectRoot);
-        const saved = settings[COPY_IGNORED_ITEMS_KEY];
-        const previous = Array.isArray(saved) ? new Set<unknown>(saved) : null;
-        const selected = await vscode.window.showQuickPick(
-          entries.map((entry) => ({
-            label: entry,
-            picked: previous ? previous.has(entry) : !entry.endsWith("/"),
-          })),
-          {
-            canPickMany: true,
-            placeHolder: "Select ignored files and folders to copy",
-            title: "Copy ignored items from the Project root",
-          }
+      if (choice.selected.length > 0) {
+        await copyIgnoredWorkspaceFiles(
+          projectRoot,
+          workspace,
+          choice.selected
         );
-        if (selected) {
-          const names = selected.map((item) => item.label);
-          if (names.length > 0) {
-            await copyIgnoredWorkspaceFiles(projectRoot, workspace, names);
-          }
-          await updateWorkspaceSetting(
-            projectRoot,
-            COPY_IGNORED_ITEMS_KEY,
-            names
-          );
-        }
       }
     } catch (error) {
       void vscode.window.showWarningMessage(
@@ -620,7 +699,13 @@ export class MischiefView implements vscode.WebviewViewProvider {
     );
     await this.storage.update(START_WORKSPACES_KEY, [
       ...pending.filter((candidate) => candidate.path !== workspace),
-      { path: workspace, ...(isNonEmpty(prompt) ? { prompt } : {}) },
+      {
+        path: workspace,
+        ...(isNonEmpty(prompt) ? { prompt } : {}),
+        ...(isNonEmpty(choice.command)
+          ? { setupCommand: choice.command, setupInputs: choice.hashes }
+          : {}),
+      },
     ]);
     this.render();
     await this.openWorkspace(workspace);
@@ -779,6 +864,8 @@ export class MischiefView implements vscode.WebviewViewProvider {
       }
     });
     view.onDidDispose(() => {
+      this.pendingProjectSetup?.resolve();
+      this.pendingProjectSetup = undefined;
       this.threads.markHidden();
       if (this.view === view) {
         this.view = undefined;
@@ -857,6 +944,13 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
     const data = message;
     try {
+      if (
+        data.type === "saveProjectSetup" ||
+        data.type === "dismissProjectSetup"
+      ) {
+        await this.handleProjectSetupMessage(data);
+        return;
+      }
       if (await this.handleWorkspaceMessage(data)) {
         return;
       }
@@ -931,6 +1025,64 @@ export class MischiefView implements vscode.WebviewViewProvider {
     return await this.handleWorkspaceNavigationMessage(data);
   }
 
+  private async handleProjectSetupMessage(
+    data: Record<string, unknown>
+  ): Promise<boolean> {
+    if (
+      data.type !== "saveProjectSetup" &&
+      data.type !== "dismissProjectSetup"
+    ) {
+      return false;
+    }
+    const pending = this.pendingProjectSetup;
+    if (!pending || data.project !== pending.project) {
+      return true;
+    }
+    if (data.type === "dismissProjectSetup") {
+      this.pendingProjectSetup = undefined;
+      pending.resolve();
+      return true;
+    }
+    if (
+      typeof data.command !== "string" ||
+      !Array.isArray(data.selected) ||
+      data.selected.some(
+        (entry) => typeof entry !== "string" || !pending.entries.includes(entry)
+      )
+    ) {
+      throw new Error("Invalid Project setup selection");
+    }
+    const selected = data.selected.filter(
+      (entry): entry is string => typeof entry === "string"
+    );
+    this.pendingProjectSetup = undefined;
+    try {
+      const { hashes } = await projectSetupInputs(pending.project);
+      if (JSON.stringify(hashes) !== JSON.stringify(pending.hashes)) {
+        throw new Error(
+          "Project settings inputs changed while reviewing; reopen Project Settings"
+        );
+      }
+      if (!pending.creating) {
+        await updateWorkspaceSetting(pending.project, PROJECT_SETUP_KEY, {
+          approvedCommandHash: setupCommandHash(data.command),
+          command: data.command,
+          inputHashes: hashes,
+        });
+        await updateWorkspaceSetting(
+          pending.project,
+          COPY_IGNORED_ITEMS_KEY,
+          selected
+        );
+      }
+      pending.resolve({ command: data.command, hashes, selected });
+    } catch (error) {
+      pending.resolve();
+      throw error;
+    }
+    return true;
+  }
+
   private async handleWorkspaceNavigationMessage(
     data: Record<string, unknown>
   ): Promise<boolean> {
@@ -943,6 +1095,13 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
     if (data.type === "newWorkspace") {
       await this.newWorkspace(data.path);
+      return true;
+    }
+    if (data.type === "projectSetup") {
+      if (data.path !== this.projectsSnapshot.navigation.current?.projectRoot) {
+        return true;
+      }
+      await this.showProjectSetup(data.path, false);
       return true;
     }
     if (data.type === "openWorkspace" || data.type === "focusWorkspace") {
@@ -1289,6 +1448,34 @@ export class MischiefView implements vscode.WebviewViewProvider {
       pending.toSpliced(index, 1)
     );
     await vscode.commands.executeCommand("workbench.view.extension.mischief");
+    if (isNonEmpty(start.setupCommand)) {
+      try {
+        const projectRoot =
+          this.projectsSnapshot.navigation.current?.projectRoot;
+        const { hashes } = isNonEmpty(projectRoot)
+          ? await projectSetupInputs(projectRoot)
+          : { hashes: undefined };
+        if (
+          start.setupInputs !== undefined &&
+          JSON.stringify(start.setupInputs) === JSON.stringify(hashes)
+        ) {
+          const terminal = vscode.window.createTerminal({
+            cwd: workspace.path,
+            name: "Mischief Project setup",
+          });
+          terminal.show();
+          terminal.sendText(start.setupCommand, true);
+        } else {
+          void vscode.window.showWarningMessage(
+            "Project settings changed before the Workspace opened. Verify Project Settings before running the command."
+          );
+        }
+      } catch (error) {
+        void vscode.window.showWarningMessage(
+          `Could not verify Project setup: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
     await this.newThread(false, start.prompt);
   }
 

@@ -818,6 +818,195 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("always shows commonly copied files and dismisses on Cancel or X", async () => {
+    const unmount = await renderApp();
+    const dialog = document.querySelector<HTMLDialogElement>(
+      "#project-setup-dialog"
+    );
+    if (!dialog) {
+      throw new Error("Missing Project setup dialog");
+    }
+    Object.defineProperties(dialog, {
+      close: {
+        value: () => {
+          dialog.removeAttribute("open");
+          dialog.dispatchEvent(new Event("close", { bubbles: true }));
+        },
+      },
+      showModal: {
+        value: () => {
+          dialog.setAttribute("open", "");
+        },
+      },
+    });
+    const emptySetup: HostToWebviewMessage = {
+      command: "",
+      creating: false,
+      entries: [],
+      project: "/project",
+      review: false,
+      selected: [],
+      suggestions: [],
+      type: "showProjectSetup",
+    };
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: emptySetup }));
+    });
+    expect({
+      common: dialog.querySelector(".project-setup-common h5")?.textContent,
+      detected: dialog.querySelector(".setup-suggestions h5")?.textContent,
+      empty: dialog.textContent?.includes("No commonly copied files found."),
+      ignoredInfo:
+        dialog.querySelector(
+          'button[title="Copy these currently gitignored files to new Workspaces"]'
+        ) !== null,
+      section: dialog.querySelector("h3")?.textContent,
+      setupInfo:
+        dialog.querySelector(
+          'button[title="Run these commands in the new Workspace terminal after it opens."]'
+        ) !== null,
+      title: dialog.querySelector("h2")?.textContent,
+    }).toStrictEqual({
+      common: "Commonly copied files",
+      detected: "Detected setup commands:",
+      empty: true,
+      ignoredInfo: true,
+      section: "New Workspaces",
+      setupInfo: true,
+      title: "Project Settings",
+    });
+    for (const title of ["Cancel setup", "Close setup"]) {
+      postMessage.mockClear();
+      act(() => {
+        dialog
+          .querySelector<HTMLButtonElement>(`button[title="${title}"]`)
+          ?.click();
+      });
+      expect(dialog.open).toBeFalsy();
+      expect(postMessage).toHaveBeenCalledWith({
+        project: "/project",
+        type: "dismissProjectSetup",
+      });
+      act(() => {
+        window.dispatchEvent(new MessageEvent("message", { data: emptySetup }));
+      });
+    }
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { ...emptySetup, suggestions: ["pnpm install"] },
+        })
+      );
+    });
+    act(() => {
+      [
+        ...dialog.querySelectorAll<HTMLButtonElement>(
+          ".setup-suggestions button"
+        ),
+      ]
+        .find((button) => button.textContent === "pnpm install")
+        ?.click();
+    });
+    expect(dialog.querySelector("textarea")?.value).toBe("pnpm install");
+    await unmount();
+  });
+
+  test("reviews per-Workspace files and editable commands separately from Project settings", async () => {
+    const unmount = await renderApp();
+    const dialog = document.querySelector<HTMLDialogElement>(
+      "#new-workspace-dialog"
+    );
+    if (!dialog) {
+      throw new Error("Missing Project setup dialog");
+    }
+    Object.defineProperties(dialog, {
+      close: {
+        value: () => {
+          dialog.removeAttribute("open");
+          dialog.dispatchEvent(new Event("close"));
+        },
+      },
+      showModal: {
+        value: () => {
+          dialog.setAttribute("open", "");
+        },
+      },
+    });
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            command: "pnpm install",
+            creating: true,
+            entries: [".env", "notes.txt", "cache/"],
+            project: "/project",
+            review: false,
+            selected: ["notes.txt"],
+            suggestions: [],
+            type: "showProjectSetup",
+            workspace: {
+              branch: "new-thing",
+              path: "/worktrees/project-new-thing",
+            },
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    expect(
+      [
+        ...dialog.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
+      ].map((item) => [item.parentElement?.textContent, item.checked])
+    ).toStrictEqual([
+      [".env", false],
+      ["notes.txt", true],
+      ["cache/", false],
+    ]);
+    const [location, branch] = dialog.querySelectorAll(
+      ".workspace-preview-row"
+    );
+    expect({
+      branch: branch?.textContent?.includes("new-thing"),
+      branchIcon: branch
+        ?.querySelector("svg path")
+        ?.getAttribute("d")
+        ?.startsWith("M6 3v12"),
+      command: dialog.querySelector("textarea")?.value,
+      folderIcon: location
+        ?.querySelector("svg path")
+        ?.getAttribute("d")
+        ?.startsWith("M20 20H4"),
+      path: location?.querySelector(".workspace-preview-path")?.textContent,
+      title: dialog.querySelector("h2")?.textContent,
+    }).toStrictEqual({
+      branch: true,
+      branchIcon: true,
+      command: "pnpm install",
+      folderIcon: true,
+      path: "/worktrees/project-new-thing",
+      title: "New Workspace",
+    });
+    postMessage.mockClear();
+    const secret = dialog.querySelector<HTMLInputElement>(
+      'input[type="checkbox"]'
+    );
+    const save = dialog.querySelector<HTMLButtonElement>(
+      'button[title="Add Workspace"]'
+    );
+    act(() => {
+      secret?.click();
+    });
+    act(() => {
+      save?.click();
+    });
+    expect(postMessage).toHaveBeenCalledWith({
+      command: "pnpm install",
+      project: "/project",
+      selected: ["notes.txt", ".env"],
+      type: "saveProjectSetup",
+    });
+    await unmount();
+  });
+
   test("routes internal Project actions from a current linked Workspace", async () => {
     const unmount = await renderApp();
     act(() => {
@@ -914,16 +1103,28 @@ describe("React webview", () => {
         })
       );
     });
-    expect(
-      [...document.querySelectorAll('.workspace-menu [role="menuitem"]')].map(
-        (button) => button.textContent?.trim()
-      )
-    ).toStrictEqual([
-      "Start work on issue",
-      "Add Workspace",
-      "Thread History",
-      "Close Workspace",
-    ]);
+    const menuItems = [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        '.workspace-menu [role="menuitem"]'
+      ),
+    ];
+    expect({
+      gear: menuItems
+        .find((button) => button.textContent?.includes("Project Settings"))
+        ?.querySelector("svg path")
+        ?.getAttribute("d")
+        ?.startsWith("M12 2.5"),
+      labels: menuItems.map((button) => button.textContent?.trim()),
+    }).toStrictEqual({
+      gear: true,
+      labels: [
+        "Start work on issue",
+        "Add Workspace",
+        "Project Settings",
+        "Thread History",
+        "Close Workspace",
+      ],
+    });
     act(() => {
       document.activeElement?.dispatchEvent(
         new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })
