@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { postMessage } from "./bridge";
 import { ButtonTooltip } from "./button-tooltip";
 import { NavigatorPane } from "./navigator-pane";
+import { ProjectSetupDialog } from "./project-setup-dialog";
 import type { HostToWebviewMessage, RenderedTranscriptItem } from "./protocol";
 import { SettingsDialog } from "./settings-dialog";
 import { ThreadView } from "./threads/detail/thread-view";
@@ -134,6 +135,7 @@ export const App = (): React.JSX.Element => {
         />
       </main>
       <SettingsDialog icons={snapshot.agentIcons} />
+      <ProjectSetupDialog />
       <ButtonTooltip />
     </>
   );

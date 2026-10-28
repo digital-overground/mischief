@@ -12,9 +12,11 @@ export type IconKind =
   | "moreVertical"
   | "messageCircleQuestionMark"
   | "fork"
+  | "gear"
   | "circleCheck"
   | "eye"
   | "file"
+  | "folder"
   | "folderGit2"
   | "github"
   | "gitBranch"
@@ -123,6 +125,9 @@ const paths: Record<IconKind, React.ReactNode> = {
       <path d="M14 2v6h6" />
     </>
   ),
+  folder: (
+    <path d="M20 20H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2z" />
+  ),
   folderGit2: (
     <>
       <path d="M18 19a5 5 0 0 1-5-5v8" />
@@ -137,6 +142,12 @@ const paths: Record<IconKind, React.ReactNode> = {
       <circle cx="6" cy="6" r="3" />
       <circle cx="18" cy="6" r="3" />
       <path d="M18 9a6 6 0 0 1-6 6 6 6 0 0 0-6-6" />
+    </>
+  ),
+  gear: (
+    <>
+      <path d="M12 2.5 14.2 4l2.6-.4 1.1 2.4 2.4 1.1-.4 2.6 1.6 2.3-1.6 2.3.4 2.6-2.4 1.1-1.1 2.4-2.6-.4-2.2 1.5-2.2-1.5-2.6.4-1.1-2.4-2.4-1.1.4-2.6L2.5 12l1.6-2.3-.4-2.6 2.4-1.1 1.1-2.4 2.6.4z" />
+      <circle cx="12" cy="12" r="3" />
     </>
   ),
   gitBranch: (

@@ -83,7 +83,9 @@ main {
   display: flex;
   flex-direction: column;
 }
-#settings-dialog {
+#settings-dialog,
+#project-setup-dialog,
+#new-workspace-dialog {
   width: min(360px, calc(100vw - 24px));
   max-height: calc(100vh - 24px);
   overflow: auto;
@@ -94,8 +96,100 @@ main {
   background: var(--vscode-editorWidget-background);
   box-shadow: 0 4px 16px var(--vscode-widget-shadow);
 }
-#settings-dialog::backdrop {
+#settings-dialog::backdrop,
+#project-setup-dialog::backdrop,
+#new-workspace-dialog::backdrop {
   background: rgb(0 0 0 / 45%);
+}
+.project-setup-group,
+.project-setup-section {
+  padding: 12px;
+  margin: 0;
+  border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+}
+.project-setup-section h3,
+.project-setup-section h4,
+.project-setup-section h5 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.project-setup-group {
+  font-size: 14px;
+}
+.workspace-preview-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 6px 0;
+}
+.workspace-preview-row > svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  color: var(--vscode-descriptionForeground);
+}
+.workspace-preview-row > div {
+  min-width: 0;
+}
+.workspace-preview-path {
+  display: block;
+  font-family: var(--mischief-mono-font);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.setup-info {
+  border: 0;
+  background: none;
+  color: var(--vscode-descriptionForeground);
+  cursor: help;
+}
+.project-setup-common > .settings-description {
+  margin: 0 0 8px;
+}
+#project-setup-dialog details,
+#new-workspace-dialog details {
+  border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+}
+#project-setup-dialog summary,
+#new-workspace-dialog summary {
+  padding: 12px 0;
+  cursor: pointer;
+}
+#project-setup-dialog summary h5,
+#new-workspace-dialog summary h4 {
+  display: inline;
+}
+#project-setup-dialog .settings-option,
+#new-workspace-dialog .settings-option {
+  padding: 8px 0;
+}
+.project-setup-warning {
+  margin: 12px;
+  color: var(--vscode-errorForeground);
+}
+.project-setup-command {
+  display: grid;
+  gap: 8px;
+}
+.project-setup-command textarea {
+  box-sizing: border-box;
+  width: 100%;
+  resize: vertical;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-widget-border));
+  font-family: var(--mischief-mono-font);
+}
+.setup-suggestions .action {
+  margin: 0 8px 8px 0;
+}
+.project-setup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
 }
 .settings-header {
   min-height: 36px;
@@ -109,6 +203,10 @@ main {
   margin: 0;
   flex: 1;
   font-size: 13px;
+}
+#project-setup-dialog .settings-header h2 {
+  font-size: 18px;
+  font-weight: 700;
 }
 .settings-header .icon {
   font-size: 18px;

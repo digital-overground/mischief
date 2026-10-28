@@ -1,5 +1,12 @@
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setImmediate } from "node:timers/promises";
@@ -11,8 +18,13 @@ import type { AgentStatus } from "./agents/manager";
 import { exec } from "./exec";
 import { isNonEmpty } from "./present";
 import { projectsFixture } from "./projects/projects-fixture";
+import { projectSetupInputs, setupCommandHash } from "./projects/setup";
 import { testValue } from "./test-value";
 import { MischiefView } from "./view";
+import {
+  readWorkspaceSettings,
+  updateWorkspaceSetting,
+} from "./workspace-settings";
 
 const deferred = (): { promise: Promise<void>; resolve: () => void } => {
   let resolver: (() => void) | undefined;
@@ -27,6 +39,7 @@ const vscode = vi.hoisted(() => ({
   activeTextEditor: undefined as unknown,
   assignWorkspaceColors: true,
   createQuickPick: vi.fn<() => unknown>(),
+  createTerminal: vi.fn<() => unknown>(),
   executeCommand: vi.fn<() => Promise<void>>(async () => {
     await Promise.resolve();
   }),
@@ -105,6 +118,7 @@ vi.mock(import("vscode"), () =>
         return vscode.activeTextEditor;
       },
       createQuickPick: vscode.createQuickPick,
+      createTerminal: vscode.createTerminal,
       showErrorMessage: vscode.showErrorMessage,
       showInformationMessage: vscode.showInformationMessage,
       showInputBox: vscode.showInputBox,
@@ -131,19 +145,201 @@ const profileDatabase = () => ({
 });
 
 describe("view provider", () => {
-  test("remembers checked ignored items for the same Project", async () => {
+  test("does not create a Workspace when Project setup is dismissed", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "mischief-cancel-setup-")
+    );
+    try {
+      await exec("git", ["-C", root, "init"]);
+      const { hashes } = await projectSetupInputs(root);
+      const saved = {
+        approvedCommandHash: setupCommandHash("pnpm install"),
+        command: "pnpm install",
+        inputHashes: hashes,
+      };
+      await updateWorkspaceSetting(root, "mischief.projectSetup", saved);
+      await updateWorkspaceSetting(root, "mischief.copyIgnoredItems", []);
+      const createWorkspace = vi.fn<() => Promise<string>>(() => {
+        throw new Error("Workspace creation must not start");
+      });
+      const provider = new MischiefView(
+        testValue<never>({
+          createWorkspace,
+          open: async () =>
+            await Promise.resolve(
+              projectsFixture({ projects: [], ungrouped: [] })
+            ),
+          refresh: async () =>
+            await Promise.resolve(
+              projectsFixture({ projects: [], ungrouped: [] })
+            ),
+        }),
+        testValue<never>({
+          onChange: vi.fn<() => void>(),
+          snapshot: () => ({ threads: [] }),
+        }),
+        testValue<never>({ fsPath: process.cwd() }),
+        testValue<never>({
+          get: (_key: string, fallback: unknown) => fallback,
+        }),
+        testValue<never>(profileDatabase())
+      );
+      let receive: ((message: unknown) => void) | undefined;
+      let shows = 0;
+      vscode.showInputBox.mockReset().mockResolvedValue("cancelled");
+      await provider.resolveWebviewView(
+        testValue<never>({
+          onDidDispose: vi.fn<() => void>(),
+          webview: {
+            asWebviewUri: (uri: { fsPath: string }) => ({
+              toString: () => `webview:${uri.fsPath}`,
+            }),
+            cspSource: "webview-csp",
+            html: "",
+            onDidReceiveMessage: (listener: (message: unknown) => void) => {
+              receive = listener;
+            },
+            options: {},
+            postMessage: (message: { type: string }) => {
+              if (message.type === "showProjectSetup") {
+                shows += 1;
+                receive?.({ project: root, type: "dismissProjectSetup" });
+              }
+            },
+          },
+        })
+      );
+      await provider.newWorkspace(root);
+      expect(createWorkspace).not.toHaveBeenCalled();
+      expect(shows).toBe(1);
+      await expect(readWorkspaceSettings(root)).resolves.toMatchObject({
+        settings: {
+          "mischief.copyIgnoredItems": [],
+          "mischief.projectSetup": saved,
+        },
+      });
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("saves Project setup defaults independently of a new Workspace", async () => {
+    const root = await realpath(
+      await mkdtemp(path.join(os.tmpdir(), "mischief-project-defaults-"))
+    );
+    try {
+      await exec("git", ["-C", root, "init"]);
+      const current = {
+        ahead: 0,
+        behind: 0,
+        changes: 0,
+        current: true,
+        linked: true,
+        name: "project",
+        path: root,
+      };
+      let receive: ((message: unknown) => void) | undefined;
+      const provider = new MischiefView(
+        testValue<never>({
+          open: async () =>
+            await Promise.resolve(
+              projectsFixture({
+                projects: [{ root, workspaces: [current] }],
+                ungrouped: [],
+              })
+            ),
+        }),
+        testValue<never>({
+          onChange: vi.fn<() => void>(),
+          openWorkspace: vi.fn<() => Promise<void>>(async () => {
+            await Promise.resolve();
+          }),
+          snapshot: () => ({ threads: [] }),
+        }),
+        testValue<never>({ fsPath: process.cwd() }),
+        testValue<never>({
+          get: (_key: string, fallback: unknown) => fallback,
+        }),
+        testValue<never>(profileDatabase())
+      );
+      await provider.initialize(root);
+      await provider.resolveWebviewView(
+        testValue<never>({
+          onDidDispose: vi.fn<() => void>(),
+          webview: {
+            asWebviewUri: (uri: { fsPath: string }) => ({
+              toString: () => `webview:${uri.fsPath}`,
+            }),
+            cspSource: "webview-csp",
+            html: "",
+            onDidReceiveMessage: (listener: (message: unknown) => void) => {
+              receive = listener;
+            },
+            options: {},
+            postMessage: (message: { type: string }) => {
+              if (message.type === "showProjectSetup") {
+                receive?.({
+                  command: "pnpm install",
+                  project: root,
+                  selected: [],
+                  type: "saveProjectSetup",
+                });
+              }
+            },
+          },
+        })
+      );
+      receive?.({ path: root, type: "projectSetup" });
+      await vi.waitFor(async () => {
+        const { settings } = await readWorkspaceSettings(root);
+        expect(settings["mischief.projectSetup"]).toMatchObject({
+          command: "pnpm install",
+        });
+        expect(settings["mischief.copyIgnoredItems"]).toStrictEqual([]);
+      });
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("uses Project defaults without saving new Workspace overrides", async () => {
     const parent = await mkdtemp(path.join(os.tmpdir(), "mischief-picker-"));
     const root = path.join(parent, "project");
     try {
       await mkdir(root);
       await exec("git", ["-C", root, "init"]);
-      await writeFile(path.join(root, ".gitignore"), ".env\ncache/\n");
-      await writeFile(path.join(root, ".env"), "secret");
+      await writeFile(
+        path.join(root, ".gitignore"),
+        ".env\n.env.production\n.envrc\n.envrc.local\n*.xcconfig\nnotes.txt\ncache/\n"
+      );
+      await Promise.all(
+        [
+          ".env",
+          ".env.production",
+          ".envrc",
+          ".envrc.local",
+          "Debug.xcconfig",
+          "notes.txt",
+        ].map(async (name) => {
+          await writeFile(path.join(root, name), "secret");
+        })
+      );
       await mkdir(path.join(root, "cache"));
       await writeFile(path.join(root, "cache", "data"), "cache");
+      const { hashes } = await projectSetupInputs(root);
+      const defaults = {
+        approvedCommandHash: setupCommandHash("pnpm install"),
+        command: "pnpm install",
+        inputHashes: hashes,
+      };
+      await updateWorkspaceSetting(root, "mischief.copyIgnoredItems", [
+        "cache/",
+      ]);
+      await updateWorkspaceSetting(root, "mischief.projectSetup", defaults);
       const workspaces = [
         path.join(parent, "first"),
         path.join(parent, "second"),
+        path.join(parent, "third"),
       ];
       const snapshot = projectsFixture({
         projects: [{ name: "project", root, workspaces: [] }],
@@ -151,13 +347,9 @@ describe("view provider", () => {
       });
       vscode.assignWorkspaceColors = false;
       vscode.showInputBox.mockReset().mockResolvedValue("new");
-      vscode.showQuickPick.mockReset().mockImplementation(async (items) => {
-        const choices = testValue<{ label: string; picked: boolean }[]>(items);
-        await Promise.resolve();
-        return vscode.showQuickPick.mock.calls.length === 1
-          ? choices.filter((item) => item.label === "cache/")
-          : undefined;
-      });
+      let receive: ((message: unknown) => void) | undefined;
+      const posted: unknown[] = [];
+      const starts: unknown[] = [];
       const provider = new MischiefView(
         testValue<never>({
           createWorkspace: async () => {
@@ -178,29 +370,131 @@ describe("view provider", () => {
         testValue<never>({ fsPath: process.cwd() }),
         testValue<never>({
           get: (_key: string, fallback: unknown) => fallback,
-          update: async () => {
+          update: async (key: string, value: unknown) => {
             await Promise.resolve();
+            if (key === "mischief.startWorkspaces") {
+              starts.push(value);
+            }
           },
         }),
         testValue<never>(profileDatabase())
       );
       await provider.initialize(root);
+      await provider.resolveWebviewView(
+        testValue<never>({
+          onDidDispose: vi.fn<() => void>(),
+          webview: {
+            asWebviewUri: (uri: { fsPath: string }) => ({
+              toString: () => `webview:${uri.fsPath}`,
+            }),
+            cspSource: "webview-csp",
+            html: "",
+            onDidReceiveMessage: (listener: (message: unknown) => void) => {
+              receive = listener;
+            },
+            options: {},
+            postMessage: (message: { type: string }) => {
+              if (message.type === "showProjectSetup") {
+                posted.push(message);
+                receive?.({
+                  command: posted.length === 1 ? "echo local" : "pnpm install",
+                  project: root,
+                  selected: posted.length === 1 ? ["notes.txt"] : ["cache/"],
+                  type: "saveProjectSetup",
+                });
+              }
+            },
+          },
+        })
+      );
       await provider.newWorkspace(root);
       await provider.newWorkspace(root);
-      expect(
-        vscode.showQuickPick.mock.calls.map(([items]) => items)
-      ).toStrictEqual([
-        [
-          { label: ".env", picked: true },
-          { label: "cache/", picked: false },
-        ],
-        [
-          { label: ".env", picked: false },
-          { label: "cache/", picked: true },
-        ],
+      expect(starts[0]).toStrictEqual([
+        {
+          path: path.join(parent, "first"),
+          setupCommand: "echo local",
+          setupInputs: hashes,
+        },
       ]);
+      await writeFile(
+        path.join(root, ".gitignore"),
+        ".env\n.env.production\n.envrc\n.envrc.local\n*.xcconfig\nnotes.txt\ncache/\n# changed\n"
+      );
+      await provider.newWorkspace(root);
+      const workspacePreview = {
+        branch: "new",
+        path: path.join(
+          path.dirname(await realpath(root)),
+          "worktrees",
+          "project-new"
+        ),
+      };
+      expect(posted).toStrictEqual([
+        {
+          command: "pnpm install",
+          creating: true,
+          entries: [
+            ".env",
+            ".env.production",
+            ".envrc",
+            ".envrc.local",
+            "Debug.xcconfig",
+            "notes.txt",
+            "cache/",
+          ],
+          project: root,
+          review: false,
+          selected: ["cache/"],
+          suggestions: [],
+          type: "showProjectSetup",
+          workspace: workspacePreview,
+        },
+        {
+          command: "pnpm install",
+          creating: true,
+          entries: [
+            ".env",
+            ".env.production",
+            ".envrc",
+            ".envrc.local",
+            "Debug.xcconfig",
+            "notes.txt",
+            "cache/",
+          ],
+          project: root,
+          review: false,
+          selected: ["cache/"],
+          suggestions: [],
+          type: "showProjectSetup",
+          workspace: workspacePreview,
+        },
+        {
+          command: "pnpm install",
+          creating: true,
+          entries: [
+            ".env",
+            ".env.production",
+            ".envrc",
+            ".envrc.local",
+            "Debug.xcconfig",
+            "notes.txt",
+            "cache/",
+          ],
+          project: root,
+          review: true,
+          selected: ["cache/"],
+          suggestions: [],
+          type: "showProjectSetup",
+          workspace: workspacePreview,
+        },
+      ]);
+      await expect(
+        readFile(path.join(parent, "first", "notes.txt"), "utf-8")
+      ).resolves.toBe("secret");
+      const { settings } = await readWorkspaceSettings(root);
+      expect(settings["mischief.projectSetup"]).toStrictEqual(defaults);
+      expect(settings["mischief.copyIgnoredItems"]).toStrictEqual(["cache/"]);
     } finally {
-      vscode.showQuickPick.mockReset();
       await rm(parent, { force: true, recursive: true });
     }
   });
@@ -443,351 +737,472 @@ describe("view provider", () => {
     vscode.executeCommand.mockReset();
   });
 
-  test("lists Project issues and opens one externally without closing the picker", async () => {
-    let receive: ((message: unknown) => void) | undefined;
-    let accept: (() => void) | undefined;
-    let hidden: (() => void) | undefined;
-    let triggerButton:
-      | ((event: { item: { issue: unknown } }) => Promise<void>)
-      | undefined;
-    const picker = {
-      activeItems: [],
-      dispose: vi.fn<() => void>(),
-      hide: vi.fn<() => void>(() => hidden?.()),
-      items: testValue<
-        { buttons?: unknown[]; issue: unknown; label: string }[]
-      >([]),
-      onDidAccept: vi.fn<(listener: () => void) => { dispose: () => void }>(
-        (listener) => {
-          accept = listener;
-          return { dispose: vi.fn<() => void>() };
-        }
-      ),
-      onDidHide: vi.fn<(listener: () => void) => { dispose: () => void }>(
-        (listener) => {
-          hidden = listener;
-          return { dispose: vi.fn<() => void>() };
-        }
-      ),
-      onDidTriggerItemButton: vi.fn<
-        (listener: (event: { item: { issue: unknown } }) => Promise<void>) => {
-          dispose: () => void;
-        }
-      >((listener) => {
-        triggerButton = listener;
-        return { dispose: vi.fn<() => void>() };
-      }),
-      selectedItems: testValue<{ issue: unknown }[]>([]),
-      show: vi.fn<() => void>(),
-      title: "",
-    };
-    let sourceAccept: (() => void) | undefined;
-    let sourceHidden: (() => void) | undefined;
-    const sourcePicker = {
-      activeItems: testValue<{ branch?: { current: boolean; name: string } }[]>(
-        []
-      ),
-      dispose: vi.fn<() => void>(),
-      hide: vi.fn<() => void>(() => sourceHidden?.()),
-      items: testValue<
-        {
-          branch?: { current: boolean; name: string };
-          description?: string;
-          kind?: number;
-          label: string;
-        }[]
-      >([]),
-      onDidAccept: vi.fn<(listener: () => void) => { dispose: () => void }>(
-        (listener) => {
-          sourceAccept = listener;
-          return { dispose: vi.fn<() => void>() };
-        }
-      ),
-      onDidHide: vi.fn<(listener: () => void) => { dispose: () => void }>(
-        (listener) => {
-          sourceHidden = listener;
-          return { dispose: vi.fn<() => void>() };
-        }
-      ),
-      selectedItems: testValue<
-        { branch?: { current: boolean; name: string } }[]
-      >([]),
-      show: vi.fn<() => void>(),
-      title: "",
-    };
-    vscode.assignWorkspaceColors = false;
-    vscode.createQuickPick
-      .mockReset()
-      .mockReturnValueOnce(picker)
-      .mockReturnValueOnce(sourcePicker);
-    vscode.executeCommand.mockClear();
-    vscode.openExternal.mockClear();
-    vscode.showErrorMessage.mockClear();
-    vscode.showInputBox
-      .mockReset()
-      .mockResolvedValueOnce("atomicobject/gilligan-golf")
-      .mockResolvedValueOnce("Edited Name");
-    const createWorkspace = vi.fn<() => Promise<string>>(async () => {
-      await Promise.resolve();
-      return "/worktree";
-    });
-    const sourceBranches = vi.fn<() => Promise<unknown[]>>(async () => {
-      await Promise.resolve();
-      return [
-        {
-          ahead: 2,
-          behind: 1,
-          current: true,
-          name: "main",
-          remoteOnly: false,
-        },
-        { current: false, name: "alpha", remoteOnly: false },
-        { current: false, name: "origin/release", remoteOnly: true },
+  test("runs a reviewed command only when the Project inputs are unchanged", async () => {
+    const parent = await realpath(
+      await mkdtemp(path.join(os.tmpdir(), "mischief-terminal-"))
+    );
+    const root = path.join(parent, "project");
+    const workspace = path.join(parent, "worktree");
+    try {
+      await mkdir(root);
+      await mkdir(workspace);
+      await exec("git", ["-C", root, "init"]);
+      const command = "pnpm install";
+      const { hashes } = await projectSetupInputs(root);
+      await updateWorkspaceSetting(root, "mischief.projectSetup", {
+        approvedCommandHash: setupCommandHash(command),
+        command,
+        inputHashes: hashes,
+      });
+      const terminal = {
+        sendText: vi.fn<() => void>(),
+        show: vi.fn<() => void>(),
+      };
+      vscode.createTerminal.mockReset().mockReturnValue(terminal);
+      vscode.showWarningMessage.mockClear();
+      let pending = [
+        { path: workspace, setupCommand: command, setupInputs: hashes },
       ];
-    });
-    const snapshot = projectsFixture({
-      projects: [
-        {
-          name: "project",
-          root: "/project",
-          workspaces: [
-            {
-              ahead: 0,
-              behind: 0,
-              changes: 0,
-              current: false,
-              linked: true,
-              name: "worktree",
-              path: "/worktree",
-            },
-          ],
-        },
-      ],
-      ungrouped: [],
-    });
-    const listOpenIssues = vi.fn<
-      (
-        root: string,
-        chooseRepository: (
-          defaultRepository: string
-        ) => Promise<string | undefined>
-      ) => Promise<unknown[] | undefined>
-    >(async (_root, chooseRepository) => {
-      const repository = await chooseRepository(
-        "Golf-With-GIlligan/gilligan-mono"
-      );
-      return isNonEmpty(repository)
-        ? [
-            {
-              number: 6,
-              title: "First issue",
-              url: "https://example.test/6",
-            },
-            {
-              number: 9,
-              title: "Second issue",
-              url: "https://example.test/9",
-            },
-          ]
-        : undefined;
-    });
-    const projects = {
-      createWorkspace,
-      listOpenIssues,
-      open: vi.fn<() => Promise<unknown>>(async () => {
-        await Promise.resolve();
-        return projectsFixture({
-          projects: [{ name: "project", root: "/project", workspaces: [] }],
-          ungrouped: [],
-        });
-      }),
-      refresh: vi.fn<() => Promise<unknown>>(async () => {
-        await Promise.resolve();
-        return snapshot;
-      }),
-      sourceBranches,
-    };
-    const storage = {
-      get: (_key: string, fallback: unknown) => fallback,
-      update: vi.fn<() => Promise<void>>(async () => {
-        await Promise.resolve();
-      }),
-    };
-    const provider = new MischiefView(
-      testValue<never>(projects),
-      testValue<never>({
-        onChange: vi.fn<() => void>(),
-        snapshot: () => ({ threads: [] }),
-      }),
-      testValue<never>({ fsPath: process.cwd() }),
-      testValue<never>(storage),
-      testValue<never>(profileDatabase())
-    );
-    await provider.initialize("/project");
-    await provider.resolveWebviewView(
-      testValue<never>({
-        onDidDispose: vi.fn<() => void>(),
-        webview: {
-          asWebviewUri: (uri: { fsPath: string }) => ({
-            toString: () => `webview:${uri.fsPath}`,
-          }),
-          cspSource: "webview-csp",
-          html: "",
-          onDidReceiveMessage: (listener: (message: unknown) => void) => {
-            receive = listener;
-          },
-          options: {},
-          postMessage: vi.fn<() => void>(),
-        },
-      })
-    );
-
-    receive?.({ path: "/project", type: "openIssues" });
-    await vi.waitFor(() => {
-      expect({
-        items: picker.items.map((item) => {
-          const button = testValue<
-            { iconPath: { id: string }; tooltip: string } | undefined
-          >(item.buttons?.[0]);
-          return {
-            button: button && {
-              icon: button.iconPath.id,
-              tooltip: button.tooltip,
-            },
-            label: item.label,
-          };
+      const provider = new MischiefView(
+        testValue<never>({
+          open: async () =>
+            await Promise.resolve(
+              projectsFixture({
+                projects: [
+                  {
+                    name: "project",
+                    root,
+                    workspaces: [
+                      {
+                        ahead: 0,
+                        behind: 0,
+                        changes: 0,
+                        current: true,
+                        linked: true,
+                        name: "worktree",
+                        path: workspace,
+                      },
+                    ],
+                  },
+                ],
+                ungrouped: [],
+              })
+            ),
         }),
-        title: picker.title,
-      }).toStrictEqual({
-        items: [
-          {
-            button: { icon: "link-external", tooltip: "Open #6 on GitHub" },
-            label: "#6 First issue",
+        testValue<never>({
+          newThread: vi.fn<() => Promise<void>>(async () => {
+            await Promise.resolve();
+          }),
+          onChange: vi.fn<() => void>(),
+          openWorkspace: vi.fn<() => Promise<void>>(async () => {
+            await Promise.resolve();
+          }),
+          preferredAgentId: () => "magpi-acp",
+          snapshot: () => ({ threads: [] }),
+        }),
+        testValue<never>({ fsPath: process.cwd() }),
+        testValue<never>({
+          get: (key: string, fallback: unknown) =>
+            key === "mischief.startWorkspaces" ? pending : fallback,
+          update: async (key: string, value: unknown) => {
+            await Promise.resolve();
+            if (key === "mischief.startWorkspaces") {
+              pending = testValue<typeof pending>(value);
+            }
           },
+        }),
+        testValue<never>(profileDatabase())
+      );
+      await provider.initialize(workspace);
+      expect({
+        pending,
+        warnings: vscode.showWarningMessage.mock.calls,
+      }).toStrictEqual({ pending: [], warnings: [] });
+      expect(vscode.createTerminal).toHaveBeenCalledWith({
+        cwd: workspace,
+        name: "Mischief Project setup",
+      });
+      expect(terminal.sendText).toHaveBeenCalledExactlyOnceWith(command, true);
+      expect(terminal.show).toHaveBeenCalledOnce();
+      await provider.initialize(workspace);
+      await writeFile(path.join(root, ".gitignore"), "changed\n");
+      pending = [
+        { path: workspace, setupCommand: "echo altered", setupInputs: hashes },
+      ];
+      await provider.initialize(workspace);
+      expect(terminal.sendText).toHaveBeenCalledOnce();
+    } finally {
+      vscode.createTerminal.mockReset();
+      await rm(parent, { force: true, recursive: true });
+    }
+  });
+
+  test("lists Project issues and opens one externally without closing the picker", async () => {
+    const parent = await mkdtemp(path.join(os.tmpdir(), "mischief-issues-"));
+    const root = path.join(parent, "project");
+    try {
+      await mkdir(root);
+      await exec("git", ["-C", root, "init"]);
+      let receive: ((message: unknown) => void) | undefined;
+      let accept: (() => void) | undefined;
+      let hidden: (() => void) | undefined;
+      let triggerButton:
+        | ((event: { item: { issue: unknown } }) => Promise<void>)
+        | undefined;
+      const picker = {
+        activeItems: [],
+        dispose: vi.fn<() => void>(),
+        hide: vi.fn<() => void>(() => hidden?.()),
+        items: testValue<
+          { buttons?: unknown[]; issue: unknown; label: string }[]
+        >([]),
+        onDidAccept: vi.fn<(listener: () => void) => { dispose: () => void }>(
+          (listener) => {
+            accept = listener;
+            return { dispose: vi.fn<() => void>() };
+          }
+        ),
+        onDidHide: vi.fn<(listener: () => void) => { dispose: () => void }>(
+          (listener) => {
+            hidden = listener;
+            return { dispose: vi.fn<() => void>() };
+          }
+        ),
+        onDidTriggerItemButton: vi.fn<
+          (
+            listener: (event: { item: { issue: unknown } }) => Promise<void>
+          ) => {
+            dispose: () => void;
+          }
+        >((listener) => {
+          triggerButton = listener;
+          return { dispose: vi.fn<() => void>() };
+        }),
+        selectedItems: testValue<{ issue: unknown }[]>([]),
+        show: vi.fn<() => void>(),
+        title: "",
+      };
+      let sourceAccept: (() => void) | undefined;
+      let sourceHidden: (() => void) | undefined;
+      const sourcePicker = {
+        activeItems: testValue<
+          { branch?: { current: boolean; name: string } }[]
+        >([]),
+        dispose: vi.fn<() => void>(),
+        hide: vi.fn<() => void>(() => sourceHidden?.()),
+        items: testValue<
           {
-            button: { icon: "link-external", tooltip: "Open #9 on GitHub" },
-            label: "#9 Second issue",
+            branch?: { current: boolean; name: string };
+            description?: string;
+            kind?: number;
+            label: string;
+          }[]
+        >([]),
+        onDidAccept: vi.fn<(listener: () => void) => { dispose: () => void }>(
+          (listener) => {
+            sourceAccept = listener;
+            return { dispose: vi.fn<() => void>() };
+          }
+        ),
+        onDidHide: vi.fn<(listener: () => void) => { dispose: () => void }>(
+          (listener) => {
+            sourceHidden = listener;
+            return { dispose: vi.fn<() => void>() };
+          }
+        ),
+        selectedItems: testValue<
+          { branch?: { current: boolean; name: string } }[]
+        >([]),
+        show: vi.fn<() => void>(),
+        title: "",
+      };
+      vscode.assignWorkspaceColors = false;
+      vscode.createQuickPick
+        .mockReset()
+        .mockReturnValueOnce(picker)
+        .mockReturnValueOnce(sourcePicker);
+      vscode.executeCommand.mockClear();
+      vscode.openExternal.mockClear();
+      vscode.showErrorMessage.mockClear();
+      vscode.showInputBox
+        .mockReset()
+        .mockResolvedValueOnce("atomicobject/gilligan-golf")
+        .mockResolvedValueOnce("Edited Name");
+      const createWorkspace = vi.fn<() => Promise<string>>(async () => {
+        await Promise.resolve();
+        return "/worktree";
+      });
+      const sourceBranches = vi.fn<() => Promise<unknown[]>>(async () => {
+        await Promise.resolve();
+        return [
+          {
+            ahead: 2,
+            behind: 1,
+            current: true,
+            name: "main",
+            remoteOnly: false,
+          },
+          { current: false, name: "alpha", remoteOnly: false },
+          { current: false, name: "origin/release", remoteOnly: true },
+        ];
+      });
+      const snapshot = projectsFixture({
+        projects: [
+          {
+            name: "project",
+            root,
+            workspaces: [
+              {
+                ahead: 0,
+                behind: 0,
+                changes: 0,
+                current: false,
+                linked: true,
+                name: "worktree",
+                path: "/worktree",
+              },
+            ],
           },
         ],
-        title: "Open Issues · project",
+        ungrouped: [],
       });
-    });
-
-    await triggerButton?.({ item: picker.items[1] });
-    vscode.openExternal.mockRejectedValueOnce(new Error("blocked"));
-    await triggerButton?.({ item: picker.items[0] });
-
-    expect({
-      errors: vscode.showErrorMessage.mock.calls,
-      hidden: picker.hide.mock.calls.length,
-      opened: vscode.openExternal.mock.calls,
-      sourceRequests: sourceBranches.mock.calls.length,
-    }).toStrictEqual({
-      errors: [["Mischief: Could not open #6: blocked"]],
-      hidden: 0,
-      opened: [
-        [{ value: "https://example.test/9" }],
-        [{ value: "https://example.test/6" }],
-      ],
-      sourceRequests: 0,
-    });
-
-    picker.selectedItems = [picker.items[1]];
-    accept?.();
-    await vi.waitFor(() => {
-      expect(sourcePicker.show).toHaveBeenCalledOnce();
-    });
-    sourcePicker.selectedItems = [
-      testValue<{ branch: { current: boolean; name: string } }>(
-        sourcePicker.items.find(
-          (item) => item.branch?.name === "origin/release"
-        )
-      ),
-    ];
-    sourceAccept?.();
-    await vi.waitFor(() => {
-      expect(vscode.executeCommand).toHaveBeenCalledWith(
-        "vscode.openFolder",
-        { fsPath: "/worktree" },
-        { forceNewWindow: true }
+      const listOpenIssues = vi.fn<
+        (
+          root: string,
+          chooseRepository: (
+            defaultRepository: string
+          ) => Promise<string | undefined>
+        ) => Promise<unknown[] | undefined>
+      >(async (_root, chooseRepository) => {
+        const repository = await chooseRepository(
+          "Golf-With-GIlligan/gilligan-mono"
+        );
+        return isNonEmpty(repository)
+          ? [
+              {
+                number: 6,
+                title: "First issue",
+                url: "https://example.test/6",
+              },
+              {
+                number: 9,
+                title: "Second issue",
+                url: "https://example.test/9",
+              },
+            ]
+          : undefined;
+      });
+      const projects = {
+        createWorkspace,
+        listOpenIssues,
+        open: vi.fn<() => Promise<unknown>>(async () => {
+          await Promise.resolve();
+          return projectsFixture({
+            projects: [{ name: "project", root, workspaces: [] }],
+            ungrouped: [],
+          });
+        }),
+        refresh: vi.fn<() => Promise<unknown>>(async () => {
+          await Promise.resolve();
+          return snapshot;
+        }),
+        sourceBranches,
+      };
+      const storage = {
+        get: (_key: string, fallback: unknown) => fallback,
+        update: vi.fn<() => Promise<void>>(async () => {
+          await Promise.resolve();
+        }),
+      };
+      const provider = new MischiefView(
+        testValue<never>(projects),
+        testValue<never>({
+          onChange: vi.fn<() => void>(),
+          snapshot: () => ({ threads: [] }),
+        }),
+        testValue<never>({ fsPath: process.cwd() }),
+        testValue<never>(storage),
+        testValue<never>(profileDatabase())
       );
-    });
-    const [repositoryOptions] = testValue<
-      [{ prompt: string; title: string; value: string }]
-    >(vscode.showInputBox.mock.calls[0]);
-    const [nameOptions] = testValue<
-      [{ prompt: string; title: string; value: string }]
-    >(vscode.showInputBox.mock.calls[1]);
+      await provider.initialize(root);
+      await provider.resolveWebviewView(
+        testValue<never>({
+          onDidDispose: vi.fn<() => void>(),
+          webview: {
+            asWebviewUri: (uri: { fsPath: string }) => ({
+              toString: () => `webview:${uri.fsPath}`,
+            }),
+            cspSource: "webview-csp",
+            html: "",
+            onDidReceiveMessage: (listener: (message: unknown) => void) => {
+              receive = listener;
+            },
+            options: {},
+            postMessage: (message: { type: string }) => {
+              if (message.type === "showProjectSetup") {
+                receive?.({
+                  command: "",
+                  project: root,
+                  selected: [],
+                  type: "saveProjectSetup",
+                });
+              }
+            },
+          },
+        })
+      );
 
-    expect({
-      created: createWorkspace.mock.calls,
-      hidden: picker.hide.mock.calls.length,
-      name: {
-        prompt: nameOptions.prompt,
-        title: nameOptions.title,
-        value: nameOptions.value,
-      },
-      opened: vscode.executeCommand.mock.calls,
-      pending: storage.update.mock.calls,
-      repository: {
-        prompt: repositoryOptions.prompt,
-        title: repositoryOptions.title,
-        value: repositoryOptions.value,
-      },
-      repositoryRequests: listOpenIssues.mock.calls.map(([root]) => root),
-      sourceActive: sourcePicker.activeItems.map((item) => item.branch?.name),
-      sourceItems: sourcePicker.items.map(({ description, kind, label }) => ({
-        ...(isNonEmpty(description) ? { description } : {}),
-        ...(kind === undefined ? {} : { kind }),
-        label,
-      })),
-      sourceRequests: sourceBranches.mock.calls,
-      sourceTitle: sourcePicker.title,
-    }).toStrictEqual({
-      created: [["/project", "Edited Name", "origin/release"]],
-      hidden: 1,
-      name: {
-        prompt: "Create a linked worktree and branch from origin/release",
-        title: "New Workspace for #9",
-        value: "issue-9_second-issue",
-      },
-      opened: [
-        [
+      receive?.({ path: root, type: "openIssues" });
+      await vi.waitFor(() => {
+        expect({
+          items: picker.items.map((item) => {
+            const button = testValue<
+              { iconPath: { id: string }; tooltip: string } | undefined
+            >(item.buttons?.[0]);
+            return {
+              button: button && {
+                icon: button.iconPath.id,
+                tooltip: button.tooltip,
+              },
+              label: item.label,
+            };
+          }),
+          title: picker.title,
+        }).toStrictEqual({
+          items: [
+            {
+              button: { icon: "link-external", tooltip: "Open #6 on GitHub" },
+              label: "#6 First issue",
+            },
+            {
+              button: { icon: "link-external", tooltip: "Open #9 on GitHub" },
+              label: "#9 Second issue",
+            },
+          ],
+          title: "Open Issues · project",
+        });
+      });
+
+      await triggerButton?.({ item: picker.items[1] });
+      vscode.openExternal.mockRejectedValueOnce(new Error("blocked"));
+      await triggerButton?.({ item: picker.items[0] });
+
+      expect({
+        errors: vscode.showErrorMessage.mock.calls,
+        hidden: picker.hide.mock.calls.length,
+        opened: vscode.openExternal.mock.calls,
+        sourceRequests: sourceBranches.mock.calls.length,
+      }).toStrictEqual({
+        errors: [["Mischief: Could not open #6: blocked"]],
+        hidden: 0,
+        opened: [
+          [{ value: "https://example.test/9" }],
+          [{ value: "https://example.test/6" }],
+        ],
+        sourceRequests: 0,
+      });
+
+      picker.selectedItems = [picker.items[1]];
+      accept?.();
+      await vi.waitFor(() => {
+        expect(sourcePicker.show).toHaveBeenCalledOnce();
+      });
+      sourcePicker.selectedItems = [
+        testValue<{ branch: { current: boolean; name: string } }>(
+          sourcePicker.items.find(
+            (item) => item.branch?.name === "origin/release"
+          )
+        ),
+      ];
+      sourceAccept?.();
+      await vi.waitFor(() => {
+        expect(vscode.executeCommand).toHaveBeenCalledWith(
           "vscode.openFolder",
           { fsPath: "/worktree" },
-          { forceNewWindow: true },
-        ],
-      ],
-      pending: [
-        [
-          "mischief.startWorkspaces",
+          { forceNewWindow: true }
+        );
+      });
+      const [repositoryOptions] = testValue<
+        [{ prompt: string; title: string; value: string }]
+      >(vscode.showInputBox.mock.calls[0]);
+      const [nameOptions] = testValue<
+        [{ prompt: string; title: string; value: string }]
+      >(vscode.showInputBox.mock.calls[1]);
+
+      expect({
+        created: createWorkspace.mock.calls,
+        hidden: picker.hide.mock.calls.length,
+        name: {
+          prompt: nameOptions.prompt,
+          title: nameOptions.title,
+          value: nameOptions.value,
+        },
+        opened: vscode.executeCommand.mock.calls,
+        pending: storage.update.mock.calls,
+        repository: {
+          prompt: repositoryOptions.prompt,
+          title: repositoryOptions.title,
+          value: repositoryOptions.value,
+        },
+        repositoryRequests: listOpenIssues.mock.calls.map(
+          ([project]) => project
+        ),
+        sourceActive: sourcePicker.activeItems.map((item) => item.branch?.name),
+        sourceItems: sourcePicker.items.map(({ description, kind, label }) => ({
+          ...(isNonEmpty(description) ? { description } : {}),
+          ...(kind === undefined ? {} : { kind }),
+          label,
+        })),
+        sourceRequests: sourceBranches.mock.calls,
+        sourceTitle: sourcePicker.title,
+      }).toStrictEqual({
+        created: [[root, "Edited Name", "origin/release"]],
+        hidden: 1,
+        name: {
+          prompt: "Create a linked worktree and branch from origin/release",
+          title: "New Workspace for #9",
+          value: "issue-9_second-issue",
+        },
+        opened: [
           [
-            {
-              path: "/worktree",
-              prompt:
-                "start planning work on GitHub issue #9. Read it with gh issue view https://example.test/9 --comments.  return to the user once you've read the issue and give them a summary of the item",
-            },
+            "vscode.openFolder",
+            { fsPath: "/worktree" },
+            { forceNewWindow: true },
           ],
         ],
-      ],
-      repository: {
-        prompt: "Enter the GitHub issue repository as owner/repo",
-        title: "Issue Repository for project",
-        value: "Golf-With-GIlligan/gilligan-mono",
-      },
-      repositoryRequests: ["/project"],
-      sourceActive: ["main"],
-      sourceItems: [
-        { kind: -1, label: "Local" },
-        { description: "↑2 ↓1", label: "main" },
-        { description: "local only", label: "alpha" },
-        { kind: -1, label: "Remote only" },
-        { label: "origin/release" },
-      ],
-      sourceRequests: [["/project"]],
-      sourceTitle: "Source Branch for #9",
-    });
-    vscode.assignWorkspaceColors = true;
+        pending: [
+          [
+            "mischief.startWorkspaces",
+            [
+              {
+                path: "/worktree",
+                prompt:
+                  "start planning work on GitHub issue #9. Read it with gh issue view https://example.test/9 --comments.  return to the user once you've read the issue and give them a summary of the item",
+              },
+            ],
+          ],
+        ],
+        repository: {
+          prompt: "Enter the GitHub issue repository as owner/repo",
+          title: "Issue Repository for project",
+          value: "Golf-With-GIlligan/gilligan-mono",
+        },
+        repositoryRequests: [root],
+        sourceActive: ["main"],
+        sourceItems: [
+          { kind: -1, label: "Local" },
+          { description: "↑2 ↓1", label: "main" },
+          { description: "local only", label: "alpha" },
+          { kind: -1, label: "Remote only" },
+          { label: "origin/release" },
+        ],
+        sourceRequests: [[root]],
+        sourceTitle: "Source Branch for #9",
+      });
+      vscode.assignWorkspaceColors = true;
+    } finally {
+      await rm(parent, { force: true, recursive: true });
+    }
   });
 
   test("shows inactive Thread history with compact times and reopens the selection", async () => {
