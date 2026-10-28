@@ -2106,6 +2106,95 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("collapses completed turn activity after the next user message", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (state.type !== "state" || !state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    state.threads.selected.items = [
+      { id: "user-1", kind: "user", text: "Make the change" },
+      { id: "thought-1", kind: "thought", text: "Inspecting" },
+      {
+        id: "read",
+        kind: "tool",
+        locations: [{ path: "src/a.ts" }],
+        title: "read",
+        toolKind: "read",
+      },
+      {
+        diffs: [{ newText: "new", oldText: "old", path: "src/b.ts" }],
+        id: "edit",
+        kind: "tool",
+        title: "edit",
+        toolKind: "edit",
+      },
+      {
+        diffs: [{ newText: "created", path: "src/c.ts" }],
+        id: "create",
+        kind: "tool",
+        title: "write",
+        toolKind: "edit",
+      },
+      {
+        diffs: [{ newText: "", oldText: "deleted", path: "src/d.ts" }],
+        id: "delete",
+        kind: "tool",
+        title: "edit",
+        toolKind: "edit",
+      },
+      { id: "progress", kind: "assistant", text: "Still working" },
+      {
+        id: "check",
+        kind: "tool",
+        title: "pnpm check",
+        toolKind: "execute",
+      },
+      { id: "response", kind: "assistant", text: "Finished" },
+      { id: "user-2", kind: "user", text: "One more thing" },
+      { id: "thought-2", kind: "thought", text: "Current thinking" },
+    ];
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+
+    const summary = document.querySelector<HTMLButtonElement>(".turn-summary");
+    if (!summary) {
+      throw new Error("Missing collapsed turn summary");
+    }
+    expect({
+      expanded: summary.getAttribute("aria-expanded"),
+      summary: summary.textContent,
+      text: document.querySelector("#transcript")?.textContent,
+    }).toStrictEqual({
+      expanded: "false",
+      summary:
+        "5 tool calls · 1 file read · 1 file created · 1 file edited · 1 file deleted",
+      text: "Make the change5 tool calls · 1 file read · 1 file created · 1 file edited · 1 file deletedFinishedOne more thingThinkingCurrent thinking",
+    });
+
+    act(() => {
+      summary.click();
+    });
+    expect({
+      expanded: summary.getAttribute("aria-expanded"),
+      finished: [...document.querySelectorAll("#transcript .assistant")].filter(
+        (entry) => entry.textContent === "Finished"
+      ).length,
+      groups: [...document.querySelectorAll(".collapsed-turn .tool-group")].map(
+        (group) => group.querySelector(".tool-group-heading")?.textContent
+      ),
+      text: document.querySelector("#transcript")?.textContent,
+    }).toStrictEqual({
+      expanded: "true",
+      finished: 1,
+      groups: ["File operations", "Terminal"],
+      text: "Make the change5 tool calls · 1 file read · 1 file created · 1 file edited · 1 file deletedThinkingInspectingFile operationsRead · a.tssrc/a.tsEdit · b.tsOpen diff · src/b.tsWrite · c.tsOpen diff · src/c.tsEdit · d.tsOpen diff · src/d.tsStill workingTerminalpnpm checkFinishedOne more thingThinkingCurrent thinking",
+    });
+    await unmount();
+  });
+
   test("groups terminal and file operations into compact expandable rows", async () => {
     const unmount = await renderApp();
     const state = threadState("selected", []);

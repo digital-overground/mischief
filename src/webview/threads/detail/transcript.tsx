@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import type { ReactNode } from "react";
 
 import { isDefined, isNonEmpty, isNonZero, isRecord } from "../../../present";
@@ -571,7 +571,7 @@ const TranscriptEntry = ({
   );
 };
 
-const TranscriptNodes = memo(
+const TranscriptItems = memo(
   ({ items }: { items: RenderedTranscriptItem[] }): React.JSX.Element => {
     const nodes: ReactNode[] = [];
     for (let index = 0; index < items.length;) {
@@ -608,6 +608,130 @@ const TranscriptNodes = memo(
       }
       nodes.push(<TranscriptEntry item={item} key={item.id} />);
       index += 1;
+    }
+    return <>{nodes}</>;
+  }
+);
+
+const plural = (count: number, singular: string): string =>
+  `${count} ${singular}${count === 1 ? "" : "s"}`;
+
+const turnSummary = (items: RenderedTranscriptItem[]): string => {
+  let toolCalls = 0;
+  const filesRead = new Set<string>();
+  const changedFiles = new Map<string, "created" | "deleted" | "edited">();
+  for (const item of items) {
+    if (item.kind !== "tool") {
+      continue;
+    }
+    toolCalls += 1;
+    if (item.toolKind === "read") {
+      for (const location of item.locations ?? []) {
+        filesRead.add(location.path);
+      }
+    }
+    for (const diff of item.diffs ?? []) {
+      let change: "created" | "deleted" | "edited" = "edited";
+      if (diff.newText.length === 0) {
+        change = "deleted";
+      } else if (diff.oldText === undefined) {
+        change = "created";
+      }
+      changedFiles.set(diff.path, change);
+    }
+  }
+  const counts = { created: 0, deleted: 0, edited: 0 };
+  for (const change of changedFiles.values()) {
+    counts[change] += 1;
+  }
+  const actions = [
+    plural(toolCalls, "tool call"),
+    ...(filesRead.size > 0 ? [plural(filesRead.size, "file read")] : []),
+    ...(counts.created > 0 ? [plural(counts.created, "file created")] : []),
+    ...(counts.edited > 0 ? [plural(counts.edited, "file edited")] : []),
+    ...(counts.deleted > 0 ? [plural(counts.deleted, "file deleted")] : []),
+  ].join(" · ");
+  // shortcut: elapsed time is omitted; add it when ACP exposes turn timestamps.
+  return actions.charAt(0).toUpperCase() + actions.slice(1);
+};
+
+const CollapsedTurn = ({
+  items,
+  response,
+}: {
+  items: RenderedTranscriptItem[];
+  response: RenderedTranscriptItem;
+}): React.JSX.Element => {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <section className="collapsed-turn">
+      <button
+        aria-expanded={expanded}
+        className="entry turn-summary"
+        type="button"
+        onClick={() => {
+          setExpanded((value) => !value);
+        }}
+      >
+        <Icon className="entry-icon" kind="history" title="Turn activity" />
+        <span>{turnSummary(items)}</span>
+      </button>
+      {expanded ? (
+        <TranscriptItems items={items} />
+      ) : (
+        <TranscriptEntry item={response} />
+      )}
+    </section>
+  );
+};
+
+const TranscriptNodes = memo(
+  ({ items }: { items: RenderedTranscriptItem[] }): React.JSX.Element => {
+    const nodes: ReactNode[] = [];
+    for (let index = 0; index < items.length;) {
+      const user = items[index];
+      if (user?.kind !== "user") {
+        const nextUser = items.findIndex(
+          (item, candidate) => candidate > index && item.kind === "user"
+        );
+        const end = nextUser === -1 ? items.length : nextUser;
+        nodes.push(
+          <TranscriptItems
+            items={items.slice(index, end)}
+            key={`items:${user?.id ?? index}`}
+          />
+        );
+        index = end;
+        continue;
+      }
+      const nextUser = items.findIndex(
+        (item, candidate) => candidate > index && item.kind === "user"
+      );
+      if (nextUser === -1) {
+        nodes.push(
+          <TranscriptItems
+            items={items.slice(index)}
+            key={`items:${user.id}`}
+          />
+        );
+        break;
+      }
+      const turnItems = items.slice(index + 1, nextUser);
+      const response = turnItems.findLast((item) => item.kind === "assistant");
+      if (!response) {
+        nodes.push(<TranscriptEntry item={user} key={user.id} />);
+        index += 1;
+        continue;
+      }
+      nodes.push(
+        <TranscriptEntry item={user} key={user.id} />,
+        <CollapsedTurn
+          items={turnItems}
+          key={`turn:${user.id}`}
+          response={response}
+        />
+      );
+      index = nextUser;
     }
     return <>{nodes}</>;
   }

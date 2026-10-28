@@ -1164,6 +1164,17 @@ article.entry {
   align-items: flex-start;
   gap: 8px;
 }
+.turn-summary {
+  --entry-accent: var(--hl-accent-alt);
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  font-family: var(--mischief-ui-font);
+  text-align: left;
+}
 .entry.user {
   --entry-accent: transparent;
   border-left: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
