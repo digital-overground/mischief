@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -666,12 +666,13 @@ describe("threads module", () => {
     });
   });
 
-  test("authentication failures expose the Agent terminal login", async () => {
+  test("keeps Agent authentication in memory and re-requests it after restart", async () => {
     const agent = new FakeAgent();
     agent.createError = Object.assign(new Error("Authentication required"), {
       authentication: {
         args: ["/magpi/index.js", "--terminal-login"],
         command: "node",
+        env: { TOKEN: "secret" },
         label: "Launch Pi",
       },
     });
@@ -684,9 +685,26 @@ describe("threads module", () => {
       authentication: {
         args: ["/magpi/index.js", "--terminal-login"],
         command: "node",
+        env: { TOKEN: "secret" },
         label: "Launch Pi",
       },
       status: "error",
+    });
+    expect(database.snapshot().threads[0]).not.toHaveProperty("authentication");
+    const filename = path.join(
+      profileDirectory,
+      "profile-db-v1",
+      "threads",
+      `${threads.snapshot().selected?.id}.json`
+    );
+    await expect(readFile(filename, "utf-8")).resolves.not.toContain("secret");
+
+    const restored = createThreads(agent.factory);
+    await restored.openWorkspace("/workspace");
+    expect(restored.snapshot().selected?.authentication).toBeUndefined();
+    await restored.retry();
+    expect(restored.snapshot().selected?.authentication).toMatchObject({
+      env: { TOKEN: "secret" },
     });
   });
 
@@ -1334,6 +1352,82 @@ describe("threads module", () => {
     }).toStrictEqual({ methods: ["chatgpt"], status: "idle" });
   });
 
+  test("Retry reloads an existing session before resending a failed prompt", async () => {
+    const agent = new FakeAgent();
+    agent.replayOnLoad = true;
+    let failPrompt = true;
+    let sent = 0;
+    const factory: AgentConnectionFactory = (handlers, agentId) => {
+      const connection = agent.factory(handlers, agentId);
+      let ready = false;
+      return {
+        ...connection,
+        create: async (cwd) => {
+          const setup = await connection.create(cwd);
+          ready = true;
+          return setup;
+        },
+        dispose: () => {
+          ready = false;
+          connection.dispose();
+        },
+        load: async (sessionId, cwd) => {
+          const setup = await connection.load(sessionId, cwd);
+          ready = true;
+          return setup;
+        },
+        prompt: async (sessionId, text, images) => {
+          if (!ready) {
+            throw new Error("Session not loaded");
+          }
+          sent += 1;
+          if (text === "Retry me" && failPrompt) {
+            failPrompt = false;
+            throw new Error("Agent exited");
+          }
+          return await connection.prompt(sessionId, text, images);
+        },
+      };
+    };
+    const threads = createThreads(factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Start");
+    const images = [{ data: "c2NyZWVuc2hvdA==", mimeType: "image/png" }];
+    await threads.prompt("Retry me", images);
+    expect(threads.snapshot().selected?.error).toBe("Agent exited");
+
+    agent.failLoad = true;
+    await threads.retry();
+    expect({ error: threads.snapshot().selected?.error, sent }).toStrictEqual({
+      error: "Load failed",
+      sent: 2,
+    });
+
+    agent.failLoad = false;
+    await threads.retry();
+    expect({
+      images: agent.promptImages,
+      loads: agent.loadRequests,
+      sent,
+    }).toStrictEqual({
+      images,
+      loads: [
+        { cwd: "/workspace", sessionId: "session-1" },
+        { cwd: "/workspace", sessionId: "session-1" },
+      ],
+      sent: 3,
+    });
+    expect(threads.snapshot().selected).toMatchObject({
+      items: [
+        { kind: "user", text: "Restore me" },
+        { kind: "assistant", text: "Restored." },
+        { kind: "user", text: "Retry me" },
+        { kind: "assistant", text: "Done." },
+      ],
+      status: "idle",
+    });
+  });
+
   test("a missing Agent stays visible and can be installed before retry", async () => {
     const claude = new FakeAgent();
     let installed = false;
@@ -1535,6 +1629,85 @@ describe("threads module", () => {
       ],
       status: "idle",
     });
+  });
+
+  test("an image-only failed prompt retains its attachment across a restart", async () => {
+    const failingAgent = new FakeAgent();
+    failingAgent.failCreate = true;
+    const first = createThreads(failingAgent.factory);
+    await first.openWorkspace("/workspace");
+    const image = { data: "aW1hZ2U=", mimeType: "image/png" };
+    await first.prompt("", [image]);
+    const id = database.snapshot().threads[0]?.id;
+    expect(database.snapshot().threads[0]).toMatchObject({
+      retryHasImages: true,
+      retryText: "",
+    });
+    const savedImages = path.join(
+      profileDirectory,
+      "profile-db-v1",
+      "retry-images",
+      `${id}.json`
+    );
+    await expect(readFile(savedImages, "utf-8")).resolves.toContain(image.data);
+
+    const reopenedDatabase = await ProfileDatabase.open({
+      currentWorkspace: "/workspace",
+      instanceId: "00000000-0000-4000-8000-000000000002",
+      log: vi.fn<(message: string) => void>(),
+      profileDirectory,
+    });
+    const recoveredAgent = new FakeAgent();
+    const recovered = new Threads(reopenedDatabase, recoveredAgent.factory);
+    try {
+      await recovered.openWorkspace("/workspace");
+      await recovered.retry();
+      expect(recoveredAgent.promptImages).toStrictEqual([image]);
+      expect(recovered.snapshot().selected).toMatchObject({ status: "idle" });
+      await expect(readFile(savedImages, "utf-8")).rejects.toThrow(/ENOENT/u);
+    } finally {
+      await recovered.dispose();
+      await reopenedDatabase.dispose();
+    }
+  });
+
+  test("removing a failed Thread deletes its saved image", async () => {
+    const agent = new FakeAgent();
+    agent.failCreate = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("", [{ data: "aW1hZ2U=", mimeType: "image/png" }]);
+    const id = database.snapshot().threads[0]?.id;
+    const savedImages = path.join(
+      profileDirectory,
+      "profile-db-v1",
+      "retry-images",
+      `${id}.json`
+    );
+    await threads.remove(id ?? "");
+    await expect(readFile(savedImages, "utf-8")).rejects.toThrow(/ENOENT/u);
+  });
+
+  test("Retry does not silently drop a missing saved image", async () => {
+    const failingAgent = new FakeAgent();
+    failingAgent.failCreate = true;
+    const first = createThreads(failingAgent.factory);
+    await first.openWorkspace("/workspace");
+    await first.prompt("Describe this", [
+      { data: "aW1hZ2U=", mimeType: "image/png" },
+    ]);
+    const id = database.snapshot().threads[0]?.id;
+    await rm(
+      path.join(profileDirectory, "profile-db-v1", "retry-images", `${id}.json`)
+    );
+
+    const agent = new FakeAgent();
+    const recovered = createThreads(agent.factory);
+    await recovered.openWorkspace("/workspace");
+    await expect(recovered.retry()).rejects.toThrow(
+      "Saved retry images are missing"
+    );
+    expect(agent.promptCalls).toBe(0);
   });
 
   test("the first prompt registers a Thread and streams its transcript", async () => {

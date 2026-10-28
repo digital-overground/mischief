@@ -1,4 +1,14 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import {
+  mkdir,
+  readFile,
+  readlink,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 
 import { applyEdits, modify, parse } from "jsonc-parser/lib/esm/main.js";
@@ -29,14 +39,53 @@ export const readWorkspaceSettings = async (
   return { file, settings, source };
 };
 
+export const writeWorkspaceSettings = async (
+  file: string,
+  source: string
+): Promise<void> => {
+  await mkdir(path.dirname(file), { recursive: true });
+  let destination = file;
+  try {
+    destination = await realpath(file);
+  } catch (error) {
+    if (!isRecord(error) || error.code !== "ENOENT") {
+      throw error;
+    }
+    const link = await readlink(file).catch((linkError: unknown) => {
+      if (isRecord(linkError) && linkError.code === "ENOENT") {
+        return null;
+      }
+      throw linkError;
+    });
+    if (link !== null) {
+      throw error;
+    }
+  }
+  let mode: number | undefined;
+  try {
+    ({ mode } = await stat(destination));
+  } catch (error) {
+    if (!isRecord(error) || error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const temporary = `${destination}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, source, { mode });
+    await rename(temporary, destination);
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => null);
+    throw error;
+  }
+};
+
 export const updateWorkspaceSetting = async (
   workspacePath: string,
   key: string,
   value: unknown
 ): Promise<void> => {
   const { file, source } = await readWorkspaceSettings(workspacePath);
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(
+  await writeWorkspaceSettings(
     file,
     applyEdits(
       source,

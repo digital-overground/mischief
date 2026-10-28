@@ -78,6 +78,7 @@ interface StoredThread {
   status: ThreadStatus;
   error?: string;
   retryText?: string;
+  retryHasImages?: boolean;
   authentication?: AgentAuthentication;
   manualName?: boolean;
   unread?: boolean;
@@ -565,6 +566,7 @@ export class Threads {
     }
   }
 
+  // oxlint-disable-next-line complexity -- coordinates Agent response, retry storage, and queued turns
   private async runPrompt(
     record: StoredThread,
     runtime: Runtime,
@@ -575,6 +577,7 @@ export class Threads {
       return;
     }
     let completed = false;
+    let clearRetryImages = false;
     try {
       await runtime.registration;
       runtime.registration = undefined;
@@ -596,7 +599,9 @@ export class Threads {
         archiveCompletedPlan(runtime.items);
         completed = true;
       }
+      clearRetryImages = record.retryHasImages === true;
       record.retryText = undefined;
+      record.retryHasImages = undefined;
       runtime.retryImages = undefined;
       record.authentication = undefined;
       record.updatedAt = new Date().toISOString();
@@ -607,6 +612,17 @@ export class Threads {
         record.error = errorMessage(error);
         record.retryText = pending.text;
         runtime.retryImages = pending.images;
+        if (
+          this.stored.includes(record) &&
+          (pending.images.length > 0 || record.retryHasImages === true)
+        ) {
+          await this.database.saveRetryImages(
+            record.workspace,
+            record.id,
+            pending.images
+          );
+        }
+        record.retryHasImages = pending.images.length ? true : undefined;
         record.authentication =
           agentAuthentication(error) ?? record.authentication;
       }
@@ -627,6 +643,9 @@ export class Threads {
       }
     }
     await this.persist(record);
+    if (clearRetryImages && this.stored.includes(record)) {
+      await this.database.saveRetryImages(record.workspace, record.id, []);
+    }
     this.emit();
     const [next] = runtime.pending;
     const nextItem = isDefined(next)
@@ -671,12 +690,22 @@ export class Threads {
     }
     if (record.retryText !== undefined) {
       const runtime = this.runtimes.get(record.id);
+      const images =
+        runtime?.retryImages ??
+        (record.retryHasImages === true
+          ? await this.database.readRetryImages(record.workspace, record.id)
+          : []);
       runtime?.connection.dispose();
-      if (!isNonEmpty(record.sessionId) && runtime) {
-        runtime.items = [];
-        this.runtimes.delete(record.id);
+      this.runtimes.delete(record.id);
+      if (hasSessionId(record)) {
+        const resumed = this.runtime(record);
+        resumed.retryImages = images;
+        await this.reload(record, resumed);
+        if (resumed.status === "error") {
+          return;
+        }
       }
-      await this.prompt(record.retryText, runtime?.retryImages);
+      await this.prompt(record.retryText, images);
       return;
     }
     if (!isNonEmpty(record.sessionId)) {
@@ -1058,12 +1087,14 @@ export class Threads {
     const runtime = this.runtimes.get(record.id);
     const items =
       runtime?.items ??
-      (isNonEmpty(record.retryText)
+      (isNonEmpty(record.retryText) || record.retryHasImages === true
         ? [
             {
               id: `retry:${record.id}`,
               kind: "user" as const,
-              text: record.retryText,
+              text: isNonEmpty(record.retryText)
+                ? record.retryText
+                : "Pasted image",
             },
           ]
         : []);
@@ -1510,20 +1541,6 @@ export class Threads {
     return {
       ...record,
       agentId: isAgentId(record.agentId) ? record.agentId : LEGACY_THREAD_AGENT,
-      ...(record.authentication
-        ? {
-            authentication:
-              "methodId" in record.authentication
-                ? { ...record.authentication }
-                : {
-                    ...record.authentication,
-                    args: [...record.authentication.args],
-                    ...(record.authentication.env
-                      ? { env: { ...record.authentication.env } }
-                      : {}),
-                  },
-          }
-        : {}),
       ...(record.usage ? { usage: { ...record.usage } } : {}),
     };
   }

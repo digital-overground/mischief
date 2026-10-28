@@ -7,7 +7,10 @@ import path from "node:path";
 import { LEGACY_THREAD_AGENT, isAgentId } from "../agents/update";
 import type { AgentId } from "../agents/update";
 import { isNonEmpty, isRecord } from "../present";
+import type { PromptImage } from "../threads/model";
 
+const MAX_RETRY_IMAGE_BYTES = 20_000_000;
+const MAX_RETRY_RECORD_BYTES = 21_000_000;
 const MAX_PATH_LENGTH = 32_768;
 const MAX_RECORD_BYTES = 8 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 1_000_000;
@@ -36,17 +39,7 @@ export interface DatabaseThread {
   readonly status: "idle" | "running" | "waiting" | "error";
   readonly error?: string;
   readonly retryText?: string;
-  readonly authentication?:
-    | {
-        command: string;
-        args: string[];
-        env?: Record<string, string>;
-        label: string;
-      }
-    | {
-        methodId: string;
-        label: string;
-      };
+  readonly retryHasImages?: boolean;
   readonly manualName?: boolean;
   readonly unread?: boolean;
   readonly usage?: { used: number; size: number };
@@ -148,38 +141,26 @@ const isWorkspaceLocation = (value: unknown): value is WorkspaceLocation =>
   isAbsolutePath(value.path) &&
   (value.projectRoot === undefined || isAbsolutePath(value.projectRoot));
 
-const isAuthentication = (
-  value: unknown
-): value is NonNullable<DatabaseThread["authentication"]> => {
-  if (
-    !isRecord(value) ||
-    !isBoundedString(value.label, 200) ||
-    value.label.length === 0
-  ) {
+const isRetryImages = (value: unknown): value is PromptImage[] => {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 10) {
     return false;
   }
-  if (value.methodId !== undefined) {
-    return (
-      isBoundedString(value.methodId, 200) &&
-      value.methodId.length > 0 &&
-      value.command === undefined
-    );
-  }
-  return (
-    isBoundedString(value.command, MAX_PATH_LENGTH) &&
-    value.command.length > 0 &&
-    Array.isArray(value.args) &&
-    value.args.length <= 100 &&
-    value.args.every((argument) =>
-      isBoundedString(argument, MAX_PATH_LENGTH)
-    ) &&
-    (value.env === undefined ||
-      (isRecord(value.env) &&
-        Object.entries(value.env).every(
-          ([key, candidate]) =>
-            key.length <= 1000 && isBoundedString(candidate, MAX_PATH_LENGTH)
-        )))
-  );
+  let size = 0;
+  return value.every((image: unknown) => {
+    if (
+      !isRecord(image) ||
+      typeof image.data !== "string" ||
+      typeof image.mimeType !== "string" ||
+      !/^[A-Za-z\d+/]*={0,2}$/u.test(image.data) ||
+      !["image/gif", "image/jpeg", "image/png", "image/webp"].includes(
+        image.mimeType
+      )
+    ) {
+      return false;
+    }
+    size += image.data.length;
+    return size <= MAX_RETRY_IMAGE_BYTES;
+  });
 };
 
 const isUsage = (
@@ -211,8 +192,8 @@ const isDatabaseThread = (value: unknown): value is DatabaseThread =>
   ["idle", "running", "waiting", "error"].includes(String(value.status)) &&
   (value.error === undefined || isBoundedString(value.error)) &&
   (value.retryText === undefined || isBoundedString(value.retryText)) &&
-  (value.authentication === undefined ||
-    isAuthentication(value.authentication)) &&
+  (value.retryHasImages === undefined ||
+    typeof value.retryHasImages === "boolean") &&
   (value.manualName === undefined || typeof value.manualName === "boolean") &&
   (value.unread === undefined || typeof value.unread === "boolean") &&
   (value.usage === undefined || isUsage(value.usage));
@@ -227,30 +208,13 @@ const copyWorkspace = (workspace: DatabaseWorkspace): DatabaseWorkspace => ({
 
 const copyThread = (thread: DatabaseThread): DatabaseThread => ({
   agentId: thread.agentId ?? LEGACY_THREAD_AGENT,
-  ...(thread.authentication
-    ? {
-        authentication:
-          "methodId" in thread.authentication
-            ? {
-                label: thread.authentication.label,
-                methodId: thread.authentication.methodId,
-              }
-            : {
-                args: [...thread.authentication.args],
-                command: thread.authentication.command,
-                ...(thread.authentication.env
-                  ? { env: { ...thread.authentication.env } }
-                  : {}),
-                label: thread.authentication.label,
-              },
-      }
-    : {}),
   createdAt: thread.createdAt,
   ...(thread.error === undefined ? {} : { error: thread.error }),
   id: thread.id,
   ...(thread.manualName === undefined ? {} : { manualName: thread.manualName }),
   name: thread.name,
   ...(thread.retryText === undefined ? {} : { retryText: thread.retryText }),
+  ...(thread.retryHasImages === true ? { retryHasImages: true } : {}),
   ...(thread.sessionId === undefined ? {} : { sessionId: thread.sessionId }),
   status: thread.status,
   ...(thread.unread === undefined ? {} : { unread: thread.unread }),
@@ -273,6 +237,30 @@ const parseJson = (source: string): unknown => {
   } catch {
     return undefined;
   }
+};
+
+export const stripLegacyThreadAuthentication = (value: unknown): unknown => {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.threads) ||
+    !value.threads.some(
+      (thread: unknown) =>
+        isRecord(thread) && Object.hasOwn(thread, "authentication")
+    )
+  ) {
+    return value;
+  }
+  return {
+    ...value,
+    threads: value.threads.map((entry: unknown) => {
+      if (!isRecord(entry) || !Object.hasOwn(entry, "authentication")) {
+        return entry;
+      }
+      const thread = { ...entry };
+      delete thread.authentication;
+      return thread;
+    }),
+  };
 };
 
 const parseWorkspaceRecord = (source: string): WorkspaceRecord | undefined => {
@@ -361,12 +349,15 @@ const parseSelectionRecord = (source: string): SelectionRecord | undefined => {
   };
 };
 
-const readBounded = async (filename: string): Promise<string> => {
+const readBounded = async (
+  filename: string,
+  maximum = MAX_RECORD_BYTES
+): Promise<string> => {
   const handle = await open(filename, "r");
   try {
     const stats = await handle.stat();
-    if (stats.size > MAX_RECORD_BYTES) {
-      throw new Error("record exceeds 8 MiB");
+    if (stats.size > maximum) {
+      throw new Error("record exceeds size limit");
     }
     return await handle.readFile({ encoding: "utf-8" });
   } finally {
@@ -398,15 +389,6 @@ const pathKey = (value: string): string =>
 
 const freezeThread = (thread: DatabaseThread): DatabaseThread => {
   const copy = copyThread(thread);
-  if (copy.authentication) {
-    if ("command" in copy.authentication) {
-      Object.freeze(copy.authentication.args);
-      if (copy.authentication.env) {
-        Object.freeze(copy.authentication.env);
-      }
-    }
-    Object.freeze(copy.authentication);
-  }
   if (copy.usage) {
     Object.freeze(copy.usage);
   }
@@ -427,6 +409,7 @@ export class ProfileDatabase {
   private operationTail: Promise<void> = Promise.resolve();
   private selectionRecords = new Map<string, SelectionRecord>();
   private readonly selectionsDirectory: string;
+  private readonly retryImagesDirectory: string;
   private threadRecords = new Map<string, ThreadRecord>();
   private readonly threadsDirectory: string;
   private workspaceRecords = new Map<string, WorkspaceRecord>();
@@ -439,7 +422,8 @@ export class ProfileDatabase {
     log: (message: string) => void,
     workspacesDirectory: string,
     threadsDirectory: string,
-    selectionsDirectory: string
+    selectionsDirectory: string,
+    retryImagesDirectory: string
   ) {
     this.currentWorkspace = currentWorkspace;
     this.instanceId = instanceId;
@@ -447,6 +431,7 @@ export class ProfileDatabase {
     this.workspacesDirectory = workspacesDirectory;
     this.threadsDirectory = threadsDirectory;
     this.selectionsDirectory = selectionsDirectory;
+    this.retryImagesDirectory = retryImagesDirectory;
   }
 
   static async open(options: ProfileDatabaseOptions): Promise<ProfileDatabase> {
@@ -472,10 +457,14 @@ export class ProfileDatabase {
     const workspacesDirectory = path.join(databaseDirectory, "workspaces");
     const threadsDirectory = path.join(databaseDirectory, "threads");
     const selectionsDirectory = path.join(databaseDirectory, "selections");
+    const retryImagesDirectory = path.join(databaseDirectory, "retry-images");
     await Promise.all(
-      [workspacesDirectory, threadsDirectory, selectionsDirectory].map(
-        async (directory) => await mkdir(directory, { recursive: true })
-      )
+      [
+        workspacesDirectory,
+        threadsDirectory,
+        selectionsDirectory,
+        retryImagesDirectory,
+      ].map(async (directory) => await mkdir(directory, { recursive: true }))
     );
     const database = new ProfileDatabase(
       options.currentWorkspace,
@@ -483,8 +472,10 @@ export class ProfileDatabase {
       options.log,
       workspacesDirectory,
       threadsDirectory,
-      selectionsDirectory
+      selectionsDirectory,
+      retryImagesDirectory
     );
+    await database.scrubStoredAuthentication();
     await database.refresh();
     for (const directory of [
       workspacesDirectory,
@@ -523,6 +514,53 @@ export class ProfileDatabase {
 
   snapshot(): ProfileDatabaseSnapshot {
     return this.currentSnapshot;
+  }
+
+  async readRetryImages(workspace: string, id: string): Promise<PromptImage[]> {
+    this.requireRetryOwner(workspace, id);
+    let source: string;
+    try {
+      source = await readBounded(
+        this.retryFilename(id),
+        MAX_RETRY_RECORD_BYTES
+      );
+    } catch (error) {
+      if (isRecord(error) && error.code === "ENOENT") {
+        throw new Error(
+          "Saved retry images are missing; reattach them before retrying",
+          {
+            cause: error,
+          }
+        );
+      }
+      throw error;
+    }
+    const images = parseJson(source);
+    if (!isRetryImages(images)) {
+      throw new Error(
+        "Saved retry images are invalid; reattach them before retrying"
+      );
+    }
+    return images;
+  }
+
+  async saveRetryImages(
+    workspace: string,
+    id: string,
+    images: PromptImage[]
+  ): Promise<void> {
+    await this.serialize(async () => {
+      this.requireRetryOwner(workspace, id);
+      const filename = this.retryFilename(id);
+      if (images.length === 0) {
+        await rm(filename, { force: true });
+      } else {
+        if (!isRetryImages(images)) {
+          throw new TypeError("Invalid retry images");
+        }
+        await this.replace(filename, images);
+      }
+    });
   }
 
   onChange(listener: () => void): () => void {
@@ -596,6 +634,7 @@ export class ProfileDatabase {
       });
       this.threadRecords.delete(change.id);
       this.updateSnapshot();
+      await rm(this.retryFilename(change.id), { force: true });
       return;
     }
 
@@ -713,10 +752,27 @@ export class ProfileDatabase {
     }
   }
 
+  private requireRetryOwner(workspace: string, id: string): void {
+    this.requireThreadOwner(workspace);
+    if (
+      !UUID_PATTERN.test(id) ||
+      this.threadRecords.get(id)?.workspace !== workspace
+    ) {
+      throw new Error("Unknown Thread for retry images");
+    }
+  }
+
+  private retryFilename(id: string): string {
+    return path.join(this.retryImagesDirectory, `${id}.json`);
+  }
+
   private async replace(filename: string, value: unknown): Promise<void> {
     const temporary = `${filename}.${this.instanceId}.${randomUUID()}.tmp`;
     try {
-      await writeFile(temporary, `${JSON.stringify(value)}\n`, "utf-8");
+      await writeFile(temporary, `${JSON.stringify(value)}\n`, {
+        encoding: "utf-8",
+        mode: 0o600,
+      });
       await rename(temporary, filename);
     } catch (error) {
       await rm(temporary, { force: true }).catch(() => null);
@@ -736,6 +792,33 @@ export class ProfileDatabase {
     );
     this.workspaceRecords.set(record.path, record);
     this.updateSnapshot();
+  }
+
+  private async scrubStoredAuthentication(): Promise<void> {
+    const entries = await readdir(this.threadsDirectory, {
+      withFileTypes: true,
+    });
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) {
+        continue;
+      }
+      const filename = path.join(this.threadsDirectory, entry.name);
+      let record: unknown;
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- clean each old record before loading it
+        record = parseJson(await readBounded(filename));
+      } catch (error) {
+        this.log(
+          `Could not inspect Thread record ${filename}: ${errorMessage(error)}`
+        );
+        continue;
+      }
+      if (isRecord(record) && Object.hasOwn(record, "authentication")) {
+        delete record.authentication;
+        // oxlint-disable-next-line no-await-in-loop -- preserve each record if a later cleanup fails
+        await this.replace(filename, record);
+      }
+    }
   }
 
   private async putThread(thread: DatabaseThread): Promise<void> {

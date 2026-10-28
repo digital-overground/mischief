@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { applyEdits, modify, parse } from "jsonc-parser/lib/esm/main.js";
 import * as vscode from "vscode";
 
 import { isDefined, isNonEmpty, isRecord } from "./present";
-import { readWorkspaceSettings } from "./workspace-settings";
+import {
+  readWorkspaceSettings,
+  writeWorkspaceSettings,
+} from "./workspace-settings";
 
 const BACKGROUND_KEYS = [
   "editor.background",
@@ -323,8 +326,7 @@ export const assignWorkspaceColors = async (
   if (!overrides) {
     return false;
   }
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(
+  await writeWorkspaceSettings(
     file,
     applyEdits(
       source,
