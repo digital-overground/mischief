@@ -44,10 +44,13 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",
+    "@shikijs/langs": "^4.5.0",
+    "@shikijs/themes": "^4.5.0",
     "jsonc-parser": "^3.3.1",
     "markdown-it": "^14.3.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "shiki": "^4.5.0"
   },
   "devDependencies": {
     "@types/markdown-it": "^14.2.0",

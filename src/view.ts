@@ -2,7 +2,23 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import bash from "@shikijs/langs/bash";
+import css from "@shikijs/langs/css";
+import diffLanguage from "@shikijs/langs/diff";
+import html from "@shikijs/langs/html";
+import javascript from "@shikijs/langs/javascript";
+import json from "@shikijs/langs/json";
+import jsx from "@shikijs/langs/jsx";
+import markdownLanguage from "@shikijs/langs/markdown";
+import python from "@shikijs/langs/python";
+import tsx from "@shikijs/langs/tsx";
+import typescript from "@shikijs/langs/typescript";
+import yaml from "@shikijs/langs/yaml";
+import githubDark from "@shikijs/themes/github-dark";
+import githubLight from "@shikijs/themes/github-light";
 import MarkdownIt from "markdown-it";
+import { createHighlighterCore } from "shiki/core";
+import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import * as vscode from "vscode";
 
 import { requestAgentInstall } from "./agents/install";
@@ -77,6 +93,48 @@ const workspaceColorsEnabled = (): boolean =>
     .getConfiguration("mischief")
     .get<boolean>("assignWorkspaceColors", true);
 const markdown = new MarkdownIt({ breaks: true, html: false, linkify: true });
+let markdownHighlighter: Promise<void> | undefined;
+const setupMarkdownHighlighter = async (): Promise<void> => {
+  const highlighter = await createHighlighterCore({
+    engine: createJavaScriptRegexEngine(),
+    langs: [
+      bash,
+      css,
+      diffLanguage,
+      html,
+      javascript,
+      json,
+      jsx,
+      markdownLanguage,
+      python,
+      tsx,
+      typescript,
+      yaml,
+    ],
+    themes: [githubDark, githubLight],
+  });
+  const defaultFence = markdown.renderer.rules.fence;
+  const languages = new Set(highlighter.getLoadedLanguages());
+  markdown.renderer.rules.fence = (tokens, index, options, env, renderer) => {
+    const token = tokens[index];
+    const language = token?.info.trim().split(/\s+/u)[0] ?? "text";
+    if (
+      token === undefined ||
+      (language !== "text" && !languages.has(language))
+    ) {
+      return defaultFence?.(tokens, index, options, env, renderer) ?? "";
+    }
+    return highlighter.codeToHtml(token.content, {
+      defaultColor: false,
+      lang: language,
+      themes: { dark: "github-dark", light: "github-light" },
+    });
+  };
+};
+const initializeMarkdownHighlighter = async (): Promise<void> => {
+  markdownHighlighter ??= setupMarkdownHighlighter();
+  await markdownHighlighter;
+};
 const validateMarkdownLink = markdown.validateLink.bind(markdown);
 markdown.validateLink = (href) =>
   /^file:/iu.test(href) || validateMarkdownLink(href);
@@ -845,6 +903,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   async resolveWebviewView(view: vscode.WebviewView): Promise<void> {
+    await initializeMarkdownHighlighter();
     this.view = view;
     const media = vscode.Uri.joinPath(this.extensionUri, "media");
     const dist = vscode.Uri.joinPath(this.extensionUri, "dist");

@@ -2762,6 +2762,48 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("shows Thinking by default and keeps its collapsed state while streaming", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (!state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    state.threads.selected.items = [
+      { id: "thought-1", kind: "thought", text: "First thought" },
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    const group = document.querySelector<HTMLDetailsElement>(".thinking-group");
+    if (!group) {
+      throw new Error("Missing Thinking group");
+    }
+    expect(group.open).toBeTruthy();
+    act(() => {
+      group.querySelector("summary")?.click();
+    });
+    expect(group.open).toBeFalsy();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            item: { id: "thought-2", kind: "thought", text: "Second thought" },
+            streaming: true,
+            threadId: "selected",
+            type: "transcript",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    expect(group.open).toBeFalsy();
+    expect(group.querySelectorAll(".thinking-item")).toHaveLength(2);
+    act(() => {
+      group.querySelector("summary")?.click();
+    });
+    expect(group.open).toBeTruthy();
+    await unmount();
+  });
+
   test("sticks through streamed thinking and tool-call layout growth", async () => {
     const descriptor = Object.getOwnPropertyDescriptor(
       globalThis,

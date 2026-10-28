@@ -2175,6 +2175,17 @@ describe("view provider", () => {
     expect(html).toContain('href="{{styleUri}}"');
   });
 
+  test("allows generated token styles without allowing inline stylesheets", () => {
+    const html = readFileSync("media/webview.html", "utf-8");
+    const policy = /Content-Security-Policy"\s+content="(?<policy>[^"]+)/u.exec(
+      html
+    )?.groups?.policy;
+
+    expect(policy).toContain("style-src-attr 'unsafe-inline'");
+    expect(policy).toContain("style-src-elem {{cspSource}}");
+    expect(policy).not.toContain("style-src-elem 'unsafe-inline'");
+  });
+
   test("opens a content-width Workspace menu from its clickable header", () => {
     const css = readFileSync("media/webview.css", "utf-8");
     const flyout = /\.projects-menu \{[^}]*\}/u.exec(css)?.[0];
@@ -3048,7 +3059,7 @@ describe("view provider", () => {
             {
               id: "assistant-1",
               kind: "assistant",
-              text: "**Bold** <script>alert(1)</script> [Open](file:///workspace/src/view.ts) `RoundReview.swift:27` and `Sources/View/PlayerInput.swift:307–308`.",
+              text: "**Bold** <script>alert(1)</script> [Open](file:///workspace/src/view.ts) `RoundReview.swift:27` and `Sources/View/PlayerInput.swift:307–308`.\n\n```typescript\nconst answer: number = 42;\n```",
             },
           ],
         },
@@ -3070,8 +3081,24 @@ describe("view provider", () => {
     const state = testValue<{
       threads: { selected: { items: { html: string }[] } };
     }>(postMessage.mock.calls.at(-1)?.[0]);
-    expect(state.threads.selected.items[0]?.html).toBe(
-      '<p><strong>Bold</strong> &lt;script&gt;alert(1)&lt;/script&gt; <a href="file:///workspace/src/view.ts">Open</a> <a href="RoundReview.swift#L27"><code>RoundReview.swift:27</code></a> and <a href="Sources/View/PlayerInput.swift#L307"><code>Sources/View/PlayerInput.swift:307–308</code></a>.</p>\n'
-    );
+    const html = state.threads.selected.items[0]?.html;
+    expect(
+      html?.startsWith(
+        '<p><strong>Bold</strong> &lt;script&gt;alert(1)&lt;/script&gt; <a href="file:///workspace/src/view.ts">Open</a> <a href="RoundReview.swift#L27"><code>RoundReview.swift:27</code></a> and <a href="Sources/View/PlayerInput.swift#L307"><code>Sources/View/PlayerInput.swift:307–308</code></a>.</p>\n'
+      )
+    ).toBeTruthy();
+    expect({
+      darkTheme: html.includes("github-dark"),
+      darkTokens: html.includes("--shiki-dark:"),
+      highlighted: html.includes('<pre class="shiki shiki-themes'),
+      lightTheme: html.includes("github-light"),
+      lightTokens: html.includes("--shiki-light:"),
+    }).toStrictEqual({
+      darkTheme: true,
+      darkTokens: true,
+      highlighted: true,
+      lightTheme: true,
+      lightTokens: true,
+    });
   });
 });

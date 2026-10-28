@@ -1263,11 +1263,13 @@ pre {
   font-family: var(--mischief-ui-font);
   font-weight: 500;
 }
-.branch-summary-heading::before {
+.branch-summary-heading::before,
+.thinking-heading::before {
   width: 10px;
   content: "▸";
 }
-.branch-summary[open] > .branch-summary-heading::before {
+.branch-summary[open] > .branch-summary-heading::before,
+.thinking-group[open] > .thinking-heading::before {
   content: "▾";
 }
 .thinking-content,
@@ -1388,6 +1390,19 @@ pre {
 .markdown pre code {
   padding: 0;
   background: transparent;
+}
+.markdown .shiki,
+.markdown .shiki span {
+  color: var(--shiki-light);
+}
+body.vscode-dark .markdown .shiki,
+body.vscode-dark .markdown .shiki span,
+body.vscode-high-contrast .markdown .shiki,
+body.vscode-high-contrast .markdown .shiki span {
+  color: var(--shiki-dark);
+}
+.markdown .shiki {
+  background: var(--vscode-textCodeBlock-background) !important;
 }
 .markdown blockquote {
   border-left: 2px solid var(--vscode-textBlockQuote-border);

@@ -80,11 +80,11 @@ const ThinkingGroup = ({
 }: {
   items: RenderedTranscriptItem[];
 }): React.JSX.Element => (
-  <section className="entry thought thinking-group">
-    <div className="thinking-heading">
+  <details className="entry thought thinking-group" open>
+    <summary className="thinking-heading">
       <Icon className="entry-icon" kind="brain" title="Thinking" />
       Thinking
-    </div>
+    </summary>
     <div className="thinking-content">
       {items.map((item) => (
         <MarkdownBody
@@ -94,7 +94,7 @@ const ThinkingGroup = ({
         />
       ))}
     </div>
-  </section>
+  </details>
 );
 
 const BranchSummary = ({
