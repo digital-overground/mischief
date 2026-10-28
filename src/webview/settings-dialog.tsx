@@ -175,6 +175,7 @@ export const SettingsDialog = ({
   icons?: Partial<Record<AgentId, string>>;
 }): React.JSX.Element => {
   const [assignWorkspaceColors, setAssignWorkspaceColors] = useState(true);
+  const [todoEnabled, setTodoEnabled] = useState<boolean | undefined>();
   const [defaultAgent, setDefaultAgent] = useState("");
   const [agents, setAgents] = useState<AgentStatus[]>([]);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -183,6 +184,7 @@ export const SettingsDialog = ({
     const receive = (event: MessageEvent<HostToWebviewMessage>): void => {
       if (event.data.type === "showSettings") {
         setAssignWorkspaceColors(event.data.assignWorkspaceColors);
+        setTodoEnabled(event.data.todoExtensionEnabled);
         setDefaultAgent(event.data.defaultAgent);
         setAgents(event.data.agents);
         if (dialog.current && !dialog.current.open) {
@@ -231,6 +233,31 @@ export const SettingsDialog = ({
           >
             Automatically assigns colors from the active theme to Workspace
             windows that do not already define them.
+          </span>
+        </span>
+      </label>
+      <label className="settings-option">
+        <input
+          type="checkbox"
+          checked={todoEnabled === true}
+          disabled={todoEnabled === undefined}
+          aria-describedby="todo-extension-description"
+          onChange={(event) => {
+            postMessage({
+              type: "setTodoExtensionEnabled",
+              value: event.currentTarget.checked,
+            });
+          }}
+        />
+        <span>
+          <span className="settings-name">Pi Todo extension</span>
+          <span
+            className="settings-description"
+            id="todo-extension-description"
+          >
+            {todoEnabled === undefined
+              ? "Not installed. Run pi install npm:@juicesharp/rpiv-todo to enable."
+              : "Controls the shared Pi installation, including terminal Pi. Takes effect in new or reloaded Agent sessions."}
           </span>
         </span>
       </label>

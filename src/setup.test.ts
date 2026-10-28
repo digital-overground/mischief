@@ -1,4 +1,10 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -9,6 +15,8 @@ import {
   missingRecommendedAddons,
   nextSoftwareRequirement,
   RECOMMENDED_ADDONS,
+  setTodoExtensionEnabled,
+  todoExtensionEnabled,
 } from "./setup";
 
 const originalPath = process.env.PATH;
@@ -52,6 +60,77 @@ describe("setup", () => {
     );
 
     expect(missingRecommendedAddons(directory)).toStrictEqual([]);
+  });
+
+  test("toggles only the installed todo package without losing other Pi settings", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "mischief-todo-"));
+    directories.push(directory);
+    const filename = path.join(directory, "settings.json");
+    writeFileSync(
+      filename,
+      JSON.stringify({
+        defaultModel: "keep-this",
+        packages: [
+          "npm:@juicesharp/rpiv-todo@1.0.0",
+          { extensions: ["./index.ts"], source: "npm:other" },
+        ],
+      })
+    );
+
+    expect(todoExtensionEnabled(directory)).toBeTruthy();
+    setTodoExtensionEnabled(false, directory);
+    expect(todoExtensionEnabled(directory)).toBeFalsy();
+    expect(JSON.parse(readFileSync(filename, "utf-8"))).toStrictEqual({
+      defaultModel: "keep-this",
+      packages: [
+        { extensions: [], source: "npm:@juicesharp/rpiv-todo@1.0.0" },
+        { extensions: ["./index.ts"], source: "npm:other" },
+      ],
+    });
+    setTodoExtensionEnabled(true, directory);
+    expect(todoExtensionEnabled(directory)).toBeTruthy();
+    expect(JSON.parse(readFileSync(filename, "utf-8"))).toStrictEqual({
+      defaultModel: "keep-this",
+      packages: [
+        { source: "npm:@juicesharp/rpiv-todo@1.0.0" },
+        { extensions: ["./index.ts"], source: "npm:other" },
+      ],
+    });
+  });
+
+  test("does not change Pi settings if todo is missing or settings are invalid", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "mischief-todo-"));
+    directories.push(directory);
+    const filename = path.join(directory, "settings.json");
+    writeFileSync(filename, '{"packages":["npm:other"]}');
+    expect(todoExtensionEnabled(directory)).toBeUndefined();
+    expect(() => {
+      setTodoExtensionEnabled(false, directory);
+    }).toThrow("not installed");
+    expect(readFileSync(filename, "utf-8")).toBe('{"packages":["npm:other"]}');
+    writeFileSync(filename, "invalid json");
+    expect(() => {
+      setTodoExtensionEnabled(false, directory);
+    }).toThrow("Unexpected token");
+    expect(readFileSync(filename, "utf-8")).toBe("invalid json");
+  });
+
+  test("refuses to overwrite custom Pi Todo package filters", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "mischief-todo-"));
+    directories.push(directory);
+    const filename = path.join(directory, "settings.json");
+    writeFileSync(
+      filename,
+      '{"packages":[{"source":"npm:@juicesharp/rpiv-todo","extensions":["./index.ts"]}]}'
+    );
+    expect(() => {
+      setTodoExtensionEnabled(false, directory);
+    }).toThrow("custom package settings");
+    expect(JSON.parse(readFileSync(filename, "utf-8"))).toStrictEqual({
+      packages: [
+        { extensions: ["./index.ts"], source: "npm:@juicesharp/rpiv-todo" },
+      ],
+    });
   });
 
   test("reports missing Git alongside the agent tools", () => {

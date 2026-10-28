@@ -11,6 +11,12 @@ export const PlanControl = ({
   if (!plan) {
     return null;
   }
+  const openEntries = plan.planEntries?.filter(
+    (entry) => entry.status !== "completed"
+  );
+  const completedEntries = plan.planEntries?.filter(
+    (entry) => entry.status === "completed"
+  );
   return (
     <details id="plan" open>
       <summary id="plan-title">
@@ -41,27 +47,48 @@ export const PlanControl = ({
           Clear
         </button>
       </summary>
-      {isNonZero(plan.planEntries?.length) ? (
-        <ol id="plan-body">
-          {plan.planEntries.map((entry, index) => (
-            <li className={`plan-task ${entry.status}`} key={index}>
-              {entry.status === "in_progress" ? (
-                <span
-                  className="plan-task-indicator"
-                  role="img"
-                  aria-label="In progress"
-                />
-              ) : (
-                <Icon
-                  className="plan-task-icon"
-                  kind={entry.status === "completed" ? "circleCheck" : "circle"}
-                  title={entry.status === "completed" ? "Completed" : "Pending"}
-                />
-              )}
-              <span>{entry.content}</span>
-            </li>
-          ))}
-        </ol>
+      {plan.planEntries ? (
+        <div id="plan-body">
+          {isNonZero(completedEntries?.length) ? (
+            <details className="plan-completed">
+              <summary>{completedEntries.length} completed</summary>
+              <ol>
+                {completedEntries.map((entry, index) => (
+                  <li className="plan-task completed" key={index}>
+                    <Icon
+                      className="plan-task-icon"
+                      kind="circleCheck"
+                      title="Completed"
+                    />
+                    <span>{entry.content}</span>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          ) : null}
+          {isNonZero(openEntries?.length) ? (
+            <ol>
+              {openEntries.map((entry, index) => (
+                <li className={`plan-task ${entry.status}`} key={index}>
+                  {entry.status === "in_progress" ? (
+                    <span
+                      className="plan-task-indicator"
+                      role="img"
+                      aria-label="In progress"
+                    />
+                  ) : (
+                    <Icon
+                      className="plan-task-icon"
+                      kind="circle"
+                      title="Pending"
+                    />
+                  )}
+                  <span>{entry.content}</span>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+        </div>
       ) : (
         <pre id="plan-body">{plan.text}</pre>
       )}

@@ -1,5 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  accessSync,
+  constants,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -32,9 +41,107 @@ export const RECOMMENDED_ADDONS: SetupOption[] = [
   },
 ];
 
+const piAgentDir = (): string =>
+  process.env.PI_CODING_AGENT_DIR ?? path.join(homedir(), ".pi", "agent");
+
+const todoSource = ADDON_SOURCES.todo;
+const isTodoPackage = (entry: unknown): boolean => {
+  if (typeof entry !== "string" && !isRecord(entry)) {
+    return false;
+  }
+  const source = typeof entry === "string" ? entry : entry.source;
+  return (
+    typeof source === "string" &&
+    (source === todoSource || source.startsWith(`${todoSource}@`))
+  );
+};
+
+export const todoExtensionEnabled = (
+  agentDir = piAgentDir()
+): boolean | undefined => {
+  try {
+    const settings: unknown = JSON.parse(
+      readFileSync(path.join(agentDir, "settings.json"), "utf-8")
+    );
+    if (!isRecord(settings) || !Array.isArray(settings.packages)) {
+      return undefined;
+    }
+    const entry: unknown = settings.packages.find(isTodoPackage);
+    return entry === undefined
+      ? undefined
+      : !isRecord(entry) ||
+          !Array.isArray(entry.extensions) ||
+          entry.extensions.length > 0;
+  } catch {
+    return undefined;
+  }
+};
+
+export const setTodoExtensionEnabled = (
+  enabled: boolean,
+  agentDir = piAgentDir()
+): void => {
+  const filename = path.join(agentDir, "settings.json");
+  const original = readFileSync(filename, "utf-8");
+  const settings: unknown = JSON.parse(original);
+  if (!isRecord(settings) || !Array.isArray(settings.packages)) {
+    throw new Error("Invalid Pi package settings");
+  }
+  const todoPackages: unknown[] = settings.packages.filter(isTodoPackage);
+  if (todoPackages.length === 0) {
+    throw new Error("Pi Todo extension is not installed");
+  }
+  if (
+    todoPackages.length !== 1 ||
+    todoPackages.some(
+      (entry) =>
+        isRecord(entry) &&
+        Array.isArray(entry.extensions) &&
+        entry.extensions.length > 0
+    )
+  ) {
+    throw new Error(
+      "Pi Todo has custom package settings; configure it with pi config"
+    );
+  }
+  settings.packages = settings.packages.map((entry: unknown) => {
+    if (
+      !isTodoPackage(entry) ||
+      (typeof entry !== "string" && !isRecord(entry))
+    ) {
+      return entry;
+    }
+    const packageEntry: Record<string, unknown> =
+      typeof entry === "string" ? { source: entry } : { ...entry };
+    if (enabled) {
+      delete packageEntry.extensions;
+    } else {
+      packageEntry.extensions = [];
+    }
+    return packageEntry;
+  });
+  const temporary = `${filename}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, `${JSON.stringify(settings, null, 2)}\n`, {
+      flag: "wx",
+      mode: statSync(filename).mode,
+    });
+    if (readFileSync(filename, "utf-8") !== original) {
+      throw new Error("Pi settings changed while updating; retry");
+    }
+    renameSync(temporary, filename);
+  } catch (error) {
+    try {
+      unlinkSync(temporary);
+    } catch {
+      // The temporary file may not have been created.
+    }
+    throw error;
+  }
+};
+
 export const missingRecommendedAddons = (
-  agentDir = process.env.PI_CODING_AGENT_DIR ??
-    path.join(homedir(), ".pi", "agent")
+  agentDir = piAgentDir()
 ): SetupOption[] => {
   let packages: unknown[] = [];
   try {

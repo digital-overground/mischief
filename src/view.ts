@@ -43,6 +43,7 @@ import type {
   ProjectsSnapshot,
 } from "./projects/projects";
 import { projectSetupInputs, setupCommandHash } from "./projects/setup";
+import { setTodoExtensionEnabled, todoExtensionEnabled } from "./setup";
 import type { AgentTreeNavigationOptions } from "./threads/acp/models";
 import type { PromptImage } from "./threads/model";
 import type {
@@ -890,6 +891,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
       agents: this.agentManager?.snapshot() ?? [],
       assignWorkspaceColors: workspaceColorsEnabled(),
       defaultAgent: isAgentId(defaultAgent) ? defaultAgent : "",
+      todoExtensionEnabled: todoExtensionEnabled(),
       type: "showSettings",
     } satisfies HostToWebviewMessage);
   }
@@ -1021,6 +1023,9 @@ export class MischiefView implements vscode.WebviewViewProvider {
       }
       await this.handleInteractionMessage(data);
     } catch (error) {
+      if (data.type === "setTodoExtensionEnabled") {
+        this.showSettings();
+      }
       void vscode.window.showErrorMessage(
         `Mischief: ${error instanceof Error ? error.message : String(error)}`
       );
@@ -1046,6 +1051,14 @@ export class MischiefView implements vscode.WebviewViewProvider {
           data.value,
           vscode.ConfigurationTarget.Global
         );
+      return true;
+    }
+    if (
+      data.type === "setTodoExtensionEnabled" &&
+      typeof data.value === "boolean"
+    ) {
+      setTodoExtensionEnabled(data.value);
+      this.showSettings();
       return true;
     }
     if (data.type === "contextItems") {

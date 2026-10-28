@@ -133,6 +133,7 @@ describe("transcript reducer", () => {
     });
 
     archiveCompletedPlan(items);
+    archiveCompletedPlan(items);
 
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({

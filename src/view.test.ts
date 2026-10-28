@@ -19,6 +19,7 @@ import { exec } from "./exec";
 import { isNonEmpty } from "./present";
 import { projectsFixture } from "./projects/projects-fixture";
 import { projectSetupInputs, setupCommandHash } from "./projects/setup";
+import { todoExtensionEnabled } from "./setup";
 import { testValue } from "./test-value";
 import { MischiefView } from "./view";
 import {
@@ -2853,6 +2854,7 @@ describe("view provider", () => {
           agents: [magpi, { ...codex, state: "checking" }],
           assignWorkspaceColors: vscode.assignWorkspaceColors,
           defaultAgent: "",
+          todoExtensionEnabled: todoExtensionEnabled(),
           type: "showSettings",
         },
       ],
@@ -2862,6 +2864,7 @@ describe("view provider", () => {
           agents: statuses,
           assignWorkspaceColors: vscode.assignWorkspaceColors,
           defaultAgent: "",
+          todoExtensionEnabled: todoExtensionEnabled(),
           type: "showSettings",
         },
       ],
@@ -2922,6 +2925,7 @@ describe("view provider", () => {
           agents: [],
           assignWorkspaceColors: true,
           defaultAgent: "",
+          todoExtensionEnabled: todoExtensionEnabled(),
           type: "showSettings",
         },
       ],
@@ -2930,10 +2934,39 @@ describe("view provider", () => {
           agents: [],
           assignWorkspaceColors: false,
           defaultAgent: "",
+          todoExtensionEnabled: todoExtensionEnabled(),
           type: "showSettings",
         },
       ],
     ]);
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "mischief-todo-view-")
+    );
+    const previousDir = process.env.PI_CODING_AGENT_DIR;
+    try {
+      await writeFile(
+        path.join(directory, "settings.json"),
+        JSON.stringify({ packages: ["npm:@juicesharp/rpiv-todo"] })
+      );
+      process.env.PI_CODING_AGENT_DIR = directory;
+      receive?.({ type: "setTodoExtensionEnabled", value: false });
+      await vi.waitFor(() => {
+        expect(todoExtensionEnabled(directory)).toBeFalsy();
+      });
+      expect(postMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          todoExtensionEnabled: false,
+          type: "showSettings",
+        })
+      );
+    } finally {
+      if (previousDir === undefined) {
+        delete process.env.PI_CODING_AGENT_DIR;
+      } else {
+        process.env.PI_CODING_AGENT_DIR = previousDir;
+      }
+      await rm(directory, { force: true, recursive: true });
+    }
     receive?.({ id: "codex-acp", type: "setDefaultAgent" });
     await vi.waitFor(() => {
       expect(vscode.updateConfiguration).toHaveBeenCalledWith(

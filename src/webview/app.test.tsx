@@ -548,12 +548,15 @@ describe("React webview", () => {
     const checkbox = dialog?.querySelector<HTMLInputElement>(
       'input[type="checkbox"]'
     );
+    const todo = dialog?.querySelector<HTMLInputElement>(
+      'input[aria-describedby="todo-extension-description"]'
+    );
     const defaultAgent =
       dialog?.querySelector<HTMLButtonElement>("#default-agent");
     const close = dialog?.querySelector<HTMLButtonElement>(
       '[aria-label="Close Settings"]'
     );
-    if (!dialog || !checkbox || !defaultAgent || !close) {
+    if (!dialog || !checkbox || !todo || !defaultAgent || !close) {
       throw new Error("Missing Settings controls");
     }
     Object.defineProperties(dialog, {
@@ -585,6 +588,7 @@ describe("React webview", () => {
             ],
             assignWorkspaceColors: false,
             defaultAgent: "",
+            todoExtensionEnabled: true,
             type: "showSettings",
           } satisfies HostToWebviewMessage,
         })
@@ -599,6 +603,7 @@ describe("React webview", () => {
       description: dialog.querySelector(".settings-description")?.textContent,
       open: dialog.open,
       title: dialog.querySelector(".settings-name")?.textContent,
+      todoChecked: todo.checked,
     }).toStrictEqual({
       agent: "MagPiInstalled 0.3.0 · Latest 0.3.0 · Up to dateInstall managed",
       checked: false,
@@ -608,6 +613,7 @@ describe("React webview", () => {
         "Automatically assigns colors from the active theme to Workspace windows that do not already define them.",
       open: true,
       title: "Assign Workspace window colors",
+      todoChecked: true,
     });
 
     postMessage.mockClear();
@@ -639,11 +645,18 @@ describe("React webview", () => {
       type: "setAssignWorkspaceColors",
       value: true,
     });
+    postMessage.mockClear();
+    act(() => {
+      todo.click();
+    });
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({
+      type: "setTodoExtensionEnabled",
+      value: false,
+    });
 
     act(() => {
       close.click();
     });
-    expect(dialog.open).toBeFalsy();
     await unmount();
   });
 
@@ -3704,6 +3717,11 @@ describe("React webview", () => {
               text: "Preserve the adapter decision.",
             },
             {
+              id: "completed-plan-1",
+              kind: "completedPlan",
+              text: "✓ Older task",
+            },
+            {
               id: "plan-1",
               kind: "plan",
               planEntries: [
@@ -3753,9 +3771,13 @@ describe("React webview", () => {
       completedIcon: document.querySelector<HTMLElement>(
         ".plan-task.completed .plan-task-icon"
       )?.title,
+      completedOpen:
+        document.querySelector<HTMLDetailsElement>(".plan-completed")?.open,
       font: document.documentElement.style.getPropertyValue(
         "--mischief-mono-font"
       ),
+      historicalPlanOpen:
+        document.querySelector<HTMLDetailsElement>(".completed-plan")?.open,
       plan: document.querySelector("#plan-body")?.textContent,
       planProcessing: document.querySelector(
         '.plan-task-indicator[aria-label="In progress"]'
@@ -3775,8 +3797,10 @@ describe("React webview", () => {
       branchIcon: "Branch summary",
       branchOpen: false,
       completedIcon: "Completed",
+      completedOpen: false,
       font: "Test Mono",
-      plan: "Inspect the viewRefactor the viewTest the view",
+      historicalPlanOpen: false,
+      plan: "1 completedInspect the viewRefactor the viewTest the view",
       planProcessing: testValue<unknown>(expect.any(HTMLElement)),
       steering: true,
       summaryOverlay: "Generating branch summary…",

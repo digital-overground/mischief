@@ -1119,7 +1119,7 @@ describe("threads module", () => {
     ).toBeFalsy();
   });
 
-  test("moves an all-completed plan into the transcript", async () => {
+  test("archives a completed plan for each turn", async () => {
     const agent = new FakeAgent();
     agent.richUpdates = true;
     agent.completePlan = true;
@@ -1127,15 +1127,13 @@ describe("threads module", () => {
     await threads.openWorkspace("/workspace");
 
     await threads.prompt("Inspect it");
+    await threads.prompt("Inspect it again");
 
-    expect(threads.snapshot().selected?.items).toStrictEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: "completedPlan",
-          text: "✓ Inspect\n✓ Fix",
-        }),
-      ])
-    );
+    expect(
+      threads
+        .snapshot()
+        .selected?.items.filter((item) => item.kind === "completedPlan")
+    ).toHaveLength(2);
     expect(
       threads.snapshot().selected?.items.some((item) => item.kind === "plan")
     ).toBeFalsy();

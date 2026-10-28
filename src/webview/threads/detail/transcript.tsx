@@ -510,13 +510,13 @@ const TranscriptEntry = ({
   }
   if (item.kind === "completedPlan") {
     return (
-      <section className="entry completed-plan">
-        <div className="completed-plan-title">
+      <details className="entry completed-plan">
+        <summary className="completed-plan-title">
           <Icon className="entry-icon" kind="plan" title="Completed Plan" />
           Completed Plan
-        </div>
+        </summary>
         <pre className="completed-plan-body">{item.text ?? ""}</pre>
-      </section>
+      </details>
     );
   }
   if (item.kind === "tool") {

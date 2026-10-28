@@ -68,6 +68,7 @@ export type HostToWebviewMessage =
       type: "showSettings";
       assignWorkspaceColors: boolean;
       defaultAgent: string;
+      todoExtensionEnabled?: boolean;
       agents: AgentStatus[];
     }
   | { type: "agents"; agents: AgentStatus[] }
@@ -126,6 +127,7 @@ export type WebviewToHostMessage =
   | { type: "prompt"; text: string; images: PromptImage[] }
   | { type: "setupContinue"; selected: string[] }
   | { type: "setAssignWorkspaceColors"; value: boolean }
+  | { type: "setTodoExtensionEnabled"; value: boolean }
   | { type: "setDefaultAgent"; id: string }
   | {
       type: "saveProjectSetup";
