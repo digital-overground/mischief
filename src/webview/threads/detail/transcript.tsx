@@ -244,15 +244,27 @@ const AskUserItem = ({
 }): React.JSX.Element => {
   const question = askUserQuestion(item.input);
   const answerPrefix = "User answered: ";
-  if (!isNonEmpty(question) || item.output?.startsWith(answerPrefix) !== true) {
-    return <GenericToolItem item={item} />;
+  const cancelled =
+    item.cancelled === true ||
+    item.output?.trim() === "User cancelled the question";
+  if (
+    !isNonEmpty(question) ||
+    (!cancelled && item.output?.startsWith(answerPrefix) !== true)
+  ) {
+    return (
+      <GenericToolItem
+        item={cancelled ? { ...item, status: "cancelled" } : item}
+      />
+    );
   }
-  const answer = item.output.slice(answerPrefix.length);
+  const answer = cancelled
+    ? "Cancelled"
+    : item.output?.slice(answerPrefix.length);
   return (
     <section className="entry ask-user-result">
       <div className="ask-user-title">
         <Icon className="entry-icon" kind="question" title="Question" />
-        Question
+        {cancelled ? "Question cancelled" : "Question"}
       </div>
       <div className="ask-user-content">
         <div className="body ask-user-question">{question}</div>

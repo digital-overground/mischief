@@ -11,7 +11,7 @@ import type {
   RenderedTranscriptItem,
 } from "../../protocol";
 import { Composer } from "./composer/composer";
-import { Interaction } from "./interaction";
+import { Interaction, InteractionQuestion } from "./interaction";
 import { PlanControl } from "./plan-control";
 import { SteeringControl } from "./steering-control";
 import { Transcript } from "./transcript";
@@ -131,7 +131,12 @@ export const ThreadView = ({
     <section id="thread" aria-busy={blocked}>
       <div
         id="thread-content"
-        inert={blocked || Boolean(selected?.interaction)}
+        className={
+          selected?.interaction?.kind === "elicitation"
+            ? "answering"
+            : undefined
+        }
+        inert={blocked || selected?.interaction?.kind === "permission"}
       >
         <header id="thread-header">
           <div className="thread-header-agent">
@@ -242,6 +247,9 @@ export const ThreadView = ({
               visibleCount={visibleCount}
               key={setup ? "setup" : (selected?.id ?? "none")}
             />
+            {selected?.interaction?.kind === "elicitation" ? (
+              <InteractionQuestion interaction={selected.interaction} />
+            ) : null}
             <div id="notice">{selected?.error ?? ""}</div>
             <div id="actions">
               {selected?.status === "error" ? (
@@ -272,6 +280,9 @@ export const ThreadView = ({
         </div>
         <SteeringControl messages={selected?.steering ?? []} />
         <PlanControl plan={plan} key={plan?.id ?? "no-plan"} />
+        {selected?.interaction?.kind === "elicitation" ? (
+          <Interaction interaction={selected.interaction} />
+        ) : null}
         <Composer
           historyItems={visibleMessages}
           onJumpMessage={(id) => {
@@ -315,7 +326,9 @@ export const ThreadView = ({
           setupSelected={selectedSetupOptions}
         />
       </div>
-      <Interaction interaction={selected?.interaction} />
+      {selected?.interaction?.kind === "permission" ? (
+        <Interaction interaction={selected.interaction} />
+      ) : null}
       {isNonEmpty(processingLabel) ? (
         <div
           aria-live="polite"

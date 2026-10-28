@@ -2074,6 +2074,35 @@ describe("React webview", () => {
       title: "Question",
       toolBody: null,
     });
+
+    state.threads.selected.items = [
+      {
+        ...state.threads.selected.items[0],
+        output: "User cancelled the question",
+      },
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    expect(document.querySelector(".ask-user-result")?.textContent).toBe(
+      `Question cancelled${question}Cancelled`
+    );
+
+    state.threads.selected.items = [
+      {
+        cancelled: true,
+        id: "ask-user",
+        kind: "tool",
+        status: "completed",
+        title: "ask_user",
+      },
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    expect(document.querySelector(".entry.tool summary")?.textContent).toBe(
+      "ask_user · cancelled"
+    );
     await unmount();
   });
 
@@ -3838,6 +3867,7 @@ describe("React webview", () => {
       projects: projectsFixture({ projects: [], ungrouped: [] }),
       threads: {
         selected: {
+          agentId: "magpi-acp",
           commands: [],
           configOptions: [],
           drafts: [],
@@ -3907,12 +3937,8 @@ describe("React webview", () => {
         '#interaction input[type="radio"]'
       ),
     ];
-    const custom = document.querySelector<HTMLTextAreaElement>(
-      '#interaction textarea[name="other"]'
-    );
-    const submit = document.querySelector<HTMLButtonElement>(
-      '#interaction button[type="submit"]'
-    );
+    const custom = document.querySelector<HTMLTextAreaElement>("#composer");
+    const submit = document.querySelector<HTMLButtonElement>("#send");
     const multipleChoices = [
       ...document.querySelectorAll<HTMLInputElement>(
         '#interaction input[type="checkbox"][name="tools"]'
@@ -3932,35 +3958,39 @@ describe("React webview", () => {
         ".interaction-actions .interaction-action-icon"
       ).length,
       blocked: document.querySelector("#thread-content")?.hasAttribute("inert"),
+      bottomAligned:
+        document.querySelector("#thread-content.answering") !== null,
       cancelIsDanger:
         document.querySelector(".interaction-actions .action.danger") !== null,
       context: document.querySelector(".interaction-context")?.textContent,
-      customDescription: document.querySelector(
-        ".interaction-custom-response .interaction-field-description"
-      )?.textContent,
       descriptions: [...document.querySelectorAll(".interaction-choice")].map(
         (choice) => choice.textContent
       ),
+      extraTextarea: document.querySelector("#interaction textarea") !== null,
       icon: document.querySelector(".interaction-heading .lucide"),
+      inline:
+        document.querySelector("#chat .inline-interaction-question") !== null,
       question: document.querySelector(".interaction-question")?.textContent,
       tooltips: [
         ...document.querySelectorAll<HTMLButtonElement>("#interaction button"),
       ].map((button) => button.title),
     }).toStrictEqual({
-      actionIcons: 2,
-      blocked: true,
+      actionIcons: 1,
+      blocked: false,
+      bottomAligned: true,
       cancelIsDanger: true,
       context: "ContextTest prompt context.",
-      customDescription: "Optional additional info or options",
       descriptions: [
         "Immutable once round startsGames can trust the roster for the whole round.",
         "Editable until first scoreChanges remain possible until scoring begins.",
         "Read",
         "Search",
       ],
+      extraTextarea: false,
       icon: testValue<unknown>(expect.any(SVGElement)),
+      inline: true,
       question: "Can Team membership change after a round starts?",
-      tooltips: ["Submit", "Cancel"],
+      tooltips: ["Cancel"],
     });
 
     postMessage.mockClear();
@@ -3986,6 +4016,13 @@ describe("React webview", () => {
       },
       type: "respond",
     });
+    postMessage.mockClear();
+    act(() => {
+      document
+        .querySelector<HTMLButtonElement>('#interaction button[title="Cancel"]')
+        ?.click();
+    });
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: "cancel" });
     await unmount();
   });
 
@@ -3996,6 +4033,7 @@ describe("React webview", () => {
       projects: projectsFixture({ projects: [], ungrouped: [] }),
       threads: {
         selected: {
+          agentId: "magpi-acp",
           commands: [],
           configOptions: [],
           drafts: [],
@@ -4041,12 +4079,8 @@ describe("React webview", () => {
         '#interaction input[type="checkbox"][name="__mischief_options"]'
       ),
     ];
-    const custom = document.querySelector<HTMLTextAreaElement>(
-      '#interaction textarea[name="answer"]'
-    );
-    const submit = document.querySelector<HTMLButtonElement>(
-      '#interaction button[type="submit"]'
-    );
+    const custom = document.querySelector<HTMLTextAreaElement>("#composer");
+    const submit = document.querySelector<HTMLButtonElement>("#send");
     if (choices.length !== 3 || !custom || !submit) {
       throw new Error("Missing selectable ask-user options");
     }
@@ -4054,22 +4088,30 @@ describe("React webview", () => {
       choices: [...document.querySelectorAll(".interaction-choice-title")].map(
         (choice) => choice.textContent
       ),
-      customDescription: document.querySelector(
-        ".interaction-custom-response .interaction-field-description"
-      )?.textContent,
-      question: document.querySelector(".interaction-question")?.textContent,
+      extraTextarea: document.querySelector("#interaction textarea") !== null,
+      question: document.querySelector("#chat .interaction-question")
+        ?.textContent,
     }).toStrictEqual({
       choices: ["Typography", "Spacing", "Buttons"],
-      customDescription: "Optional additional info or options",
+      extraTextarea: false,
       question: "Which detail should I polish next? Select any that apply.",
     });
 
     postMessage.mockClear();
     act(() => {
+      submit.click();
+    });
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(
+      document.querySelector('.interaction-validation[role="alert"]')
+    ).not.toBeNull();
+    act(() => {
       choices[0]?.click();
       choices[2]?.click();
       custom.value = "More contrast";
-      submit.click();
+      custom.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" })
+      );
     });
     expect(postMessage).toHaveBeenCalledWith({
       id: "ask-2",

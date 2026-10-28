@@ -17,6 +17,7 @@ import type {
   RenderedTranscriptItem,
 } from "../../../protocol";
 import { ImagePreview } from "../image-preview";
+import { respondToElicitation } from "../interaction";
 import { FooterControls } from "./controls/footer-controls";
 
 interface ComposerMatch {
@@ -83,6 +84,7 @@ const matchingContextItems = (
   return matches;
 };
 
+// oxlint-disable-next-line complexity -- composer handles both prompts and inline elicitation
 const ComposerView = ({
   contextItems,
   copyNotice,
@@ -108,6 +110,7 @@ const ComposerView = ({
     new Map<string, { images: PromptImage[]; text: string }>()
   );
   const [images, setImages] = useState<PromptImage[]>([]);
+  const [missingAnswer, setMissingAnswer] = useState(false);
   const [context, setContext] = useState<ComposerMatch>();
   const [command, setCommand] = useState<ComposerMatch>();
   const [contextIndex, setContextIndex] = useState(0);
@@ -193,10 +196,11 @@ const ComposerView = ({
   }, [selected?.drafts, selected?.id]);
 
   useEffect(() => {
+    setMissingAnswer(false);
     if (selected || setup) {
       box.current?.focus();
     }
-  }, [selected?.id, setup]);
+  }, [selected?.id, selected?.interaction?.id, setup]);
 
   const send = (): void => {
     if (setup) {
@@ -204,6 +208,20 @@ const ComposerView = ({
       return;
     }
     const text = box.current?.value ?? "";
+    if (selected?.interaction?.kind === "elicitation") {
+      if (respondToElicitation(selected.interaction, text)) {
+        setMissingAnswer(false);
+        if (box.current) {
+          box.current.value = "";
+          resizeComposer(box.current);
+        }
+        setContext(undefined);
+        setCommand(undefined);
+      } else {
+        setMissingAnswer(true);
+      }
+      return;
+    }
     if (
       (!text.trim() && !images.length) ||
       !selected ||
@@ -273,6 +291,7 @@ const ComposerView = ({
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (
+      selected?.interaction?.kind !== "elicitation" &&
       suggestions.length &&
       ["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(event.key)
     ) {
@@ -358,7 +377,11 @@ const ComposerView = ({
         disabled={(!selected || !selected.agentId) && !setup}
         readOnly={setup}
         onChange={(event) => {
+          setMissingAnswer(false);
           resizeComposer(event.currentTarget);
+          if (selected?.interaction?.kind === "elicitation") {
+            return;
+          }
           updateSuggestions(
             event.currentTarget.value,
             event.currentTarget.selectionStart
@@ -367,6 +390,11 @@ const ComposerView = ({
         onKeyDown={handleKeyDown}
         onPaste={pasteImages}
       />
+      {missingAnswer ? (
+        <div className="interaction-validation" role="alert">
+          Choose an option or enter a response to the Agent request.
+        </div>
+      ) : null}
       <div
         id="context-suggestions"
         ref={suggestionsBox}
@@ -426,11 +454,12 @@ const ComposerView = ({
         ))}
       </div>
       <FooterControls
+        answering={selected?.interaction?.kind === "elicitation"}
         historyItems={historyItems}
         onJumpMessage={onJumpMessage}
         onSelectSkill={selectSkill}
         onSend={() => {
-          if (running) {
+          if (running && selected?.interaction?.kind !== "elicitation") {
             postMessage({ type: "cancel" });
           } else {
             send();

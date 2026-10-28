@@ -52,6 +52,7 @@ const AgentConfigControls = ({
 };
 
 export const FooterControls = ({
+  answering = false,
   historyItems = [],
   onJumpMessage,
   onSelectSkill,
@@ -59,6 +60,7 @@ export const FooterControls = ({
   selected,
   setup = false,
 }: {
+  answering?: boolean;
   historyItems?: RenderedTranscriptItem[];
   onJumpMessage?: (id: string) => void;
   onSelectSkill?: (command: RenderedThreadDetail["commands"][number]) => void;
@@ -66,7 +68,7 @@ export const FooterControls = ({
   selected?: RenderedThreadDetail;
   setup?: boolean;
 }): React.JSX.Element => {
-  const running = isRunning(selected);
+  const running = !answering && isRunning(selected);
   return (
     <div className="footer-row">
       <HistoryControl

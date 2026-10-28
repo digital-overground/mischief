@@ -1157,6 +1157,17 @@ export class Threads {
     sendAgentCancel = true
   ): Promise<void> {
     stopStreaming(runtime);
+    if (runtime.interaction?.kind === "elicitation") {
+      const asking = runtime.items.findLast(
+        (item) =>
+          item.kind === "tool" &&
+          item.title === "ask_user" &&
+          (item.status === "in_progress" || item.status === "pending")
+      );
+      if (asking) {
+        asking.cancelled = true;
+      }
+    }
     runtime.resolvePermission?.({ cancelled: true });
     runtime.resolveElicitation?.({ action: "cancel" });
     runtime.resolvePermission = undefined;

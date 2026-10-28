@@ -1117,6 +1117,24 @@ select:disabled {
   font-family: var(--mischief-mono-font);
   font-size: 13px;
 }
+.answering #chat {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+.answering #processing[hidden] {
+  display: none;
+}
+.answering .inline-interaction-question {
+  padding-bottom: 0;
+}
+.answering .interaction-context {
+  margin-bottom: 0;
+}
+.answering #chat-content {
+  flex-shrink: 0;
+  margin-top: auto;
+}
 #chat * {
   min-width: 0;
   max-width: 100%;
@@ -1535,6 +1553,16 @@ details.tool-operation > summary::-webkit-details-marker {
   padding: 8px;
   background: rgb(0 0 0 / 58%);
 }
+.inline-interaction-question {
+  padding: 12px 14px;
+}
+.interaction-inline {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-editor-background, var(--vscode-sideBar-background));
+}
 #interaction {
   width: min(100%, 720px);
   max-height: 100%;
@@ -1547,6 +1575,28 @@ details.tool-operation > summary::-webkit-details-marker {
   background: var(--vscode-editorWidget-background);
   box-shadow: 0 4px 16px var(--vscode-widget-shadow);
   font-family: var(--mischief-ui-font);
+}
+.interaction-inline #interaction {
+  width: 100%;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+.interaction-inline .interaction-form {
+  position: relative;
+}
+.interaction-inline .interaction-field:first-child legend {
+  padding-right: 100px;
+}
+.interaction-inline .interaction-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 6px 12px;
+  border: 0;
+  background: transparent;
 }
 .interaction-form {
   min-height: 0;
@@ -1707,10 +1757,6 @@ fieldset.interaction-field {
   min-height: 58px;
   resize: vertical;
 }
-#interaction .interaction-custom-response textarea {
-  min-height: 30px;
-  resize: none;
-}
 #interaction input:not([type="radio"]):not([type="checkbox"]):focus-visible,
 #interaction textarea:focus-visible {
   border-color: var(--vscode-focusBorder);
@@ -1765,7 +1811,7 @@ fieldset.interaction-field {
   );
 }
 .interaction-validation {
-  margin-top: 7px;
+  padding: 4px 10px;
   color: var(--vscode-errorForeground);
   font-size: 11px;
 }

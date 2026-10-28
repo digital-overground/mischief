@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 import { isNonEmpty } from "../../../present";
 import type { ElicitationField } from "../../../threads/model";
@@ -50,11 +50,6 @@ const ChoiceIcon = ({ multiple }: { multiple: boolean }): React.JSX.Element => (
     />
   </span>
 );
-
-const resizeTextarea = (textarea: HTMLTextAreaElement): void => {
-  textarea.style.height = "auto";
-  textarea.style.height = `${textarea.scrollHeight}px`;
-};
 
 const INLINE_OPTIONS = "__mischief_options";
 
@@ -124,43 +119,12 @@ const parsedAskUserOptions = (
   };
 };
 
-const CustomResponse = ({
-  field,
-}: {
-  field: ElicitationField;
-}): React.JSX.Element => (
-  <div className="interaction-custom-response">
-    <label className="interaction-field">
-      <span className="interaction-field-label">{field.label}</span>
-      <FieldDescription>Optional additional info or options</FieldDescription>
-      <textarea
-        id="interaction-custom-response"
-        defaultValue={
-          typeof field.defaultValue === "string" ? field.defaultValue : ""
-        }
-        name={field.name}
-        rows={1}
-        onInput={(event) => {
-          resizeTextarea(event.currentTarget);
-        }}
-      />
-    </label>
-  </div>
-);
-
 const FormField = ({
   field,
 }: {
   field: ElicitationField;
 }): React.JSX.Element => {
   const label = `${field.label}${field.required ? " *" : ""}`;
-  if (
-    field.type === "text" &&
-    !field.required &&
-    (field.name === "other" || field.label.toLowerCase() === "custom response")
-  ) {
-    return <CustomResponse field={field} />;
-  }
   if (field.type === "select" || field.type === "multiselect") {
     let defaultValues: string[] = [];
     if (Array.isArray(field.defaultValue)) {
@@ -170,19 +134,14 @@ const FormField = ({
     }
     const defaults = new Set(defaultValues);
     const multiple = field.type === "multiselect";
-    const focusIndex = Math.max(
-      0,
-      field.options?.findIndex((item) => defaults.has(item.value)) ?? 0
-    );
     return (
       <fieldset className="interaction-field interaction-choices">
         <legend>{label}</legend>
         <FieldDescription>{field.description}</FieldDescription>
         <div className="interaction-choice-list">
-          {field.options?.map((item, index) => (
+          {field.options?.map((item) => (
             <label className="interaction-choice" key={item.value}>
               <input
-                autoFocus={index === focusIndex}
                 defaultChecked={defaults.has(item.value)}
                 name={field.name}
                 required={field.required && !multiple}
@@ -280,9 +239,121 @@ const formValues = (
   return values;
 };
 
-const cancel = (id: string): void => {
-  postMessage({ id, response: { action: "cancel" }, type: "respond" });
+// oxlint-disable-next-line complexity -- ACP forms and parsed ask_user choices share one submission path
+export const respondToElicitation = (
+  interaction: ThreadInteraction,
+  text: string
+): boolean => {
+  if (interaction.kind !== "elicitation") {
+    return false;
+  }
+  const form = document.querySelector<HTMLFormElement>("#interaction-form");
+  if (form === null || !form.reportValidity()) {
+    return false;
+  }
+  const askOptions = parsedAskUserOptions(interaction);
+  const customField = interaction.fields.find(
+    (field) =>
+      field.type === "text" &&
+      !field.required &&
+      (field.name === "other" ||
+        field.label.toLowerCase() === "custom response")
+  );
+  const textAnswer =
+    !askOptions &&
+    interaction.fields.length === 1 &&
+    interaction.fields[0]?.type === "text"
+      ? interaction.fields[0]
+      : undefined;
+  const fields = askOptions
+    ? [askOptions.choices]
+    : interaction.fields.filter(
+        (field) => field !== customField && field !== textAnswer
+      );
+  const values = formValues(form, fields);
+  if (askOptions) {
+    const selected = values[INLINE_OPTIONS];
+    let selectedValues: unknown[] = [];
+    if (Array.isArray(selected)) {
+      selectedValues = selected;
+    } else if (typeof selected === "string") {
+      selectedValues = [selected];
+    }
+    const names = selectedValues.map(
+      (value) =>
+        askOptions.choices.options?.find((option) => option.value === value)
+          ?.name ?? String(value)
+    );
+    const answer = [
+      ...names,
+      ...(isNonEmpty(text.trim()) ? [text.trim()] : []),
+    ].join(", ");
+    if (askOptions.answer.required && !answer) {
+      return false;
+    }
+    const responseValues = Object.fromEntries(
+      Object.entries(values).filter(([key]) => key !== INLINE_OPTIONS)
+    );
+    if (answer) {
+      responseValues[askOptions.answer.name] = answer;
+    }
+    postMessage({
+      id: interaction.id,
+      response: { action: "accept", values: responseValues },
+      type: "respond",
+    });
+    return true;
+  } else if (textAnswer) {
+    if (textAnswer.required && !isNonEmpty(text.trim())) {
+      return false;
+    }
+    if (isNonEmpty(text.trim())) {
+      values[textAnswer.name] = text.trim();
+    }
+  } else if (customField && isNonEmpty(text.trim())) {
+    values[customField.name] = text.trim();
+  } else if (isNonEmpty(text.trim())) {
+    // shortcut: generic forms without a text field cannot carry composer context; add a protocol field if needed.
+    return false;
+  }
+  postMessage({
+    id: interaction.id,
+    response: { action: "accept", values },
+    type: "respond",
+  });
+  return true;
 };
+
+const cancel = (interaction: ThreadInteraction): void => {
+  if (interaction.kind === "elicitation") {
+    postMessage({ type: "cancel" });
+  } else {
+    postMessage({
+      id: interaction.id,
+      response: { action: "cancel" },
+      type: "respond",
+    });
+  }
+};
+
+export const InteractionQuestion = ({
+  interaction,
+}: {
+  interaction: ThreadInteraction;
+}): React.JSX.Element => (
+  <div className="inline-interaction-question">
+    <div className="interaction-heading">
+      <SvgIcon kind="question" />
+      <span>Agent request</span>
+    </div>
+    <Question>
+      {parsedAskUserOptions(interaction)?.question ?? interaction.message}
+    </Question>
+    {interaction.kind === "elicitation" && isNonEmpty(interaction.context) ? (
+      <Context>{interaction.context}</Context>
+    ) : null}
+  </div>
+);
 
 export const Interaction = ({
   interaction,
@@ -290,50 +361,49 @@ export const Interaction = ({
   interaction?: ThreadInteraction;
 }): React.JSX.Element | null => {
   const dialog = useRef<HTMLElement>(null);
-  const [missingAnswer, setMissingAnswer] = useState(false);
   useEffect(() => {
-    setMissingAnswer(false);
-    dialog.current
-      ?.querySelector<HTMLElement>("input, textarea, button")
-      ?.focus();
-  }, [interaction?.id]);
+    if (interaction?.kind === "permission") {
+      dialog.current?.querySelector<HTMLElement>("button")?.focus();
+    }
+  }, [interaction?.id, interaction?.kind]);
 
   if (!interaction) {
     return null;
   }
   const askOptions = parsedAskUserOptions(interaction);
-  const customResponseField = askOptions
-    ? { ...askOptions.answer, label: "Custom response", required: false }
-    : undefined;
   let elicitationFields: ElicitationField[] = [];
-  if (askOptions && customResponseField) {
-    elicitationFields = [askOptions.choices, customResponseField];
+  if (askOptions) {
+    elicitationFields = [askOptions.choices];
   } else if (interaction.kind === "elicitation") {
-    elicitationFields = interaction.fields;
+    elicitationFields = interaction.fields.filter(
+      (field) =>
+        !(
+          field.type === "text" &&
+          (interaction.fields.length === 1 ||
+            (!field.required &&
+              (field.name === "other" ||
+                field.label.toLowerCase() === "custom response")))
+        )
+    );
   }
-  const question = (
-    <>
-      <div className="interaction-heading">
-        <SvgIcon kind="question" />
-        <span>Agent request</span>
-      </div>
-      <Question>{askOptions?.question ?? interaction.message}</Question>
-      {interaction.kind === "elicitation" && isNonEmpty(interaction.context) ? (
-        <Context>{interaction.context}</Context>
-      ) : null}
-    </>
-  );
+  const question = <InteractionQuestion interaction={interaction} />;
   return (
-    <div className="interaction-overlay">
+    <div
+      className={
+        interaction.kind === "permission"
+          ? "interaction-overlay"
+          : "interaction-inline"
+      }
+    >
       <section
         aria-labelledby="interaction-question"
         id="interaction"
         ref={dialog}
-        role="dialog"
+        role={interaction.kind === "permission" ? "dialog" : "region"}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.preventDefault();
-            cancel(interaction.id);
+            cancel(interaction);
           }
         }}
       >
@@ -364,7 +434,7 @@ export const Interaction = ({
                 danger
                 icon="x"
                 onClick={() => {
-                  cancel(interaction.id);
+                  cancel(interaction);
                 }}
               >
                 Cancel
@@ -374,84 +444,22 @@ export const Interaction = ({
         ) : (
           <form
             className="interaction-form"
+            id="interaction-form"
             onSubmit={(event) => {
               event.preventDefault();
-              const values = formValues(event.currentTarget, elicitationFields);
-              if (askOptions && customResponseField) {
-                const selections = values[INLINE_OPTIONS];
-                let selectedValues: string[] = [];
-                if (Array.isArray(selections)) {
-                  selectedValues = selections.map(String);
-                } else if (typeof selections === "string") {
-                  selectedValues = [selections];
-                }
-                const selectedNames = selectedValues.map(
-                  (value) =>
-                    askOptions.choices.options?.find(
-                      (option) => option.value === value
-                    )?.name ?? value
-                );
-                const custom = values[customResponseField.name];
-                const answer = [
-                  ...selectedNames,
-                  ...(typeof custom === "string" && isNonEmpty(custom)
-                    ? [custom]
-                    : []),
-                ].join(", ");
-                if (askOptions.answer.required && answer === "") {
-                  setMissingAnswer(true);
-                  return;
-                }
-                const responseValues = Object.fromEntries(
-                  Object.entries(values).filter(
-                    ([name]) =>
-                      name !== INLINE_OPTIONS && name !== askOptions.answer.name
-                  )
-                );
-                if (answer !== "" || askOptions.answer.required) {
-                  responseValues[askOptions.answer.name] = answer;
-                }
-                setMissingAnswer(false);
-                postMessage({
-                  id: interaction.id,
-                  response: { action: "accept", values: responseValues },
-                  type: "respond",
-                });
-                return;
-              }
-              postMessage({
-                id: interaction.id,
-                response: { action: "accept", values },
-                type: "respond",
-              });
             }}
           >
             <div className="interaction-body">
-              {question}
-              <div
-                onChange={() => {
-                  setMissingAnswer(false);
-                }}
-              >
-                {elicitationFields.map((field) => (
-                  <FormField field={field} key={field.name} />
-                ))}
-                {missingAnswer ? (
-                  <div className="interaction-validation" role="alert">
-                    Choose an option or add a custom response.
-                  </div>
-                ) : null}
-              </div>
+              {elicitationFields.map((field) => (
+                <FormField field={field} key={field.name} />
+              ))}
             </div>
             <div className="interaction-actions">
-              <ActionButton icon="send" primary type="submit">
-                Submit
-              </ActionButton>
               <ActionButton
                 danger
                 icon="x"
                 onClick={() => {
-                  cancel(interaction.id);
+                  cancel(interaction);
                 }}
               >
                 Cancel

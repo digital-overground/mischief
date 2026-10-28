@@ -1209,6 +1209,32 @@ describe("threads module", () => {
     });
   });
 
+  test("stopping during an elicitation cancels the request and the turn", async () => {
+    const agent = new FakeAgent();
+    agent.askElicitation = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    const prompting = threads.prompt("Choose a path");
+    await agent.elicitationStarted;
+    agent.update?.({
+      input: '{"question":"Pick one"}',
+      status: "in_progress",
+      title: "ask_user",
+      toolCallId: "ask-1",
+      type: "tool",
+    });
+    await threads.cancel();
+    await prompting;
+
+    expect(agent.elicitationResponse).toStrictEqual({ action: "cancel" });
+    expect(threads.snapshot().selected?.items).toContainEqual(
+      expect.objectContaining({ cancelled: true, id: "tool:ask-1" })
+    );
+    expect(threads.snapshot().selected?.interaction).toBeUndefined();
+    expect(threads.snapshot().selected?.status).toBe("idle");
+  });
+
   test("permission requests wait for an inline Thread response", async () => {
     const agent = new FakeAgent();
     agent.askPermission = true;
