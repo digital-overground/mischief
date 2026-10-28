@@ -711,8 +711,10 @@ select:disabled {
   margin: 0 10px 0 6px;
 }
 #navigator-list .thread-row > .thread-status {
-  width: 14px;
   margin: 0 4px 0 0;
+}
+#navigator-list .thread-row > .thread-status:not(.waiting, .active) {
+  margin: 0 7px 0 3px;
 }
 .empty {
   margin: 0;
