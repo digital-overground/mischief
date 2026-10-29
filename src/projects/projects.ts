@@ -16,9 +16,12 @@ import {
 } from "./git";
 import type { GitSourceBranch, GitWorkspace } from "./git";
 import { listOpenGitHubIssues } from "./github";
+import { listOpenLinearIssues } from "./linear";
+import type { LinearIssue } from "./linear";
 
 export { normalizeGitHubRepository } from "./git";
 export type { GitSourceBranch } from "./git";
+export type { LinearIssue } from "./linear";
 
 export const normalizeWorkspaceName = (name: string): string =>
   name.trim().toLowerCase().replaceAll(/\s+/gu, "-");
@@ -66,14 +69,18 @@ export interface GitHubIssue {
   url: string;
 }
 
-export const issueWorkspaceName = (issue: GitHubIssue): string => {
+export const issueWorkspaceName = (
+  issue: GitHubIssue | LinearIssue
+): string => {
+  const identifier =
+    "identifier" in issue
+      ? issue.identifier.toLowerCase()
+      : String(issue.number);
   const title = issue.title
     .toLowerCase()
     .replaceAll(/[^\p{L}\p{N}]+/gu, "-")
     .replaceAll(/^-|-$/gu, "");
-  const name = title
-    ? `issue-${issue.number}_${title}`
-    : `issue-${issue.number}`;
+  const name = title ? `issue-${identifier}_${title}` : `issue-${identifier}`;
   return name.slice(0, 50).replace(/-$/u, "");
 };
 
@@ -180,6 +187,21 @@ export class Projects {
       await setGitHubIssueRepository(root, repository);
     }
     return issues;
+  }
+
+  async listOpenLinearIssues(projectRoot: string): Promise<LinearIssue[]> {
+    const root = await realpath(projectRoot);
+    if (
+      !this.database
+        .snapshot()
+        .workspaces.some(
+          (workspace) =>
+            workspace.projectRoot === root && workspace.status === "active"
+        )
+    ) {
+      throw new Error("Project is not in Mischief");
+    }
+    return await listOpenLinearIssues(root);
   }
 
   async sourceBranches(projectRoot: string): Promise<GitSourceBranch[]> {

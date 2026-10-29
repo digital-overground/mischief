@@ -26,11 +26,13 @@ Before installing an Agent, Mischief asks for approval and names the exact npm p
 
 For a first Thread, Mischief checks Node.js, Git, and whether at least one Agent is available. If none is available, press Enter to choose which Agent to install, then approve the managed install. Starting a MagPi Thread also offers three optional Pi add-ons: Todo, Ponytail, and Matt Pocock Skills. Structured Ask User support is bundled with MagPi.
 
-## GitHub issue Workspaces
+## Issue Workspaces
 
-Starting a Workspace from a GitHub issue requires the GitHub CLI (`gh`). Authenticate with `gh auth login`; private repositories require an authenticated CLI session. Use `gh auth refresh` when credentials expire.
+When starting work on an issue, choose GitHub or Linear. GitHub requires the GitHub CLI (`gh`). Authenticate with `gh auth login`; private repositories require an authenticated CLI session. Use `gh auth refresh` when credentials expire.
 
-The first time you open issues for a Project, Mischief asks for the GitHub issue repository as `owner/repo`, defaulting to the Project's `origin`. The choice is stored in that Project's local Git config as `mischief.githubIssueRepo`, so linked Workspaces use it too. This allows a Project's code and issues to live in different repositories. Remove the key with `git config --local --unset mischief.githubIssueRepo` to choose again.
+The first time you open GitHub issues for a Project, Mischief asks for the issue repository as `owner/repo`, defaulting to the Project's `origin`. The choice is stored in that Project's local Git config as `mischief.githubIssueRepo`, so linked Workspaces use it too. This allows a Project's code and issues to live in different repositories. Remove the key with `git config --local --unset mischief.githubIssueRepo` to choose again.
+
+Linear requires the Linear CLI (`linear`), an authenticated session (`linear auth login`), and a default team configured for the Project in its `.linear.toml`. Run `linear config --team MIS` from the Project root to configure it. Mischief lists that team's open issues and seeds the new Thread with a command to read the selected issue.
 
 ## Security and compatibility
 

@@ -844,6 +844,9 @@ describe("view provider", () => {
     try {
       await mkdir(root);
       await exec("git", ["-C", root, "init"]);
+      vscode.showQuickPick
+        .mockReset()
+        .mockResolvedValueOnce({ label: "GitHub", provider: "github" });
       let receive: ((message: unknown) => void) | undefined;
       let accept: (() => void) | undefined;
       let hidden: (() => void) | undefined;
@@ -1080,7 +1083,7 @@ describe("view provider", () => {
               label: "#9 Second issue",
             },
           ],
-          title: "Open Issues · project",
+          title: "Open GitHub Issues · project",
         });
       });
 
@@ -1206,6 +1209,255 @@ describe("view provider", () => {
     }
   });
 
+  test("starts a Workspace from a Linear issue with a Linear reading prompt", async () => {
+    const parent = await mkdtemp(path.join(os.tmpdir(), "mischief-linear-"));
+    const root = path.join(parent, "project");
+    await mkdir(root);
+    await exec("git", ["-C", root, "init"]);
+    let receive: ((message: unknown) => void) | undefined;
+    let issueAccept: (() => void) | undefined;
+    let issueHidden: (() => void) | undefined;
+    let branchAccept: (() => void) | undefined;
+    let branchHidden: (() => void) | undefined;
+    let pending: { path: string; prompt?: string }[] = [];
+    const issuePicker = {
+      dispose: vi.fn<() => void>(),
+      hide: vi.fn<() => void>(() => issueHidden?.()),
+      items: testValue<{ issue: unknown; label: string }[]>([]),
+      onDidAccept: vi.fn<(listener: () => void) => { dispose: () => void }>(
+        (listener) => {
+          issueAccept = listener;
+          return { dispose: vi.fn<() => void>() };
+        }
+      ),
+      onDidHide: vi.fn<(listener: () => void) => { dispose: () => void }>(
+        (listener) => {
+          issueHidden = listener;
+          return { dispose: vi.fn<() => void>() };
+        }
+      ),
+      onDidTriggerItemButton: vi.fn<
+        (listener: (event: { item: { issue: unknown } }) => Promise<void>) => {
+          dispose: () => void;
+        }
+      >(() => ({ dispose: vi.fn<() => void>() })),
+      selectedItems: testValue<{ issue: unknown }[]>([]),
+      show: vi.fn<() => void>(),
+      title: "",
+    };
+    const branchPicker = {
+      dispose: vi.fn<() => void>(),
+      hide: vi.fn<() => void>(() => branchHidden?.()),
+      items: testValue<
+        {
+          branch?: { current: boolean; name: string };
+          description?: string;
+          kind?: number;
+          label: string;
+        }[]
+      >([]),
+      onDidAccept: vi.fn<(listener: () => void) => { dispose: () => void }>(
+        (listener) => {
+          branchAccept = listener;
+          return { dispose: vi.fn<() => void>() };
+        }
+      ),
+      onDidHide: vi.fn<(listener: () => void) => { dispose: () => void }>(
+        (listener) => {
+          branchHidden = listener;
+          return { dispose: vi.fn<() => void>() };
+        }
+      ),
+      selectedItems: testValue<
+        { branch?: { current: boolean; name: string } }[]
+      >([]),
+      show: vi.fn<() => void>(),
+      title: "",
+    };
+    const issue = {
+      identifier: "MIS-123",
+      title: "Linear task",
+      url: "https://linear.app/digital-overground/issue/MIS-123",
+    };
+    const createWorkspace = vi.fn<() => Promise<string>>(async () => {
+      await Promise.resolve();
+      return "/worktree";
+    });
+    const projects = {
+      createWorkspace,
+      listOpenIssues: vi.fn<() => Promise<unknown[]>>(),
+      listOpenLinearIssues: vi.fn<() => Promise<unknown[]>>(async () => {
+        await Promise.resolve();
+        return [issue];
+      }),
+      open: async () => {
+        await Promise.resolve();
+        return projectsFixture({
+          projects: [{ name: "project", root, workspaces: [] }],
+          ungrouped: [],
+        });
+      },
+      refresh: async () => {
+        await Promise.resolve();
+        return projectsFixture({
+          projects: [
+            {
+              name: "project",
+              root,
+              workspaces: [
+                {
+                  ahead: 0,
+                  behind: 0,
+                  changes: 0,
+                  current: false,
+                  linked: true,
+                  name: "worktree",
+                  path: "/worktree",
+                },
+              ],
+            },
+          ],
+          ungrouped: [],
+        });
+      },
+      sourceBranches: vi.fn<() => Promise<unknown[]>>(async () => {
+        await Promise.resolve();
+        return [{ current: true, name: "main", remoteOnly: false }];
+      }),
+    };
+    const storage = {
+      get: (key: string, fallback: unknown) =>
+        key === "mischief.startWorkspaces" ? pending : fallback,
+      update: (key: string, value: unknown) => {
+        if (key === "mischief.startWorkspaces") {
+          pending = testValue<typeof pending>(value);
+        }
+      },
+    };
+    vscode.assignWorkspaceColors = false;
+    vscode.showQuickPick
+      .mockReset()
+      .mockResolvedValueOnce({ label: "Linear", provider: "linear" });
+    vscode.createQuickPick
+      .mockReset()
+      .mockReturnValueOnce(issuePicker)
+      .mockReturnValueOnce(branchPicker);
+    vscode.showInputBox.mockReset().mockResolvedValueOnce("linear-task");
+    try {
+      const provider = new MischiefView(
+        testValue<never>(projects),
+        testValue<never>({
+          onChange: vi.fn<() => void>(),
+          openWorkspace: vi.fn<() => Promise<void>>(async () => {
+            await Promise.resolve();
+          }),
+          preferredAgentId: () => "magpi-acp",
+          snapshot: () => ({ threads: [] }),
+        }),
+        testValue<never>({ fsPath: process.cwd() }),
+        testValue<never>(storage),
+        testValue<never>(profileDatabase())
+      );
+      await provider.initialize(root);
+      await provider.resolveWebviewView(
+        testValue<never>({
+          onDidDispose: vi.fn<() => void>(),
+          webview: {
+            asWebviewUri: (uri: { fsPath: string }) => ({
+              toString: () => `webview:${uri.fsPath}`,
+            }),
+            cspSource: "webview-csp",
+            html: "",
+            onDidReceiveMessage: (listener: (message: unknown) => void) => {
+              receive = listener;
+            },
+            options: {},
+            postMessage: (message: { type: string }) => {
+              if (message.type === "showProjectSetup") {
+                receive?.({
+                  command: "",
+                  project: root,
+                  selected: [],
+                  type: "saveProjectSetup",
+                });
+              }
+            },
+          },
+        })
+      );
+
+      receive?.({ path: root, type: "openIssues" });
+      await vi.waitFor(() => {
+        expect(issuePicker.show).toHaveBeenCalledOnce();
+      });
+      expect({
+        calledGitHub: projects.listOpenIssues.mock.calls,
+        calledLinear: projects.listOpenLinearIssues.mock.calls,
+        items: issuePicker.items.map((item) => item.label),
+        title: issuePicker.title,
+      }).toStrictEqual({
+        calledGitHub: [],
+        calledLinear: [[root]],
+        items: ["MIS-123 Linear task"],
+        title: "Open Linear Issues · project",
+      });
+
+      issuePicker.selectedItems = [issuePicker.items[0]];
+      issueAccept?.();
+      await vi.waitFor(() => {
+        expect(branchPicker.show).toHaveBeenCalledOnce();
+      });
+      expect(branchPicker.title).toBe("Source Branch for MIS-123");
+      branchPicker.selectedItems = [
+        testValue<{ branch: { current: boolean; name: string } }>(
+          branchPicker.items.find((item) => item.branch?.name === "main")
+        ),
+      ];
+      branchAccept?.();
+      await vi.waitFor(() => {
+        expect(pending).toHaveLength(1);
+      });
+      const [nameOptions] = testValue<
+        [
+          {
+            prompt: string;
+            title: string;
+            validateInput: (value: string) => string | undefined;
+            value: string;
+          },
+        ]
+      >(vscode.showInputBox.mock.calls[0]);
+      expect({
+        created: createWorkspace.mock.calls,
+        name: {
+          prompt: nameOptions.prompt,
+          title: nameOptions.title,
+          valid: nameOptions.validateInput("linear-task"),
+          value: nameOptions.value,
+        },
+        pending,
+      }).toStrictEqual({
+        created: [[root, "linear-task", "main"]],
+        name: {
+          prompt: "Create a linked worktree and branch from main",
+          title: "New Workspace for MIS-123",
+          valid: undefined,
+          value: "issue-mis-123_linear-task",
+        },
+        pending: [
+          {
+            path: "/worktree",
+            prompt:
+              "start planning work on Linear issue MIS-123. Read it with linear issue view MIS-123 --json. Return to the user once you've read the issue and give them a summary of the item",
+          },
+        ],
+      });
+    } finally {
+      vscode.assignWorkspaceColors = true;
+      await rm(parent, { force: true, recursive: true });
+    }
+  });
+
   test("shows inactive Thread history with compact times and reopens the selection", async () => {
     let receive: ((message: unknown) => void) | undefined;
     const now = new Date("2026-09-16T12:00:00.000Z");
@@ -1268,6 +1520,7 @@ describe("view provider", () => {
     vscode.createQuickPick.mockReset().mockReturnValue(loadingPicker);
     vscode.showInformationMessage.mockClear();
     vscode.showQuickPick
+      .mockReset()
       .mockResolvedValueOnce(null)
       .mockImplementationOnce(async (items: unknown) => {
         await Promise.resolve();
@@ -1392,6 +1645,9 @@ describe("view provider", () => {
       title: "",
     };
     vscode.createQuickPick.mockReturnValue(picker);
+    vscode.showQuickPick
+      .mockReset()
+      .mockResolvedValue({ label: "GitHub", provider: "github" });
     vscode.showInformationMessage.mockClear();
     const sourceBranches = vi.fn<() => Promise<unknown[]>>(async () => {
       await Promise.resolve();
@@ -1469,6 +1725,9 @@ describe("view provider", () => {
   test.each(["repository", "branches", "source", "name"])(
     "stops at the %s step before creating a Workspace",
     async (step) => {
+      vscode.showQuickPick
+        .mockReset()
+        .mockResolvedValueOnce({ label: "GitHub", provider: "github" });
       let receive: ((message: unknown) => void) | undefined;
       let accept: (() => void) | undefined;
       let sourceAccept: (() => void) | undefined;

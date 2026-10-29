@@ -37,7 +37,6 @@ import {
   normalizeWorkspaceName,
 } from "./projects/projects";
 import type {
-  GitHubIssue,
   GitSourceBranch,
   Projects,
   ProjectsSnapshot,
@@ -86,8 +85,22 @@ interface WorkspaceSetupChoice {
 }
 const DEFAULT_MONO_FONT_FAMILY =
   '"Lilex", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
-const issuePrompt = (issue: GitHubIssue): string =>
-  `start planning work on GitHub issue #${issue.number}. Read it with gh issue view ${issue.url} --comments.  return to the user once you've read the issue and give them a summary of the item`;
+type IssueProvider = "GitHub" | "Linear";
+
+interface StartIssue {
+  identifier: string;
+  provider: IssueProvider;
+  title: string;
+  url: string;
+}
+
+const issueDisplayId = (issue: StartIssue): string =>
+  issue.provider === "GitHub" ? `#${issue.identifier}` : issue.identifier;
+
+const issuePrompt = (issue: StartIssue): string =>
+  issue.provider === "GitHub"
+    ? `start planning work on GitHub issue #${issue.identifier}. Read it with gh issue view ${issue.url} --comments.  return to the user once you've read the issue and give them a summary of the item`
+    : `start planning work on Linear issue ${issue.identifier}. Read it with linear issue view ${issue.identifier} --json. Return to the user once you've read the issue and give them a summary of the item`;
 
 const workspaceColorsEnabled = (): boolean =>
   vscode.workspace
@@ -255,8 +268,12 @@ const promptImages = (value: unknown): PromptImage[] => {
   });
 };
 
-interface GitHubIssueQuickPickItem extends vscode.QuickPickItem {
-  issue: GitHubIssue;
+interface IssueProviderQuickPickItem extends vscode.QuickPickItem {
+  provider: "github" | "linear";
+}
+
+interface IssueQuickPickItem extends vscode.QuickPickItem {
+  issue: StartIssue;
 }
 
 interface SourceBranchQuickPickItem extends vscode.QuickPickItem {
@@ -474,43 +491,82 @@ export class MischiefView implements vscode.WebviewViewProvider {
 
   private async openIssues(projectRoot: string): Promise<void> {
     const projectName = path.basename(projectRoot);
-    const issues = await this.projects.listOpenIssues(
-      projectRoot,
-      async (defaultRepository) => {
-        const repository = await vscode.window.showInputBox({
-          prompt: "Enter the GitHub issue repository as owner/repo",
-          title: `Issue Repository for ${projectName}`,
-          validateInput: (value) =>
-            isNonEmpty(normalizeGitHubRepository(value))
-              ? undefined
-              : "Enter a GitHub repository as owner/repo",
-          value: defaultRepository,
-        });
-        return repository === undefined
-          ? undefined
-          : normalizeGitHubRepository(repository);
+    const selectedProvider = await vscode.window.showQuickPick(
+      [
+        {
+          description: "Issues from the configured GitHub repository",
+          label: "GitHub",
+          provider: "github",
+        },
+        {
+          description: "Issues from the configured Linear team",
+          label: "Linear",
+          provider: "linear",
+        },
+      ] satisfies IssueProviderQuickPickItem[],
+      {
+        placeHolder: "Choose an issue tracker",
+        title: `Start work on an issue · ${projectName}`,
       }
     );
+    if (!selectedProvider) {
+      return;
+    }
+    const providerName =
+      selectedProvider.provider === "github" ? "GitHub" : "Linear";
+    let issues: StartIssue[] | undefined;
+    if (selectedProvider.provider === "github") {
+      const githubIssues = await this.projects.listOpenIssues(
+        projectRoot,
+        async (defaultRepository) => {
+          const repository = await vscode.window.showInputBox({
+            prompt: "Enter the GitHub issue repository as owner/repo",
+            title: `Issue Repository for ${projectName}`,
+            validateInput: (value) =>
+              isNonEmpty(normalizeGitHubRepository(value))
+                ? undefined
+                : "Enter a GitHub repository as owner/repo",
+            value: defaultRepository,
+          });
+          return repository === undefined
+            ? undefined
+            : normalizeGitHubRepository(repository);
+        }
+      );
+      issues = githubIssues?.map((issue) => ({
+        identifier: String(issue.number),
+        provider: "GitHub" as const,
+        title: issue.title,
+        url: issue.url,
+      }));
+    } else {
+      const linearIssues =
+        await this.projects.listOpenLinearIssues(projectRoot);
+      issues = linearIssues.map((issue) => ({
+        ...issue,
+        provider: "Linear" as const,
+      }));
+    }
     if (!issues) {
       return;
     }
     if (!issues.length) {
       await vscode.window.showInformationMessage(
-        `No open GitHub issues for ${projectName}.`
+        `No open ${providerName} issues for ${projectName}.`
       );
       return;
     }
-    const picker = vscode.window.createQuickPick<GitHubIssueQuickPickItem>();
-    picker.title = `Open Issues · ${projectName}`;
+    const picker = vscode.window.createQuickPick<IssueQuickPickItem>();
+    picker.title = `Open ${providerName} Issues · ${projectName}`;
     picker.items = issues.map((issue) => ({
       buttons: [
         {
           iconPath: new vscode.ThemeIcon("link-external"),
-          tooltip: `Open #${issue.number} on GitHub`,
+          tooltip: `Open ${issueDisplayId(issue)} on ${issue.provider}`,
         },
       ],
       issue,
-      label: `#${issue.number} ${issue.title}`,
+      label: `${issueDisplayId(issue)} ${issue.title}`,
     }));
     const disposables = [
       picker.onDidAccept(() => {
@@ -532,7 +588,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
           }
         } catch (error) {
           void vscode.window.showErrorMessage(
-            `Mischief: Could not open #${item.issue.number}: ${error instanceof Error ? error.message : String(error)}`
+            `Mischief: Could not open ${issueDisplayId(item.issue)}: ${error instanceof Error ? error.message : String(error)}`
           );
         }
       }),
@@ -548,7 +604,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
 
   private async newIssueWorkspace(
     projectRoot: string,
-    issue: GitHubIssue
+    issue: StartIssue
   ): Promise<void> {
     const branches = await this.projects.sourceBranches(projectRoot);
     if (!branches.length) {
@@ -581,7 +637,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     ];
     const picker = vscode.window.createQuickPick<SourceBranchQuickPickItem>();
     picker.items = items;
-    picker.title = `Source Branch for #${issue.number}`;
+    picker.title = `Source Branch for ${issueDisplayId(issue)}`;
     const current = items.find((item) => item.branch?.current === true);
     if (current) {
       picker.activeItems = [current];
@@ -608,12 +664,12 @@ export class MischiefView implements vscode.WebviewViewProvider {
 
   private async nameIssueWorkspace(
     projectRoot: string,
-    issue: GitHubIssue,
+    issue: StartIssue,
     branch: GitSourceBranch
   ): Promise<void> {
     const name = await vscode.window.showInputBox({
       prompt: `Create a linked worktree and branch from ${branch.name}`,
-      title: `New Workspace for #${issue.number}`,
+      title: `New Workspace for ${issueDisplayId(issue)}`,
       validateInput: (value) => {
         const normalized = normalizeWorkspaceName(value);
         if (!normalized) {

@@ -88,6 +88,30 @@ process.stdout.write(process.env.MISCHIEF_GH_OUTPUT ?? "");
   process.env.MISCHIEF_GH_OUTPUT = output;
 };
 
+const fakeLinearCli = async (cwd: string, output: string): Promise<void> => {
+  const bin = await temporaryFolder();
+  const executable = path.join(bin, "linear");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+const expected = "issue query --state triage --state backlog --state unstarted --state started --limit all --json --no-pager --no-input";
+if (process.argv.slice(2).join(" ") !== expected || process.cwd() !== process.env.MISCHIEF_EXPECTED_LINEAR_CWD) {
+  process.stderr.write("unexpected linear invocation");
+  process.exit(1);
+}
+if (process.env.MISCHIEF_LINEAR_ERROR) {
+  process.stderr.write(process.env.MISCHIEF_LINEAR_ERROR);
+  process.exit(1);
+}
+process.stdout.write(process.env.MISCHIEF_LINEAR_OUTPUT ?? "");
+`
+  );
+  await chmod(executable, 0o755);
+  process.env.PATH = `${bin}${path.delimiter}${originalPath}`;
+  process.env.MISCHIEF_EXPECTED_LINEAR_CWD = cwd;
+  process.env.MISCHIEF_LINEAR_OUTPUT = output;
+};
+
 const createProjects = async (currentWorkspace?: string): Promise<Projects> =>
   new Projects(
     await openProfileDatabase(
@@ -105,6 +129,9 @@ describe("projects module", () => {
     delete process.env.MISCHIEF_EXPECTED_REPO;
     delete process.env.MISCHIEF_GH_ERROR;
     delete process.env.MISCHIEF_GH_OUTPUT;
+    delete process.env.MISCHIEF_EXPECTED_LINEAR_CWD;
+    delete process.env.MISCHIEF_LINEAR_ERROR;
+    delete process.env.MISCHIEF_LINEAR_OUTPUT;
     await Promise.all(
       profileDatabases.splice(0).map(async (database) => {
         await database.dispose();
@@ -304,6 +331,69 @@ describe("projects module", () => {
     expect(chooseRepository).toHaveBeenCalledOnce();
   });
 
+  test("lists and validates open Linear issues for a managed Project", async () => {
+    const parent = await temporaryFolder();
+    const root = path.join(parent, "mischief");
+    await git(parent, "init", "--initial-branch=main", root);
+    const projects = await createProjects();
+    await projects.add(root);
+    await fakeLinearCli(
+      await realpath(root),
+      JSON.stringify([
+        {
+          identifier: "MIS-123",
+          title: "Linear issue",
+          url: "https://linear.app/digital-overground/issue/MIS-123",
+        },
+      ])
+    );
+
+    await expect(projects.listOpenLinearIssues(root)).resolves.toStrictEqual([
+      {
+        identifier: "MIS-123",
+        title: "Linear issue",
+        url: "https://linear.app/digital-overground/issue/MIS-123",
+      },
+    ]);
+
+    process.env.MISCHIEF_LINEAR_OUTPUT = "not JSON";
+    await expect(projects.listOpenLinearIssues(root)).rejects.toThrow(
+      "Linear issue list could not be read"
+    );
+    process.env.MISCHIEF_LINEAR_OUTPUT = JSON.stringify([
+      {
+        identifier: "MIS-123",
+        title: "Invalid URL",
+        url: "http://linear.app/issue/MIS-123",
+      },
+    ]);
+    await expect(projects.listOpenLinearIssues(root)).rejects.toThrow(
+      "invalid issue URL"
+    );
+  });
+
+  test("explains missing and unauthenticated Linear CLI failures", async () => {
+    const parent = await temporaryFolder();
+    const root = path.join(parent, "mischief");
+    await git(parent, "init", "--initial-branch=main", root);
+    const projects = await createProjects();
+    await projects.add(root);
+    const { stdout: gitExecutable } = await exec("which", ["git"]);
+    const gitOnlyPath = await temporaryFolder();
+    await symlink(gitExecutable.trim(), path.join(gitOnlyPath, "git"));
+    process.env.PATH = gitOnlyPath;
+
+    await expect(projects.listOpenLinearIssues(root)).rejects.toThrow(
+      "Linear CLI is required"
+    );
+
+    await fakeLinearCli(await realpath(root), "[]");
+    process.env.MISCHIEF_LINEAR_ERROR = "team not configured";
+    await expect(projects.listOpenLinearIssues(root)).rejects.toThrow(
+      /team not configured[\s\S]*linear auth login[\s\S]*linear config --team/u
+    );
+  });
+
   test("explains missing and unauthenticated GitHub CLI failures", async () => {
     const parent = await temporaryFolder();
     const root = path.join(parent, "mischief");
@@ -358,6 +448,16 @@ describe("projects module", () => {
       ).toBe(expected);
     }
   );
+
+  test("generates a Linear issue Workspace name from its identifier", () => {
+    expect(
+      issueWorkspaceName({
+        identifier: "MIS-123",
+        title: "Linear task",
+        url: "https://linear.app/issue/MIS-123",
+      })
+    ).toBe("issue-mis-123_linear-task");
+  });
 
   test("lists current, local, and remote-only source branches", async () => {
     const parent = await temporaryFolder();
