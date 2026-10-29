@@ -1,3 +1,38 @@
+import { $isCodeNode, CodeHighlightNode, CodeNode } from "@lexical/code";
+import { LinkNode } from "@lexical/link";
+import {
+  $createListItemNode,
+  $isListItemNode,
+  ListItemNode,
+  ListNode,
+} from "@lexical/list";
+import {
+  $convertFromMarkdownString,
+  $convertToMarkdownString,
+  TRANSFORMERS,
+} from "@lexical/markdown";
+import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import { ContentEditable } from "@lexical/react/LexicalContentEditable";
+import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
+import { LexicalExtensionComposer } from "@lexical/react/LexicalExtensionComposer";
+import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
+import { ListPlugin } from "@lexical/react/LexicalListPlugin";
+import { MarkdownShortcutPlugin } from "@lexical/react/LexicalMarkdownShortcutPlugin";
+import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
+import { $isQuoteNode, HeadingNode, QuoteNode } from "@lexical/rich-text";
+import {
+  $createParagraphNode,
+  $createRangeSelection,
+  $getNodeByKey,
+  $getRoot,
+  $getSelection,
+  $isRangeSelection,
+  $isTextNode,
+  $setSelection,
+  COMMAND_PRIORITY_HIGH,
+  PASTE_COMMAND,
+  defineExtension,
+} from "lexical";
 import {
   memo,
   useDeferredValue,
@@ -6,7 +41,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ClipboardEvent, KeyboardEvent } from "react";
+import type { KeyboardEvent } from "react";
 
 import { AGENTS } from "../../../../agents/update";
 import { isDefined, isNonEmpty } from "../../../../present";
@@ -21,11 +56,13 @@ import { respondToElicitation } from "../interaction";
 import { FooterControls } from "./controls/footer-controls";
 
 interface ComposerMatch {
+  end: number;
+  key: string;
   query: string;
   start: number;
 }
 
-const resizeComposer = (composer: HTMLTextAreaElement | null): void => {
+const resizeComposer = (composer: HTMLDivElement | null): void => {
   if (!composer) {
     return;
   }
@@ -35,7 +72,8 @@ const resizeComposer = (composer: HTMLTextAreaElement | null): void => {
 
 const composerContext = (
   value: string,
-  cursor: number
+  cursor: number,
+  key: string
 ): ComposerMatch | undefined => {
   const before = value.slice(0, cursor);
   const match = /(?:^|\s)@(?<query>[^\s]*)$/u.exec(before);
@@ -43,6 +81,8 @@ const composerContext = (
   return query === undefined
     ? undefined
     : {
+        end: cursor,
+        key,
         query: query.toLowerCase().replaceAll("\\", "/"),
         start: before.length - query.length - 1,
       };
@@ -50,13 +90,66 @@ const composerContext = (
 
 const slashCommand = (
   value: string,
-  cursor: number
+  cursor: number,
+  key: string
 ): ComposerMatch | undefined => {
   const match = /^\/(?<query>[^\s]*)$/u.exec(value.slice(0, cursor));
   return match?.groups?.query === undefined
     ? undefined
-    : { query: match.groups.query.toLowerCase(), start: 0 };
+    : { end: cursor, key, query: match.groups.query.toLowerCase(), start: 0 };
 };
+
+const composerExtension = defineExtension({
+  editable: false,
+  name: "mischief-composer",
+  namespace: "mischief-composer",
+  nodes: [
+    CodeHighlightNode,
+    CodeNode,
+    HeadingNode,
+    LinkNode,
+    ListItemNode,
+    ListNode,
+    QuoteNode,
+  ],
+  onError: (error: Error): never => {
+    throw error;
+  },
+  theme: {
+    code: "composer-code-block",
+    heading: {
+      h1: "composer-heading",
+      h2: "composer-heading",
+      h3: "composer-heading",
+      h4: "composer-heading",
+      h5: "composer-heading",
+      h6: "composer-heading",
+    },
+    link: "composer-link",
+    list: {
+      listitem: "composer-list-item",
+      ol: "composer-list-ordered",
+      ul: "composer-list-unordered",
+    },
+    quote: "composer-quote",
+    text: {
+      bold: "composer-bold",
+      code: "composer-code",
+      italic: "composer-italic",
+      strikethrough: "composer-strike",
+    },
+  },
+});
+
+interface ComposerProps {
+  contextItems: string[];
+  copyNotice: number;
+  historyItems: RenderedTranscriptItem[];
+  onJumpMessage: (id: string) => void;
+  selected?: RenderedThreadDetail;
+  setup: boolean;
+  setupSelected: string[];
+}
 
 const matchingContextItems = (
   items: string[],
@@ -85,7 +178,7 @@ const matchingContextItems = (
 };
 
 // oxlint-disable-next-line complexity -- composer handles both prompts and inline elicitation
-const ComposerView = ({
+const ComposerInput = ({
   contextItems,
   copyNotice,
   historyItems,
@@ -93,16 +186,9 @@ const ComposerView = ({
   selected,
   setup,
   setupSelected,
-}: {
-  contextItems: string[];
-  copyNotice: number;
-  historyItems: RenderedTranscriptItem[];
-  onJumpMessage: (id: string) => void;
-  selected?: RenderedThreadDetail;
-  setup: boolean;
-  setupSelected: string[];
-}): React.JSX.Element => {
-  const box = useRef<HTMLTextAreaElement>(null);
+}: ComposerProps): React.JSX.Element => {
+  const [editor] = useLexicalComposerContext();
+  const box = useRef<HTMLDivElement>(null);
   const suggestionsBox = useRef<HTMLDivElement>(null);
   const consumedDrafts = useRef("");
   const activeThread = useRef<string | null>(null);
@@ -130,21 +216,89 @@ const ComposerView = ({
     : [];
   const suggestions = command ? commandMatches : contextMatches;
 
+  const getComposerText = (): string =>
+    editor
+      .getEditorState()
+      .read(() => $convertToMarkdownString(TRANSFORMERS, undefined, true));
+
+  const updateComposerText = (value: string): void => {
+    editor.update(
+      () => {
+        $convertFromMarkdownString(value, TRANSFORMERS, undefined, true);
+        $getRoot().selectEnd();
+      },
+      { discrete: true }
+    );
+  };
+
+  const replaceComposerRange = (
+    match: ComposerMatch | undefined,
+    value: string
+  ): void => {
+    if (!match) {
+      return;
+    }
+    editor.update(
+      () => {
+        const node = $getNodeByKey(match.key);
+        if (!$isTextNode(node)) {
+          return;
+        }
+        const selection = $createRangeSelection();
+        selection.setTextNodeRange(node, match.start, node, match.end);
+        $setSelection(selection);
+        selection.insertText(value);
+      },
+      { discrete: true }
+    );
+  };
+
   useEffect(() => {
     suggestionsBox.current
       ?.querySelector<HTMLElement>(".selected")
       ?.scrollIntoView?.({ block: "nearest" });
   }, [contextIndex]);
 
-  const updateSuggestions = (value: string, cursor: number): void => {
-    const nextContext = composerContext(value, cursor);
-    if (nextContext && !context) {
-      postMessage({ type: "contextItems" });
-    }
-    setContext(nextContext);
-    setCommand(slashCommand(value, cursor));
-    setContextIndex(0);
-  };
+  const contextRequestActive = useRef(false);
+  useEffect(
+    () =>
+      editor.registerUpdateListener(({ editorState }) => {
+        const { context: nextContext, command: nextCommand } = editorState.read(
+          () => {
+            const selection = $getSelection();
+            if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
+              return {};
+            }
+            const { anchor } = selection;
+            const node = anchor.getNode();
+            if (!$isTextNode(node)) {
+              return {};
+            }
+            const text = node.getTextContent();
+            return {
+              command:
+                node.getTopLevelElement() === $getRoot().getFirstChild()
+                  ? slashCommand(text, anchor.offset, node.getKey())
+                  : undefined,
+              context: composerContext(text, anchor.offset, node.getKey()),
+            };
+          }
+        );
+        if (nextContext && !contextRequestActive.current) {
+          postMessage({ type: "contextItems" });
+        }
+        contextRequestActive.current = Boolean(nextContext);
+        setContext(nextContext);
+        setCommand(nextCommand);
+        setContextIndex(0);
+        resizeComposer(box.current);
+      }),
+    [editor]
+  );
+
+  useEffect(() => {
+    editor.setEditable(!setup && Boolean(selected?.agentId));
+  }, [editor, selected?.agentId, setup]);
 
   useEffect(() => {
     const threadId = selected?.id ?? null;
@@ -154,18 +308,16 @@ const ComposerView = ({
     if (isNonEmpty(activeThread.current)) {
       draftsByThread.current.set(activeThread.current, {
         images,
-        text: box.current?.value ?? "",
+        text: getComposerText(),
       });
     }
     activeThread.current = threadId;
-    const draft = isNonEmpty(threadId)
+    contextRequestActive.current = false;
+    const threadDraft = isNonEmpty(threadId)
       ? draftsByThread.current.get(threadId)
       : undefined;
-    if (box.current) {
-      box.current.value = draft?.text ?? "";
-      resizeComposer(box.current);
-    }
-    setImages(draft?.images ?? []);
+    updateComposerText(threadDraft?.text ?? "");
+    setImages(threadDraft?.images ?? []);
     setContext(undefined);
     setCommand(undefined);
   }, [selected?.id]);
@@ -180,41 +332,31 @@ const ComposerView = ({
     if (consumedDrafts.current === draftKey) {
       return;
     }
-    if (box.current) {
-      box.current.value = [box.current.value, ...drafts]
-        .filter(Boolean)
-        .join("\n\n");
-      resizeComposer(box.current);
-    }
+    updateComposerText(
+      [getComposerText(), ...drafts].filter(Boolean).join("\n\n")
+    );
     consumedDrafts.current = draftKey;
     box.current?.focus();
-    box.current?.setSelectionRange(
-      box.current.value.length,
-      box.current.value.length
-    );
     postMessage({ type: "draftsConsumed" });
   }, [selected?.drafts, selected?.id]);
 
   useEffect(() => {
     setMissingAnswer(false);
-    if (selected || setup) {
-      box.current?.focus();
+    if (selected?.agentId || setup) {
+      editor.focus();
     }
-  }, [selected?.id, selected?.interaction?.id, setup]);
+  }, [editor, selected?.agentId, selected?.interaction?.id, setup]);
 
   const send = (): void => {
     if (setup) {
       postMessage({ selected: setupSelected, type: "setupContinue" });
       return;
     }
-    const text = box.current?.value ?? "";
+    const text = getComposerText();
     if (selected?.interaction?.kind === "elicitation") {
       if (respondToElicitation(selected.interaction, text)) {
         setMissingAnswer(false);
-        if (box.current) {
-          box.current.value = "";
-          resizeComposer(box.current);
-        }
+        updateComposerText("");
         setContext(undefined);
         setCommand(undefined);
       } else {
@@ -233,63 +375,95 @@ const ComposerView = ({
     if (isNonEmpty(selected.id)) {
       draftsByThread.current.delete(selected.id);
     }
-    if (box.current) {
-      box.current.value = "";
-      resizeComposer(box.current);
-    }
+    updateComposerText("");
     setImages([]);
     setContext(undefined);
     setCommand(undefined);
   };
 
   const selectContext = (item: string): void => {
-    const text = box.current?.value ?? "";
-    const end = box.current?.selectionStart ?? text.length;
     const value = item.endsWith("/") ? item : `${item} `;
-    const start = context?.start ?? 0;
-    const next = `${text.slice(0, start)}@${value}${text.slice(end)}`;
-    const cursor = start + value.length + 1;
-    if (box.current) {
-      box.current.value = next;
-      resizeComposer(box.current);
-    }
+    replaceComposerRange(context, `@${value}`);
     setContext(undefined);
+    contextRequestActive.current = false;
     window.requestAnimationFrame(() => {
-      box.current?.setSelectionRange(cursor, cursor);
-      box.current?.focus();
+      editor.focus();
     });
   };
 
   const selectCommand = (item: ThreadCommand): void => {
-    const text = box.current?.value ?? "";
-    const end = box.current?.selectionStart ?? text.length;
     const value = `/${item.name}${item.inputHint === undefined ? "" : " "}`;
-    if (box.current) {
-      box.current.value = `${value}${text.slice(end)}`;
-      resizeComposer(box.current);
-    }
+    replaceComposerRange(command, value);
     setCommand(undefined);
     window.requestAnimationFrame(() => {
-      box.current?.setSelectionRange(value.length, value.length);
-      box.current?.focus();
+      editor.focus();
     });
   };
 
   const selectSkill = (item: ThreadCommand): void => {
     const value = `/${item.name} `;
-    if (box.current) {
-      box.current.value = `${value}${box.current.value}`;
-      resizeComposer(box.current);
-    }
+    editor.update(
+      () => {
+        $getRoot().selectStart();
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) {
+          selection.insertText(value);
+        }
+      },
+      { discrete: true }
+    );
     setContext(undefined);
     setCommand(undefined);
+    contextRequestActive.current = false;
     window.requestAnimationFrame(() => {
-      box.current?.setSelectionRange(value.length, value.length);
-      box.current?.focus();
+      editor.focus();
     });
   };
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+  const handleShiftEnter = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== "Enter" || !event.shiftKey) {
+      return;
+    }
+    let inserted = false;
+    editor.update(
+      () => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) {
+          return;
+        }
+        const node = selection.anchor.getNode();
+        const listItem = $isListItemNode(node)
+          ? node
+          : node.getParents().find($isListItemNode);
+        if (listItem) {
+          const nextItem = $createListItemNode();
+          listItem.insertAfter(nextItem);
+          nextItem.selectStart();
+          inserted = true;
+          return;
+        }
+        const quote = $isQuoteNode(node)
+          ? node
+          : node.getParents().find($isQuoteNode);
+        if (quote) {
+          const paragraph = $createParagraphNode();
+          quote.insertAfter(paragraph);
+          paragraph.selectStart();
+          inserted = true;
+        } else if (!$isCodeNode(node) && !node.getParents().some($isCodeNode)) {
+          selection.insertParagraph();
+          inserted = true;
+        }
+      },
+      { discrete: true }
+    );
+    if (inserted) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (
       selected?.interaction?.kind !== "elicitation" &&
       suggestions.length &&
@@ -339,19 +513,31 @@ const ComposerView = ({
     reader.readAsDataURL(file);
   };
 
-  const pasteImages = (event: ClipboardEvent<HTMLTextAreaElement>): void => {
-    const files = [...event.clipboardData.items]
-      .filter((item) => item.type.startsWith("image/"))
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => file !== null);
-    if (!files.length) {
-      return;
-    }
-    event.preventDefault();
-    for (const file of files) {
-      readImage(file);
-    }
-  };
+  useEffect(
+    () =>
+      editor.registerCommand(
+        PASTE_COMMAND,
+        (event) => {
+          if (!("clipboardData" in event) || !event.clipboardData) {
+            return false;
+          }
+          const files = [...event.clipboardData.items]
+            .filter((item) => item.type.startsWith("image/"))
+            .map((item) => item.getAsFile())
+            .filter((file): file is File => file !== null);
+          if (!files.length) {
+            return false;
+          }
+          event.preventDefault();
+          for (const file of files) {
+            readImage(file);
+          }
+          return true;
+        },
+        COMMAND_PRIORITY_HIGH
+      ),
+    [editor]
+  );
 
   const running = Boolean(
     selected && ["running", "waiting"].includes(selected.status)
@@ -369,27 +555,34 @@ const ComposerView = ({
           copied to clipboard
         </div>
       ) : null}
-      <textarea
-        id="composer"
-        ref={box}
-        placeholder={placeholder}
-        autoComplete="off"
-        disabled={(!selected || !selected.agentId) && !setup}
-        readOnly={setup}
-        onChange={(event) => {
-          setMissingAnswer(false);
-          resizeComposer(event.currentTarget);
-          if (selected?.interaction?.kind === "elicitation") {
-            return;
+      <div className="composer-editor">
+        <RichTextPlugin
+          contentEditable={
+            <ContentEditable
+              id="composer"
+              ref={box}
+              className={
+                (!selected || !selected.agentId) && !setup
+                  ? "composer-disabled"
+                  : ""
+              }
+              aria-label={placeholder}
+              aria-multiline="true"
+              aria-placeholder={placeholder}
+              placeholder={
+                <div className="composer-placeholder">{placeholder}</div>
+              }
+              onKeyDown={handleKeyDown}
+              onKeyDownCapture={handleShiftEnter}
+              tabIndex={0}
+            />
           }
-          updateSuggestions(
-            event.currentTarget.value,
-            event.currentTarget.selectionStart
-          );
-        }}
-        onKeyDown={handleKeyDown}
-        onPaste={pasteImages}
-      />
+          ErrorBoundary={LexicalErrorBoundary}
+        />
+        <HistoryPlugin />
+        <ListPlugin />
+        <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
+      </div>
       {missingAnswer ? (
         <div className="interaction-validation" role="alert">
           Choose an option or enter a response to the Agent request.
@@ -471,5 +664,14 @@ const ComposerView = ({
     </footer>
   );
 };
+
+const ComposerView = (props: ComposerProps): React.JSX.Element => (
+  <LexicalExtensionComposer
+    contentEditable={null}
+    extension={composerExtension}
+  >
+    <ComposerInput {...props} />
+  </LexicalExtensionComposer>
+);
 
 export const Composer = memo(ComposerView);

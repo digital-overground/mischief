@@ -2018,6 +2018,109 @@ footer {
   border-top: 1px solid var(--vscode-panel-border);
   background: var(--vscode-editor-background, var(--vscode-sideBar-background));
 }
+.composer-editor {
+  position: relative;
+}
+.composer-placeholder {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  color: var(
+    --vscode-input-placeholderForeground,
+    var(--vscode-descriptionForeground)
+  );
+  pointer-events: none;
+}
+#composer {
+  display: block;
+  width: 100%;
+  min-height: 86px;
+  max-height: min(400px, 45vh);
+  overflow-y: auto;
+  border: 0;
+  padding: 12px 14px 6px;
+  background: transparent;
+  color: var(--vscode-input-foreground);
+  outline: none;
+  font-family: var(--mischief-mono-font);
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+#composer:focus {
+  outline: none;
+}
+#composer.composer-disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+#composer p,
+#composer h1,
+#composer h2,
+#composer h3,
+#composer h4,
+#composer h5,
+#composer h6 {
+  margin: 0;
+}
+#composer h1,
+#composer h2,
+#composer h3,
+#composer h4,
+#composer h5,
+#composer h6 {
+  font-size: inherit;
+  font-weight: 700;
+}
+#composer blockquote.composer-quote {
+  margin: 0;
+  border-left: 2px solid var(--vscode-textBlockQuote-border);
+  padding-left: 8px;
+  color: var(
+    --vscode-textBlockQuote-foreground,
+    var(--vscode-input-foreground)
+  );
+}
+#composer .composer-code {
+  border-radius: 2px;
+  background: var(
+    --vscode-textCodeBlock-background,
+    var(--vscode-input-background)
+  );
+}
+#composer pre {
+  margin: 4px 0;
+  overflow-x: auto;
+  background: var(
+    --vscode-textCodeBlock-background,
+    var(--vscode-input-background)
+  );
+}
+#composer .composer-code-block {
+  display: block;
+  min-height: 1.35em;
+}
+#composer ul,
+#composer ol {
+  margin: 0;
+  padding-left: 24px;
+}
+#composer .composer-list-item {
+  margin: 0;
+}
+#composer .composer-bold,
+#composer .composer-heading {
+  font-weight: 700;
+}
+#composer .composer-italic {
+  font-style: italic;
+}
+#composer .composer-strike {
+  text-decoration: line-through;
+}
+#composer .composer-link {
+  color: var(--vscode-textLink-foreground);
+}
 #processing {
   height: 30px;
   padding: 2px 10px 10px 12px;
@@ -2061,25 +2164,7 @@ footer {
     transform: translate(-50%);
   }
 }
-#composer {
-  display: block;
-  width: 100%;
-  min-height: 86px;
-  max-height: min(400px, 45vh);
-  overflow-y: auto;
-  resize: none;
-  border: 0;
-  background: transparent;
-  color: var(--vscode-input-foreground);
-  padding: 12px 14px 6px;
-  outline: none;
-  font-family: var(--mischief-mono-font);
-  font-size: 13px;
-  line-height: 1.35;
-}
-#composer:focus {
-  outline: none;
-}
+
 #context-suggestions {
   position: absolute;
   right: 8px;

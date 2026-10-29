@@ -1,5 +1,18 @@
 import { readFileSync } from "node:fs";
 
+import {
+  $convertFromMarkdownString,
+  $convertToMarkdownString,
+  TRANSFORMERS,
+} from "@lexical/markdown";
+import {
+  $getRoot,
+  $getSelection,
+  $isRangeSelection,
+  $isTextNode,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
+  getNearestEditorFromDOMNode,
+} from "lexical";
 import { act } from "react";
 // @vitest-environment jsdom
 import { createRoot } from "react-dom/client";
@@ -16,6 +29,11 @@ const writeText = vi.fn<(text: string) => Promise<void>>(async () => {
   await Promise.resolve();
 });
 vi.stubGlobal("acquireVsCodeApi", () => ({ postMessage }));
+if (!("getBoundingClientRect" in Range.prototype)) {
+  Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+    value: () => new DOMRect(),
+  });
+}
 Object.defineProperty(navigator, "clipboard", {
   configurable: true,
   value: { writeText },
@@ -69,6 +87,32 @@ const threadState = (
   },
   type: "state",
 });
+
+const setComposerText = (composer: HTMLElement, text: string): void => {
+  const editor = getNearestEditorFromDOMNode(composer);
+  if (!editor) {
+    throw new Error("Missing Lexical composer editor");
+  }
+  act(() => {
+    editor.update(
+      () => {
+        $convertFromMarkdownString(text, TRANSFORMERS, undefined, true);
+        $getRoot().selectEnd();
+      },
+      { discrete: true }
+    );
+  });
+};
+
+const composerText = (composer: HTMLElement): string => {
+  const editor = getNearestEditorFromDOMNode(composer);
+  if (!editor) {
+    throw new Error("Missing Lexical composer editor");
+  }
+  return editor
+    .getEditorState()
+    .read(() => $convertToMarkdownString(TRANSFORMERS, undefined, true));
+};
 
 const workspaceSummary = (name: string, current = false) => ({
   ahead: 0,
@@ -183,7 +227,7 @@ describe("React webview", () => {
         })
       );
     });
-    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+    const composer = document.querySelector<HTMLDivElement>("#composer");
     const options = [
       ...document.querySelectorAll<HTMLInputElement>(
         ".setup-option input[type='checkbox']"
@@ -210,7 +254,9 @@ describe("React webview", () => {
     expect(document.querySelector("#transcript")?.textContent).toContain(
       "Matt Pocock Skills"
     );
-    expect(composer.placeholder).toBe("Press Enter to continue");
+    expect(composer.getAttribute("aria-placeholder")).toBe(
+      "Press Enter to continue"
+    );
     expect(postMessage).toHaveBeenCalledWith({
       selected: ["matt"],
       type: "setupContinue",
@@ -233,7 +279,9 @@ describe("React webview", () => {
       );
     });
     expect(
-      document.querySelector<HTMLTextAreaElement>("#composer")?.placeholder
+      document
+        .querySelector<HTMLDivElement>("#composer")
+        ?.getAttribute("aria-placeholder")
     ).toBe(
       name === "Choose an Agent to start a Thread"
         ? name
@@ -249,29 +297,188 @@ describe("React webview", () => {
         new MessageEvent("message", { data: threadState("selected", []) })
       );
     });
-    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
-    const valueDescriptor = Object.getOwnPropertyDescriptor(
-      HTMLTextAreaElement.prototype,
-      "value"
-    );
-    if (!composer || !valueDescriptor?.set) {
+    const composer = document.querySelector<HTMLDivElement>("#composer");
+    if (!composer) {
       throw new Error("Missing composer");
     }
     Object.defineProperty(composer, "scrollHeight", {
       configurable: true,
-      get: () => (composer.value ? 160 : 86),
+      get: () => (composer.textContent ? 160 : 86),
     });
-    act(() => {
-      valueDescriptor.set?.call(composer, "A longer draft");
-      composer.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    setComposerText(composer, "A longer draft");
     expect(composer.style.height).toBe("160px");
 
-    act(() => {
-      valueDescriptor.set?.call(composer, "");
-      composer.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    setComposerText(composer, "");
     expect(composer.style.height).toBe("86px");
+    await unmount();
+  });
+
+  test("renders and sends Markdown from the rich-text composer", async () => {
+    const unmount = await renderApp();
+    const markdown = "> quoted\n\n**bold** and `code`";
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: threadState("selected", [markdown]),
+        })
+      );
+    });
+    const composer = document.querySelector<HTMLDivElement>("#composer");
+    if (!composer) {
+      throw new Error("Missing composer");
+    }
+
+    expect(composer.querySelector("blockquote")).not.toBeNull();
+    expect(composer.querySelector("strong")?.textContent).toBe("bold");
+    expect(composer.querySelector("code")?.textContent).toBe("code");
+
+    postMessage.mockClear();
+    act(() => {
+      composer.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "Enter",
+        })
+      );
+    });
+    expect(postMessage).toHaveBeenCalledWith({
+      images: [],
+      text: markdown,
+      type: "prompt",
+    });
+    expect(composerText(composer)).toBe("");
+    await unmount();
+  });
+
+  test("starts a blockquote after inline code on a new line", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("selected", []) })
+      );
+    });
+    const composer = document.querySelector<HTMLDivElement>("#composer");
+    const editor = composer && getNearestEditorFromDOMNode(composer);
+    if (!composer || !editor) {
+      throw new Error("Missing composer editor");
+    }
+    setComposerText(composer, "`asd`");
+    expect(composer.querySelector("code")?.textContent).toBe("asd");
+    const type = (text: string): void => {
+      for (const character of text) {
+        act(() => {
+          editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, character);
+        });
+      }
+    };
+    act(() => {
+      composer.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "Enter",
+          shiftKey: true,
+        })
+      );
+    });
+    type("> ");
+    await Promise.resolve();
+    expect(composer.querySelector("blockquote")?.textContent).toBe("");
+    await unmount();
+  });
+
+  test("starts a new list item on Shift+Enter", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("selected", []) })
+      );
+    });
+    const composer = document.querySelector<HTMLDivElement>("#composer");
+    if (!composer) {
+      throw new Error("Missing composer");
+    }
+    setComposerText(composer, "- first");
+    const editor = getNearestEditorFromDOMNode(composer);
+    if (!editor) {
+      throw new Error("Missing Lexical composer editor");
+    }
+    act(() => {
+      editor.update(
+        () => {
+          const last = $getRoot().getLastDescendant();
+          if ($isTextNode(last)) {
+            last.select(last.getTextContentSize(), last.getTextContentSize());
+          }
+        },
+        { discrete: true }
+      );
+      composer.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "Enter",
+          shiftKey: true,
+        })
+      );
+    });
+    expect(
+      [...composer.querySelectorAll("li")].map((item) => item.textContent)
+    ).toStrictEqual(["first", ""]);
+    await unmount();
+  });
+
+  test("exits a blockquote on Shift+Enter", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("selected", []) })
+      );
+    });
+    const composer = document.querySelector<HTMLDivElement>("#composer");
+    if (!composer) {
+      throw new Error("Missing composer");
+    }
+    setComposerText(composer, "> quoted");
+    const editor = getNearestEditorFromDOMNode(composer);
+    if (!editor) {
+      throw new Error("Missing Lexical composer editor");
+    }
+    act(() => {
+      editor.update(
+        () => {
+          const last = $getRoot().getLastDescendant();
+          if ($isTextNode(last)) {
+            last.select(last.getTextContentSize(), last.getTextContentSize());
+          }
+        },
+        { discrete: true }
+      );
+      composer.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "Enter",
+          shiftKey: true,
+        })
+      );
+    });
+    act(() => {
+      editor.update(
+        () => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) {
+            selection.insertText("normal");
+          }
+        },
+        { discrete: true }
+      );
+    });
+    const quote = composer.querySelector("blockquote");
+    expect(quote?.textContent).toBe("quoted");
+    expect(quote?.nextElementSibling?.textContent).toBe("normal");
+    expect(composerText(composer)).toBe("> quoted\nnormal");
     await unmount();
   });
 
@@ -2653,13 +2860,14 @@ describe("React webview", () => {
           new MessageEvent("message", { data: threadState("selected", []) })
         );
       });
-      const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+      const composer = document.querySelector<HTMLDivElement>("#composer");
       if (!composer) {
         throw new Error("Missing composer");
       }
       const paste = new Event("paste", { bubbles: true, cancelable: true });
       Object.defineProperty(paste, "clipboardData", {
         value: {
+          getData: () => "clipboard text that should not be inserted",
           items: [
             {
               getAsFile: () =>
@@ -2672,6 +2880,7 @@ describe("React webview", () => {
       act(() => {
         composer.dispatchEvent(paste);
       });
+      expect(composerText(composer)).toBe("");
       const attachment = document.querySelector<HTMLElement>(".attachment");
       const dialog = attachment?.querySelector<HTMLDialogElement>(
         ".image-preview-dialog"
@@ -2886,11 +3095,11 @@ describe("React webview", () => {
           testValue<{ type?: string }>(message).type === "contextItems"
       )
     ).toHaveLength(1);
-    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+    const composer = document.querySelector<HTMLDivElement>("#composer");
     if (!composer) {
       throw new Error("Missing composer");
     }
-    composer.value = "unfinished draft";
+    setComposerText(composer, "unfinished draft");
     const chat = document.querySelector<HTMLDivElement>("#chat");
     if (!chat) {
       throw new Error("Missing chat");
@@ -2934,7 +3143,7 @@ describe("React webview", () => {
         (entry) => entry.textContent
       )
     ).toStrictEqual(["First", "Second streamed update"]);
-    expect(composer.value).toBe("unfinished draft");
+    expect(composerText(composer)).toBe("unfinished draft");
     expect({
       clientHeight: clientHeight.mock.calls.length,
       scrollHeight: scrollHeight.mock.calls.length,
@@ -2973,16 +3182,16 @@ describe("React webview", () => {
     act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: second }));
     });
-    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+    const composer = document.querySelector<HTMLDivElement>("#composer");
     if (!composer) {
       throw new Error("Missing composer");
     }
-    composer.value = "Unsent draft";
+    setComposerText(composer, "Unsent draft");
     sendTranscriptItem("second", "Live second");
     sendTranscriptItem("first", "Background update");
 
     expect({
-      draft: composer.value,
+      draft: composerText(composer),
       processingHidden:
         document.querySelector<HTMLElement>("#processing")?.hidden,
       transcript: [...document.querySelectorAll("#transcript .entry")].map(
@@ -3406,20 +3615,21 @@ describe("React webview", () => {
         })
       );
     });
-    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
-    const valueDescriptor = Object.getOwnPropertyDescriptor(
-      HTMLTextAreaElement.prototype,
-      "value"
-    );
-    if (!composer || !valueDescriptor?.set) {
-      throw new Error("Missing composer");
+    const composer = document.querySelector<HTMLDivElement>("#composer");
+    const editor = composer && getNearestEditorFromDOMNode(composer);
+    if (!composer || !editor) {
+      throw new Error("Missing composer editor");
     }
     postMessage.mockClear();
     let synchronousReads = -1;
     act(() => {
-      valueDescriptor.set?.call(composer, "@missing");
-      composer.setSelectionRange(8, 8);
-      composer.dispatchEvent(new Event("input", { bubbles: true }));
+      editor.update(
+        () => {
+          $convertFromMarkdownString("@missing", TRANSFORMERS, undefined, true);
+          $getRoot().selectEnd();
+        },
+        { discrete: true }
+      );
       synchronousReads = reads;
     });
 
@@ -3441,11 +3651,11 @@ describe("React webview", () => {
         new MessageEvent("message", { data: threadState("original", []) })
       )
     );
-    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+    const composer = document.querySelector<HTMLDivElement>("#composer");
     if (!composer) {
       throw new Error("Missing composer");
     }
-    composer.value = "Original draft";
+    setComposerText(composer, "Original draft");
 
     void act(() =>
       window.dispatchEvent(
@@ -3454,21 +3664,21 @@ describe("React webview", () => {
         })
       )
     );
-    expect(composer.value).toBe("Fork from here");
+    expect(composerText(composer)).toBe("Fork from here");
 
     void act(() =>
       window.dispatchEvent(
         new MessageEvent("message", { data: threadState("original", []) })
       )
     );
-    expect(composer.value).toBe("Original draft");
+    expect(composerText(composer)).toBe("Original draft");
 
     void act(() =>
       window.dispatchEvent(
         new MessageEvent("message", { data: threadState("fork", []) })
       )
     );
-    expect(composer.value).toBe("Fork from here");
+    expect(composerText(composer)).toBe("Fork from here");
     await unmount();
   });
 
@@ -3479,11 +3689,11 @@ describe("React webview", () => {
         new MessageEvent("message", { data: threadState("selected", []) })
       )
     );
-    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
+    const composer = document.querySelector<HTMLDivElement>("#composer");
     if (!composer) {
       throw new Error("Missing composer");
     }
-    composer.value = "Unsent local draft";
+    setComposerText(composer, "Unsent local draft");
     postMessage.mockClear();
 
     void act(() =>
@@ -3494,9 +3704,8 @@ describe("React webview", () => {
       )
     );
 
-    expect(composer.value).toBe("Unsent local draft\n\nTry this again");
+    expect(composerText(composer)).toBe("Unsent local draft\n\nTry this again");
     expect(document.activeElement).toBe(composer);
-    expect(composer.selectionStart).toBe(composer.value.length);
     expect(postMessage).toHaveBeenCalledWith({ type: "draftsConsumed" });
     await unmount();
   });
@@ -3534,17 +3743,12 @@ describe("React webview", () => {
         })
       );
     });
-    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
-    const value = Object.getOwnPropertyDescriptor(
-      HTMLTextAreaElement.prototype,
-      "value"
-    );
-    if (!composer || !value?.set) {
+    const composer = document.querySelector<HTMLDivElement>("#composer");
+    if (!composer) {
       throw new Error("Missing composer");
     }
+    setComposerText(composer, "Review my current branch");
     act(() => {
-      value.set?.call(composer, "Review my current branch");
-      composer.dispatchEvent(new Event("input", { bubbles: true }));
       document
         .querySelector<HTMLButtonElement>("#skill-picker-button")
         ?.click();
@@ -3552,7 +3756,7 @@ describe("React webview", () => {
     act(() => {
       document.querySelector<HTMLButtonElement>(".skill-picker-entry")?.click();
     });
-    expect(composer.value).toBe(
+    expect(composerText(composer)).toBe(
       "/skill:ponytail-review Review my current branch"
     );
     await unmount();
@@ -3593,21 +3797,13 @@ describe("React webview", () => {
         })
       );
     });
-    const composer = document.querySelector<HTMLTextAreaElement>("#composer");
-    const valueDescriptor = Object.getOwnPropertyDescriptor(
-      HTMLTextAreaElement.prototype,
-      "value"
-    );
-    if (!composer || !valueDescriptor?.set) {
+    const composer = document.querySelector<HTMLDivElement>("#composer");
+    if (!composer) {
       throw new Error("Missing composer");
     }
     const input = async (value: string): Promise<void> => {
       await Promise.resolve();
-      act(() => {
-        valueDescriptor.set?.call(composer, value);
-        composer.setSelectionRange(value.length, value.length);
-        composer.dispatchEvent(new Event("input", { bubbles: true }));
-      });
+      setComposerText(composer, value);
     };
 
     await input("/");
@@ -3642,7 +3838,7 @@ describe("React webview", () => {
     });
     expect({
       scroll: scrollIntoView.mock.calls,
-      value: composer.value,
+      value: composerText(composer),
     }).toStrictEqual({
       scroll: [[{ block: "nearest" }]],
       value: "/resume",
@@ -3658,7 +3854,7 @@ describe("React webview", () => {
     act(() => {
       review.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     });
-    expect(composer.value).toBe("/review ");
+    expect(composerText(composer)).toBe("/review ");
 
     postMessage.mockClear();
     await input("/new");
@@ -4026,7 +4222,7 @@ describe("React webview", () => {
         '#interaction input[type="radio"]'
       ),
     ];
-    const custom = document.querySelector<HTMLTextAreaElement>("#composer");
+    const custom = document.querySelector<HTMLDivElement>("#composer");
     const submit = document.querySelector<HTMLButtonElement>("#send");
     const multipleChoices = [
       ...document.querySelectorAll<HTMLInputElement>(
@@ -4088,8 +4284,8 @@ describe("React webview", () => {
       multipleChoices[0]?.click();
       multipleChoices[1]?.click();
     });
+    setComposerText(custom, "Allow admins to correct mistakes.");
     act(() => {
-      custom.value = "Allow admins to correct mistakes.";
       submit.click();
     });
 
@@ -4168,7 +4364,7 @@ describe("React webview", () => {
         '#interaction input[type="checkbox"][name="__mischief_options"]'
       ),
     ];
-    const custom = document.querySelector<HTMLTextAreaElement>("#composer");
+    const custom = document.querySelector<HTMLDivElement>("#composer");
     const submit = document.querySelector<HTMLButtonElement>("#send");
     if (choices.length !== 3 || !custom || !submit) {
       throw new Error("Missing selectable ask-user options");
@@ -4197,7 +4393,9 @@ describe("React webview", () => {
     act(() => {
       choices[0]?.click();
       choices[2]?.click();
-      custom.value = "More contrast";
+    });
+    setComposerText(custom, "More contrast");
+    act(() => {
       custom.dispatchEvent(
         new KeyboardEvent("keydown", { bubbles: true, key: "Enter" })
       );
