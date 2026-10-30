@@ -463,6 +463,24 @@ const ComposerInput = ({
     }
   };
 
+  const loadPreviousMessage = (): boolean => {
+    if (
+      setup ||
+      selected?.interaction !== undefined ||
+      getComposerText() ||
+      images.length
+    ) {
+      return false;
+    }
+    const previous = historyItems.findLast((item) => item.kind === "user");
+    if (!previous) {
+      return false;
+    }
+    updateComposerText(previous.text ?? "");
+    setImages(previous.images ?? []);
+    return true;
+  };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (
       selected?.interaction?.kind !== "elicitation" &&
@@ -489,7 +507,9 @@ const ComposerInput = ({
       }
       return;
     }
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "ArrowUp" && loadPreviousMessage()) {
+      event.preventDefault();
+    } else if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       send();
     }

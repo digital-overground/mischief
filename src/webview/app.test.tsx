@@ -2333,6 +2333,7 @@ describe("React webview", () => {
         diffs: [{ newText: "new", oldText: "old", path: "src/b.ts" }],
         id: "edit",
         kind: "tool",
+        locations: [{ path: "src/e.ts" }],
         title: "edit",
         toolKind: "edit",
       },
@@ -2372,13 +2373,47 @@ describe("React webview", () => {
     }
     expect({
       expanded: summary.getAttribute("aria-expanded"),
-      summary: summary.textContent,
+      summary: Array.from(
+        summary.querySelectorAll(".turn-summary-item"),
+        (item) => ({
+          icon: item.querySelector("[role=img]")?.getAttribute("title"),
+          label: item.textContent,
+        })
+      ),
+      summaryAtTop: summary.parentElement?.classList.contains("assistant-card"),
+      summaryIcon: summary.querySelector(".entry-icon")?.getAttribute("title"),
+      summaryIconPaths: Array.from(
+        summary.querySelectorAll(".entry-icon svg path"),
+        (path) => path.getAttribute("d")
+      ),
       text: document.querySelector("#transcript")?.textContent,
+      turnRail: document
+        .querySelector("#transcript .user")
+        ?.parentElement?.classList.contains("conversation-turn"),
+      userIcon: document
+        .querySelector("#transcript .user .user-turn-icon")
+        ?.getAttribute("aria-label"),
     }).toStrictEqual({
       expanded: "false",
-      summary:
-        "5 tool calls · 1 file read · 1 file created · 1 file edited · 1 file deleted",
-      text: "Make the change5 tool calls · 1 file read · 1 file created · 1 file edited · 1 file deletedFinishedOne more thingThinkingCurrent thinking",
+      summary: [
+        { icon: "5 tool calls", label: "5 tool calls" },
+        { icon: "1 file read", label: "1 file read" },
+        { icon: "1 file created", label: "1 file created" },
+        { icon: "1 file deleted", label: "1 file deleted" },
+        { icon: "2 files edited", label: "2 files edited" },
+      ],
+      summaryAtTop: true,
+      summaryIcon: "Turn summary",
+      summaryIconPaths: [
+        "M15 4H7",
+        "m18 16 3 3-3 3",
+        "M3 4v13a2 2 0 0 0 2 2h16",
+        "M7 14h7",
+        "M7 9h12",
+      ],
+      text: "Make the change5 tool calls1 file read1 file created1 file deleted2 files editedFinishedOne more thingThinkingCurrent thinking",
+      turnRail: true,
+      userIcon: "You",
     });
 
     act(() => {
@@ -2397,7 +2432,50 @@ describe("React webview", () => {
       expanded: "true",
       finished: 1,
       groups: ["File operations", "Terminal"],
-      text: "Make the change5 tool calls · 1 file read · 1 file created · 1 file edited · 1 file deletedThinkingInspectingFile operationsRead · a.tssrc/a.tsEdit · b.tsOpen diff · src/b.tsWrite · c.tsOpen diff · src/c.tsEdit · d.tsOpen diff · src/d.tsStill workingTerminalpnpm checkFinishedOne more thingThinkingCurrent thinking",
+      text: "Make the change5 tool calls1 file read1 file created1 file deleted2 files editedThinkingInspectingFile operationsRead · a.tssrc/a.tsEdit · e.tssrc/e.tsOpen diff · src/b.tsWrite · c.tsOpen diff · src/c.tsEdit · d.tsOpen diff · src/d.tsStill workingTerminalpnpm checkFinishedOne more thingThinkingCurrent thinking",
+    });
+
+    act(() => {
+      summary.click();
+    });
+    expect({
+      expanded: summary.getAttribute("aria-expanded"),
+      groups: document.querySelectorAll(".collapsed-turn .tool-group").length,
+    }).toStrictEqual({ expanded: "false", groups: 0 });
+    await unmount();
+  });
+
+  test("collapses completed tool-only turns after the next user message", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (state.type !== "state" || !state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    state.threads.selected.items = [
+      { id: "user-1", kind: "user", text: "Inspect this" },
+      {
+        id: "read",
+        kind: "tool",
+        locations: [{ path: "src/a.ts" }],
+        title: "read",
+        toolKind: "read",
+      },
+      { id: "user-2", kind: "user", text: "Continue" },
+    ];
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+
+    const summary = document.querySelector<HTMLButtonElement>(".turn-summary");
+    expect({
+      expanded: summary?.getAttribute("aria-expanded"),
+      text: document.querySelector("#transcript")?.textContent,
+      tools: document.querySelectorAll(".collapsed-turn .tool-group").length,
+    }).toStrictEqual({
+      expanded: "false",
+      text: "Inspect this1 tool call1 file readContinue",
+      tools: 0,
     });
     await unmount();
   });
@@ -2999,6 +3077,53 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("loads older history from the start of a conversation turn", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (state.type !== "state" || !state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    state.threads.selected.items = [
+      ...Array.from({ length: 40 }, (_, index) => ({
+        id: `old-${index}`,
+        kind: "assistant" as const,
+        text: `Old ${index}`,
+      })),
+      { id: "user-1", kind: "user", text: "Inspect" },
+      ...Array.from({ length: 10 }, (_, index) => ({
+        id: `tool-${index}`,
+        kind: "tool" as const,
+        title: `command ${index}`,
+        toolKind: "execute" as const,
+      })),
+      { id: "response", kind: "assistant", text: "Done" },
+      { id: "user-2", kind: "user", text: "Continue" },
+      ...Array.from({ length: 197 }, (_, index) => ({
+        id: `recent-${index}`,
+        kind: "assistant" as const,
+        text: `Recent ${index}`,
+      })),
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    expect(document.querySelector(".turn-summary")).toBeNull();
+
+    const chat = document.querySelector<HTMLDivElement>("#chat");
+    if (!chat) {
+      throw new Error("Missing chat");
+    }
+    act(() => {
+      chat.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+
+    expect({
+      expandedTools: document.querySelectorAll(".tool-group").length,
+      summary: document.querySelector(".turn-summary")?.textContent,
+    }).toStrictEqual({ expandedTools: 0, summary: "10 tool calls" });
+    await unmount();
+  });
+
   test("requests context only when the current Workspace changes", async () => {
     const unmount = await renderApp();
     const state = (
@@ -3249,7 +3374,7 @@ describe("React webview", () => {
     await unmount();
   });
 
-  test("shows Thinking by default and keeps its collapsed state while streaming", async () => {
+  test("keeps streamed Thinking visible without collapse controls", async () => {
     const unmount = await renderApp();
     const state = threadState("selected", []);
     if (!state.threads.selected) {
@@ -3261,15 +3386,6 @@ describe("React webview", () => {
     act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
     });
-    const group = document.querySelector<HTMLDetailsElement>(".thinking-group");
-    if (!group) {
-      throw new Error("Missing Thinking group");
-    }
-    expect(group.open).toBeTruthy();
-    act(() => {
-      group.querySelector("summary")?.click();
-    });
-    expect(group.open).toBeFalsy();
     act(() => {
       window.dispatchEvent(
         new MessageEvent("message", {
@@ -3282,12 +3398,23 @@ describe("React webview", () => {
         })
       );
     });
-    expect(group.open).toBeFalsy();
-    expect(group.querySelectorAll(".thinking-item")).toHaveLength(2);
-    act(() => {
-      group.querySelector("summary")?.click();
+    const group = document.querySelector<HTMLElement>(".thinking-group");
+    if (!group) {
+      throw new Error("Missing Thinking group");
+    }
+    expect({
+      details: group.matches("details"),
+      heading: group.querySelector(".thinking-heading")?.tagName,
+      itemCount: group.querySelectorAll(".thinking-item").length,
+      summary: group.querySelector("summary") !== null,
+      text: group.textContent,
+    }).toStrictEqual({
+      details: false,
+      heading: "DIV",
+      itemCount: 2,
+      summary: false,
+      text: "ThinkingFirst thoughtSecond thought",
     });
-    expect(group.open).toBeTruthy();
     await unmount();
   });
 
@@ -3643,6 +3770,50 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("loads the last sent user message with ArrowUp without replacing a draft", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    const { selected } = state.threads;
+    if (!selected) {
+      throw new Error("Missing selected Thread");
+    }
+    selected.items = [
+      { id: "user:first", kind: "user", text: "First prompt" },
+      { id: "assistant:reply", kind: "assistant", text: "Done" },
+      { id: "user:last", kind: "user", text: "Last prompt" },
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    const composer = document.querySelector<HTMLDivElement>("#composer");
+    if (!composer) {
+      throw new Error("Missing composer");
+    }
+    act(() => {
+      composer.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "ArrowUp",
+        })
+      );
+    });
+    expect(composerText(composer)).toBe("Last prompt");
+
+    setComposerText(composer, "Unsent draft");
+    act(() => {
+      composer.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "ArrowUp",
+        })
+      );
+    });
+    expect(composerText(composer)).toBe("Unsent draft");
+    await unmount();
+  });
+
   test("keeps composer drafts with their Threads while switching", async () => {
     const unmount = await renderApp();
 
@@ -3958,6 +4129,61 @@ describe("React webview", () => {
       expanded: "true",
       selected: "true",
     });
+    await unmount();
+  });
+
+  test("shows Fork and Rollback actions on transcript messages", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    const { selected } = state.threads;
+    if (!selected) {
+      throw new Error("Missing selected Thread");
+    }
+    selected.forkSupported = true;
+    selected.treeNavigationSupported = true;
+    selected.items = [
+      { id: "user:prompt", kind: "user", text: "Try this" },
+      { id: "assistant:reply", kind: "assistant", text: "Result" },
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    const fork = document.querySelector<HTMLButtonElement>(
+      '#transcript [aria-label="Fork at Try this"]'
+    );
+    const rollback = document.querySelector<HTMLButtonElement>(
+      '#transcript [aria-label="Rollback to Result"]'
+    );
+    expect({
+      fork: fork?.title,
+      rollback: rollback?.title,
+      rollbackIcon: rollback?.querySelector("svg path")?.getAttribute("d"),
+    }).toStrictEqual({
+      fork: "Fork here",
+      rollback: "Rollback to here",
+      rollbackIcon: "M9 14 4 9l5-5",
+    });
+    postMessage.mockClear();
+    act(() => {
+      fork?.click();
+      rollback?.click();
+    });
+    expect(postMessage.mock.calls).toStrictEqual([
+      [
+        {
+          messageId: "user:prompt",
+          threadId: "selected",
+          type: "forkThread",
+        },
+      ],
+      [
+        {
+          messageId: "assistant:reply",
+          threadId: "selected",
+          type: "navigateThreadTree",
+        },
+      ],
+    ]);
     await unmount();
   });
 

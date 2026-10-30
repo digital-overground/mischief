@@ -2477,6 +2477,70 @@ describe("view provider", () => {
     );
   });
 
+  test("connects left-aligned user bubbles to boxed Agent responses", () => {
+    const css = readFileSync("media/webview.css", "utf-8");
+    const rail = /\.conversation-turn::before \{[^}]*\}/u.exec(css)?.[0] ?? "";
+    const user = /\.entry\.user \{[^}]*\}/u.exec(css)?.[0] ?? "";
+    const userBody = /\.entry\.user \.body \{[^}]*\}/u.exec(css)?.[0] ?? "";
+    const userContent =
+      /\.entry\.user \.entry-content \{[^}]*\}/u.exec(css)?.[0] ?? "";
+    const userIcon =
+      /\.entry\.user \.user-turn-icon \{[^}]*\}/u.exec(css)?.[0] ?? "";
+    const turnCards =
+      /\.conversation-turn :is\(\.entry, \.collapsed-turn\.assistant-card\) \{[^}]*\}/u.exec(
+        css
+      )?.[0] ?? "";
+    const assistant =
+      /\.entry\.assistant,\s*\.collapsed-turn\.assistant-card \{[^}]*\}/u.exec(
+        css
+      )?.[0] ?? "";
+    const card =
+      /\.entry,\s*\.collapsed-turn\.assistant-card \{[^}]*\}/u.exec(css)?.[0] ??
+      "";
+
+    expect({
+      assistantAccent: assistant.includes("--entry-accent: var(--hl-accent);"),
+      assistantBackground: assistant.includes("background: transparent;"),
+      assistantBorder: assistant.includes("border-left: 1px solid"),
+      assistantBox: card.includes("border: 1px solid"),
+      rail: rail.includes("top: 0;\n  bottom: 8px;\n  left: 0;"),
+      squareCardJunctions: turnCards.includes(
+        "border-top-left-radius: 0;\n  border-bottom-left-radius: 0;"
+      ),
+      userAlignment: user.includes("justify-content: flex-start;"),
+      userBackground: user.includes("background: transparent;"),
+      userBorder: user.includes("border: 0;"),
+      userBubble: userContent.includes("var(--vscode-textLink-foreground) 9%"),
+      userBubbleRadius: userContent.includes("border-radius: 0 4px 4px 0;"),
+      userFont: userBody.includes("font-family: var(--mischief-mono-font);"),
+      userIconBlue: userIcon.includes(
+        "color: var(--vscode-textLink-foreground);"
+      ),
+      userIconPosition: userIcon.includes("left: 4px;"),
+      userMargins: user.includes("margin: 0 0 12px;"),
+      userOffset: user.includes("padding: 22px 0 0;"),
+      virtualHeight: card.includes("content-visibility"),
+    }).toStrictEqual({
+      assistantAccent: true,
+      assistantBackground: true,
+      assistantBorder: true,
+      assistantBox: true,
+      rail: true,
+      squareCardJunctions: true,
+      userAlignment: true,
+      userBackground: true,
+      userBorder: true,
+      userBubble: true,
+      userBubbleRadius: true,
+      userFont: true,
+      userIconBlue: true,
+      userIconPosition: true,
+      userMargins: true,
+      userOffset: true,
+      virtualHeight: false,
+    });
+  });
+
   test("styles both Workspace lists like neutral menus with indented Threads", () => {
     const css = readFileSync("media/webview.css", "utf-8");
     const list = /\.workspace-list \{[^}]*\}/u.exec(css)?.[0];

@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { isNonEmpty } from "../../../../../present";
-import { postMessage } from "../../../../bridge";
 import { SvgIcon } from "../../../../icon";
 import type { RenderedTranscriptItem } from "../../../../protocol";
+import { MessageActions } from "../../message-actions";
 
 const preview = (item: RenderedTranscriptItem): string => {
   if (isNonEmpty(item.text)) {
@@ -127,76 +127,32 @@ export const HistoryControl = ({
           tabIndex={-1}
           style={{ bottom, left, maxHeight }}
         >
-          {items.map((item) => {
-            const threadId = selected?.id;
-            const actionable =
-              isNonEmpty(threadId) &&
-              selected?.status === "idle" &&
-              selected.sessionOperation === undefined &&
-              item.id.startsWith(`${item.kind}:`) &&
-              item.id.length > item.kind.length + 1 &&
-              item.queued === undefined &&
-              item.cancelled !== true;
-            return (
-              <div className={`history-entry ${item.kind}`} key={item.id}>
-                <button
-                  className="history-jump"
-                  type="button"
-                  title={preview(item)}
-                  disabled={
-                    selected?.status === "running" ||
-                    selected?.status === "waiting"
-                  }
-                  onClick={() => {
-                    setOpen(false);
-                    onJumpMessage?.(item.id);
-                  }}
-                >
-                  {preview(item)}
-                </button>
-                {actionable &&
-                item.kind === "user" &&
-                selected?.forkSupported === true ? (
-                  <button
-                    type="button"
-                    aria-label={`Fork at ${preview(item)}`}
-                    title="Fork here"
-                    onClick={() => {
-                      setOpen(false);
-                      if (isNonEmpty(threadId)) {
-                        postMessage({
-                          messageId: item.id,
-                          threadId,
-                          type: "forkThread",
-                        });
-                      }
-                    }}
-                  >
-                    <SvgIcon kind="fork" />
-                  </button>
-                ) : null}
-                {actionable && selected?.treeNavigationSupported === true ? (
-                  <button
-                    type="button"
-                    aria-label={`Navigate to ${preview(item)}`}
-                    title="Navigate here"
-                    onClick={() => {
-                      setOpen(false);
-                      if (isNonEmpty(threadId)) {
-                        postMessage({
-                          messageId: item.id,
-                          threadId,
-                          type: "navigateThreadTree",
-                        });
-                      }
-                    }}
-                  >
-                    <SvgIcon kind="gitBranch" />
-                  </button>
-                ) : null}
-              </div>
-            );
-          })}
+          {items.map((item) => (
+            <div className={`history-entry ${item.kind}`} key={item.id}>
+              <button
+                className="history-jump"
+                type="button"
+                title={preview(item)}
+                disabled={
+                  selected?.status === "running" ||
+                  selected?.status === "waiting"
+                }
+                onClick={() => {
+                  setOpen(false);
+                  onJumpMessage?.(item.id);
+                }}
+              >
+                {preview(item)}
+              </button>
+              <MessageActions
+                item={item}
+                onAction={() => {
+                  setOpen(false);
+                }}
+                selected={selected}
+              />
+            </div>
+          ))}
         </div>
       ) : null}
     </div>

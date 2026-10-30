@@ -16,6 +16,8 @@ export type IconKind =
   | "circleCheck"
   | "eye"
   | "file"
+  | "fileMinus"
+  | "filePlus"
   | "folder"
   | "folderGit2"
   | "github"
@@ -34,8 +36,10 @@ export type IconKind =
   | "square"
   | "squareCheck"
   | "stop"
+  | "summary"
   | "terminal"
   | "tool"
+  | "undo2"
   | "user"
   | "x"
   | "zap";
@@ -123,6 +127,21 @@ const paths: Record<IconKind, React.ReactNode> = {
     <>
       <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z" />
       <path d="M14 2v6h6" />
+    </>
+  ),
+  fileMinus: (
+    <>
+      <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z" />
+      <path d="M14 2v6h6" />
+      <path d="M9 15h6" />
+    </>
+  ),
+  filePlus: (
+    <>
+      <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z" />
+      <path d="M14 2v6h6" />
+      <path d="M12 18v-6" />
+      <path d="M9 15h6" />
     </>
   ),
   folder: (
@@ -268,6 +287,15 @@ const paths: Record<IconKind, React.ReactNode> = {
     </>
   ),
   stop: <rect width="18" height="18" x="3" y="3" rx="2" />,
+  summary: (
+    <>
+      <path d="M15 4H7" />
+      <path d="m18 16 3 3-3 3" />
+      <path d="M3 4v13a2 2 0 0 0 2 2h16" />
+      <path d="M7 14h7" />
+      <path d="M7 9h12" />
+    </>
+  ),
   terminal: (
     <>
       <path d="m4 17 6-6-6-6" />
@@ -276,6 +304,12 @@ const paths: Record<IconKind, React.ReactNode> = {
   ),
   tool: (
     <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-8 8l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 8-8z" />
+  ),
+  undo2: (
+    <>
+      <path d="M9 14 4 9l5-5" />
+      <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+    </>
   ),
   user: (
     <>

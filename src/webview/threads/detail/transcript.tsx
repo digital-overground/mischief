@@ -4,12 +4,14 @@ import type { ReactNode } from "react";
 import { isDefined, isNonEmpty, isNonZero, isRecord } from "../../../present";
 import { postMessage } from "../../bridge";
 import { Icon } from "../../icon";
+import type { IconKind } from "../../icon";
 import type {
   RenderedSetupStep,
   RenderedThreadDetail,
   RenderedTranscriptItem,
 } from "../../protocol";
 import { ImagePreview } from "./image-preview";
+import { MessageActions } from "./message-actions";
 
 const nonEmpty = (value: string | undefined, fallback: string): string =>
   value !== undefined && value.length > 0 ? value : fallback;
@@ -81,11 +83,11 @@ const ThinkingGroup = ({
 }: {
   items: RenderedTranscriptItem[];
 }): React.JSX.Element => (
-  <details className="entry thought thinking-group" open>
-    <summary className="thinking-heading">
+  <section className="entry thought thinking-group">
+    <div className="thinking-heading">
       <Icon className="entry-icon" kind="brain" title="Thinking" />
       Thinking
-    </summary>
+    </div>
     <div className="thinking-content">
       {items.map((item) => (
         <MarkdownBody
@@ -95,7 +97,7 @@ const ThinkingGroup = ({
         />
       ))}
     </div>
-  </details>
+  </section>
 );
 
 const BranchSummary = ({
@@ -514,8 +516,10 @@ const entryMeta: Partial<
 
 const TranscriptEntry = ({
   item,
+  selected,
 }: {
   item: RenderedTranscriptItem;
+  selected?: RenderedThreadDetail;
 }): React.JSX.Element => {
   if (item.kind === "branchSummary") {
     return <BranchSummary item={item} />;
@@ -563,16 +567,27 @@ const TranscriptEntry = ({
         item.kind === "user" || item.kind === "assistant" ? item.id : undefined
       }
     >
-      {item.kind === "user" || item.kind === "assistant" ? null : (
-        <Icon className="entry-icon" kind={meta.icon} title={meta.label} />
+      {item.kind === "assistant" ? null : (
+        <Icon
+          className={`entry-icon${item.kind === "user" ? " user-turn-icon" : ""}`}
+          kind={meta.icon}
+          title={meta.label}
+        />
       )}
       {content}
+      <MessageActions item={item} selected={selected} />
     </article>
   );
 };
 
 const TranscriptItems = memo(
-  ({ items }: { items: RenderedTranscriptItem[] }): React.JSX.Element => {
+  ({
+    items,
+    selected,
+  }: {
+    items: RenderedTranscriptItem[];
+    selected?: RenderedThreadDetail;
+  }): React.JSX.Element => {
     const nodes: ReactNode[] = [];
     for (let index = 0; index < items.length;) {
       const item = items[index];
@@ -606,7 +621,9 @@ const TranscriptItems = memo(
         );
         continue;
       }
-      nodes.push(<TranscriptEntry item={item} key={item.id} />);
+      nodes.push(
+        <TranscriptEntry item={item} key={item.id} selected={selected} />
+      );
       index += 1;
     }
     return <>{nodes}</>;
@@ -616,7 +633,12 @@ const TranscriptItems = memo(
 const plural = (count: number, singular: string): string =>
   `${count} ${singular}${count === 1 ? "" : "s"}`;
 
-const turnSummary = (items: RenderedTranscriptItem[]): string => {
+const fileCount = (count: number, action: string): string =>
+  `${count} file${count === 1 ? "" : "s"} ${action}`;
+
+const turnSummary = (
+  items: RenderedTranscriptItem[]
+): { icon: IconKind; label: string }[] => {
   let toolCalls = 0;
   const filesRead = new Set<string>();
   const changedFiles = new Map<string, "created" | "deleted" | "edited">();
@@ -628,6 +650,12 @@ const turnSummary = (items: RenderedTranscriptItem[]): string => {
     if (item.toolKind === "read") {
       for (const location of item.locations ?? []) {
         filesRead.add(location.path);
+      }
+    } else if (item.toolKind === "edit") {
+      const fallbackChange =
+        fileOperationKind(item) === "write" ? "created" : "edited";
+      for (const location of item.locations ?? []) {
+        changedFiles.set(location.path, fallbackChange);
       }
     }
     for (const diff of item.diffs ?? []) {
@@ -644,27 +672,57 @@ const turnSummary = (items: RenderedTranscriptItem[]): string => {
   for (const change of changedFiles.values()) {
     counts[change] += 1;
   }
-  const actions = [
-    plural(toolCalls, "tool call"),
-    ...(filesRead.size > 0 ? [plural(filesRead.size, "file read")] : []),
-    ...(counts.created > 0 ? [plural(counts.created, "file created")] : []),
-    ...(counts.edited > 0 ? [plural(counts.edited, "file edited")] : []),
-    ...(counts.deleted > 0 ? [plural(counts.deleted, "file deleted")] : []),
-  ].join(" · ");
   // shortcut: elapsed time is omitted; add it when ACP exposes turn timestamps.
-  return actions.charAt(0).toUpperCase() + actions.slice(1);
+  return [
+    { icon: "tool", label: plural(toolCalls, "tool call") },
+    ...(filesRead.size > 0
+      ? [{ icon: "file" as const, label: fileCount(filesRead.size, "read") }]
+      : []),
+    ...(counts.created > 0
+      ? [
+          {
+            icon: "filePlus" as const,
+            label: fileCount(counts.created, "created"),
+          },
+        ]
+      : []),
+    ...(counts.deleted > 0
+      ? [
+          {
+            icon: "fileMinus" as const,
+            label: fileCount(counts.deleted, "deleted"),
+          },
+        ]
+      : []),
+    ...(counts.edited > 0
+      ? [
+          {
+            icon: "pencil" as const,
+            label: fileCount(counts.edited, "edited"),
+          },
+        ]
+      : []),
+  ];
 };
 
 const CollapsedTurn = ({
   items,
   response,
+  selected,
 }: {
   items: RenderedTranscriptItem[];
-  response: RenderedTranscriptItem;
+  response?: RenderedTranscriptItem;
+  selected?: RenderedThreadDetail;
 }): React.JSX.Element => {
   const [expanded, setExpanded] = useState(false);
+  let content: ReactNode = null;
+  if (expanded) {
+    content = <TranscriptItems items={items} selected={selected} />;
+  } else if (response) {
+    content = <TranscriptEntry item={response} selected={selected} />;
+  }
   return (
-    <section className="collapsed-turn">
+    <section className="collapsed-turn assistant-card">
       <button
         aria-expanded={expanded}
         className="entry turn-summary"
@@ -673,20 +731,44 @@ const CollapsedTurn = ({
           setExpanded((value) => !value);
         }}
       >
-        <Icon className="entry-icon" kind="history" title="Turn activity" />
-        <span>{turnSummary(items)}</span>
+        <Icon className="entry-icon" kind="summary" title="Turn summary" />
+        <span className="turn-summary-items">
+          {turnSummary(items).map(({ icon, label }) => (
+            <span className="turn-summary-item" key={label}>
+              {label}
+              <Icon
+                className="turn-summary-item-icon"
+                kind={icon}
+                title={label}
+              />
+            </span>
+          ))}
+        </span>
       </button>
-      {expanded ? (
-        <TranscriptItems items={items} />
-      ) : (
-        <TranscriptEntry item={response} />
-      )}
+      {content}
     </section>
   );
 };
 
+const visibleTranscriptItems = (
+  items: RenderedTranscriptItem[],
+  visibleCount: number
+): RenderedTranscriptItem[] => {
+  const start = Math.max(0, items.length - visibleCount);
+  const turnStart = items.findLastIndex(
+    (item, index) => index <= start && item.kind === "user"
+  );
+  return items.slice(turnStart === -1 ? start : turnStart);
+};
+
 const TranscriptNodes = memo(
-  ({ items }: { items: RenderedTranscriptItem[] }): React.JSX.Element => {
+  ({
+    items,
+    selected,
+  }: {
+    items: RenderedTranscriptItem[];
+    selected?: RenderedThreadDetail;
+  }): React.JSX.Element => {
     const nodes: ReactNode[] = [];
     for (let index = 0; index < items.length;) {
       const user = items[index];
@@ -699,6 +781,7 @@ const TranscriptNodes = memo(
           <TranscriptItems
             items={items.slice(index, end)}
             key={`items:${user?.id ?? index}`}
+            selected={selected}
           />
         );
         index = end;
@@ -709,27 +792,32 @@ const TranscriptNodes = memo(
       );
       if (nextUser === -1) {
         nodes.push(
-          <TranscriptItems
-            items={items.slice(index)}
-            key={`items:${user.id}`}
-          />
+          <section className="conversation-turn" key={`turn:${user.id}`}>
+            <TranscriptItems items={items.slice(index)} selected={selected} />
+          </section>
         );
         break;
       }
       const turnItems = items.slice(index + 1, nextUser);
       const response = turnItems.findLast((item) => item.kind === "assistant");
-      if (!response) {
-        nodes.push(<TranscriptEntry item={user} key={user.id} />);
-        index += 1;
+      if (turnItems.length === 0) {
+        nodes.push(
+          <section className="conversation-turn" key={`turn:${user.id}`}>
+            <TranscriptEntry item={user} selected={selected} />
+          </section>
+        );
+        index = nextUser;
         continue;
       }
       nodes.push(
-        <TranscriptEntry item={user} key={user.id} />,
-        <CollapsedTurn
-          items={turnItems}
-          key={`turn:${user.id}`}
-          response={response}
-        />
+        <section className="conversation-turn" key={`turn:${user.id}`}>
+          <TranscriptEntry item={user} selected={selected} />
+          <CollapsedTurn
+            items={turnItems}
+            response={response}
+            selected={selected}
+          />
+        </section>
       );
       index = nextUser;
     }
@@ -768,7 +856,7 @@ export const Transcript = ({
   if (setup) {
     content = (
       <>
-        <TranscriptNodes items={[setup.item]} />
+        <TranscriptNodes items={[setup.item]} selected={selected} />
         {setup.options?.map((option) => (
           <label className="settings-option setup-option" key={option.id}>
             <input
@@ -794,7 +882,10 @@ export const Transcript = ({
         {items.length > visibleCount ? (
           <div className="empty">Scroll up to load older messages.</div>
         ) : null}
-        <TranscriptNodes items={items.slice(-visibleCount)} />
+        <TranscriptNodes
+          items={visibleTranscriptItems(items, visibleCount)}
+          selected={selected}
+        />
       </>
     );
   } else {

@@ -1142,10 +1142,9 @@ select:disabled {
 #transcript {
   min-height: 0;
 }
-.entry {
+.entry,
+.collapsed-turn.assistant-card {
   --entry-accent: var(--vscode-descriptionForeground);
-  content-visibility: auto;
-  contain-intrinsic-size: auto 80px;
   margin: 0 0 8px;
   border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
   border-left: 2px solid var(--entry-accent);
@@ -1160,6 +1159,7 @@ select:disabled {
   );
 }
 article.entry {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -1175,17 +1175,91 @@ article.entry {
   font-family: var(--mischief-ui-font);
   text-align: left;
 }
+.turn-summary-items,
+.turn-summary-item {
+  display: inline-flex;
+  align-items: center;
+}
+.turn-summary-items {
+  gap: 12px;
+  white-space: nowrap;
+}
+.turn-summary-item {
+  gap: 5px;
+}
+.turn-summary-item-icon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+}
+.conversation-turn {
+  position: relative;
+  margin-top: 14px;
+  padding-left: 0;
+}
+.conversation-turn::before {
+  position: absolute;
+  top: 0;
+  bottom: 8px;
+  left: 0;
+  border-left: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  content: "";
+}
 .entry.user {
   --entry-accent: transparent;
-  border-left: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
-  background: var(--vscode-editor-background, var(--vscode-sideBar-background));
-}
-.entry.assistant {
-  --entry-accent: transparent;
-  border-color: transparent;
+  justify-content: flex-start;
+  margin: 0 0 12px;
+  border: 0;
+  padding: 22px 0 0;
   background: transparent;
-  padding: 0;
+  font-family: var(--mischief-mono-font);
+}
+.entry.user .user-turn-icon {
+  position: absolute;
+  top: 0;
+  left: 4px;
+  z-index: 1;
+  color: var(--vscode-textLink-foreground);
+}
+.entry.user .entry-content {
+  max-width: 85%;
+  border-radius: 0 4px 4px 0;
+  padding: 7px 10px;
+  background: color-mix(
+    in srgb,
+    var(--vscode-textLink-foreground) 9%,
+    transparent
+  );
+  text-align: left;
+}
+.entry.user .body {
+  font-family: var(--mischief-mono-font);
+}
+.entry.assistant,
+.collapsed-turn.assistant-card {
+  --entry-accent: var(--hl-accent);
+  border-left: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  background: transparent;
   font-family: var(--mischief-ui-font);
+}
+.conversation-turn :is(.entry, .collapsed-turn.assistant-card) {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.collapsed-turn.assistant-card > .turn-summary {
+  margin: 0 0 8px;
+  border: 0;
+  border-bottom: 1px solid
+    var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 0;
+  padding: 0 0 8px;
+  background: transparent;
+}
+.collapsed-turn.assistant-card > article.entry.assistant {
+  margin: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
 }
 .entry.thought {
   --entry-accent: var(--hl-accent-alt);
@@ -1257,6 +1331,38 @@ article.entry {
 }
 .entry-content {
   flex: 1;
+}
+#transcript article.entry:has(.message-actions) .entry-content {
+  padding-right: 52px;
+}
+#transcript .message-actions {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  z-index: 1;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+}
+#transcript article.entry:hover .message-actions,
+#transcript article.entry:focus-within .message-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+#transcript .message-actions button {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 3px;
+  padding: 3px;
+  background: var(--vscode-editorWidget-background);
+  color: var(--vscode-foreground);
+  cursor: pointer;
+}
+#transcript .message-actions .lucide {
+  width: 16px;
+  height: 16px;
 }
 .transcript-images {
   display: flex;
@@ -1339,13 +1445,11 @@ pre {
   font-family: var(--mischief-ui-font);
   font-weight: 500;
 }
-.branch-summary-heading::before,
-.thinking-heading::before {
+.branch-summary-heading::before {
   width: 10px;
   content: "▸";
 }
-.branch-summary[open] > .branch-summary-heading::before,
-.thinking-group[open] > .thinking-heading::before {
+.branch-summary[open] > .branch-summary-heading::before {
   content: "▾";
 }
 .thinking-content,
@@ -2336,19 +2440,26 @@ footer {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-#history-list .history-entry button:not(.history-jump) {
-  display: none;
+#history-list .message-actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+#history-list .message-actions button {
   width: 24px;
   height: 24px;
   padding: 4px;
+  opacity: 0;
+  pointer-events: none;
 }
-#history-list .history-entry button:not(.history-jump) .lucide {
+#history-list .message-actions button .lucide {
   width: 16px;
   height: 16px;
 }
-#history-list .history-entry:hover button:not(.history-jump),
-#history-list .history-entry:focus-within button:not(.history-jump) {
-  display: inline-flex;
+#history-list .history-entry:hover .message-actions button,
+#history-list .history-entry:focus-within .message-actions button {
+  opacity: 1;
+  pointer-events: auto;
 }
 #skill-picker-popup {
   position: absolute;

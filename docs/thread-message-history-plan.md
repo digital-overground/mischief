@@ -1,6 +1,6 @@
 # Restore Thread message history popup
 
-**Status:** Implemented. Message history supports jump, ACP-identity reconciliation, and row-level Fork/Tree actions. The footer's former Fork/Tree buttons and native-target QuickPick flows were removed; Mischief sends ACP message IDs directly to MagPi. This document preserves the original implementation plan, so references below to native footer pickers are obsolete.
+**Status:** Implemented. Message history supports jump, ACP-identity reconciliation, and Fork/Rollback actions in both its popup rows and transcript-message hover controls. The footer's former Fork/Tree buttons and native-target QuickPick flows were removed; Mischief sends ACP message IDs directly to MagPi. This document preserves the original implementation plan, so references below to native footer pickers are obsolete.
 
 ## Delivery order and gates
 
@@ -12,7 +12,7 @@ Each deliverable should be mergeable on its own. Do not expose disabled or misle
 
 ## Goal and boundaries
 
-Restore the old **Message history** popup for the selected Mischief **Thread**. Show its visible user prompts and Agent responses in transcript order. Clicking a message closes the popup and scrolls `#chat` to that exact rendered message. In deliverable 3, hovering or keyboard-focusing a row reveals actions that **fork or navigate the Thread tree at that row's message**, without asking the user to select the message again.
+Restore the old **Message history** popup for the selected Mischief **Thread**. Show its visible user prompts and Agent responses in transcript order. Clicking a message closes the popup and scrolls `#chat` to that exact rendered message. In deliverable 3, hovering or keyboard-focusing a row reveals actions that **fork or roll back the Thread to that row's message**, without asking the user to select the message again.
 
 This is **not** the Workspace **Thread History** action in `src/webview/navigator-pane.tsx`, which lists _other, unregistered Threads_ and reopens them through `Threads.history()` / `showThreadHistory()`. Do not change or rename that workflow. Do not call the new popup “session history” in the UI; Thread is the user-facing term.
 
@@ -20,8 +20,8 @@ This is **not** the Workspace **Thread History** action in `src/webview/navigato
 
 ### Decisions for this implementation
 
-- Keep Message history in the footer; New Thread is on the current Workspace row. `git show 4dcb5c5:src/webview/threads/detail/composer/controls/history-control.tsx` and `git show df7ecf5^:media/webview.css` are **visual/interaction references only**. The old `forkThread`/`rollbackThread` handlers used a transcript ID directly; they are not compatible with the current native target APIs. Do not restore rollback.
-- Message history is the only Fork/Tree UI. Each visible transcript row targets its own message; there is no separate native-target picker.
+- Keep Message history in the footer; New Thread is on the current Workspace row. `git show 4dcb5c5:src/webview/threads/detail/composer/controls/history-control.tsx` and `git show df7ecf5^:media/webview.css` are **visual/interaction references only**. The old `forkThread`/`rollbackThread` handlers used a transcript ID directly; they are not compatible with the current native target APIs. Rollback uses the current MagPi message-targeted tree-navigation operation instead.
+- Message history and transcript hover/focus controls expose Fork/Rollback on each visible message; each action targets its own message, with no separate native-target picker.
 - A row is shown for every rendered user/assistant message (including image-only messages with an appropriate label); not for thoughts, tools, plans, system entries, or branch summaries. The popup lists the visible branch only, not the complete Pi tree.
 - Pi's native fork API accepts **user** entries, not assistant entries. Show Fork only on actionable user rows; Tree on actionable user **and** assistant rows. Never silently fork from a nearby prompt when the user clicks an Agent response.
 - Clicking the row jumps; clicking its action button **only** performs the action. Tree still presents the existing branch-summary choice (and custom focus input) when applicable, but skips the _target-selection_ QuickPick. Fork skips that QuickPick entirely and still creates/selects a child Thread with the chosen prompt in its draft.

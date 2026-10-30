@@ -159,7 +159,7 @@ describe("Footer controls", () => {
     );
     act(() =>
       document
-        .querySelector<HTMLButtonElement>('[aria-label="Navigate to Answer"]')
+        .querySelector<HTMLButtonElement>('[aria-label="Rollback to Answer"]')
         ?.click()
     );
     expect(postMessage).toHaveBeenCalledWith({
@@ -182,7 +182,7 @@ describe("Footer controls", () => {
     });
     expect(document.querySelector('[aria-label="Fork at Same"]')).toBeNull();
     expect(
-      document.querySelector('[aria-label="Navigate to Answer"]')
+      document.querySelector('[aria-label="Rollback to Answer"]')
     ).toBeNull();
   });
 
@@ -297,7 +297,7 @@ describe("Footer controls", () => {
     ).toBeTruthy();
   });
 
-  test("keeps Fork and Tree actions in history rather than the footer", () => {
+  test("does not render dedicated Fork or Rollback footer buttons", () => {
     act(() => {
       renderFooter({ forkSupported: true, treeNavigationSupported: true });
     });

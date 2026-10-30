@@ -1510,8 +1510,8 @@ export class Threads {
     record: StoredThread & { sessionId: string };
     runtime: Runtime;
   } {
-    const title = operation === "fork" ? "Fork Thread" : "Navigate Thread Tree";
-    const verb = operation === "fork" ? "forking" : "navigating";
+    const title = operation === "fork" ? "Fork Thread" : "Rollback Thread";
+    const verb = operation === "fork" ? "forking" : "rolling back";
     if (!isNonEmpty(threadId) || threadId !== this.selectedId) {
       throw new Error(`The selected Thread changed; reopen ${title}`);
     }
