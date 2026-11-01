@@ -2313,6 +2313,62 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("renders compact command results as summary blocks", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (state.type !== "state" || !state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    state.threads.selected.items = [
+      { id: "compact", kind: "user", text: "/compact" },
+    ];
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    expect(document.querySelector("details.compaction")?.textContent).toBe(
+      "Compaction"
+    );
+
+    state.threads.selected.items.push({
+      id: "summary",
+      kind: "assistant",
+      text: "Compaction completed.\nTokens before: 123\n\nKeep this context.",
+    });
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+
+    const block = document.querySelector("details.compaction");
+    expect({
+      body: block?.querySelector(".tool-body pre")?.textContent,
+      heading: block?.querySelector("summary")?.textContent,
+      icon: block?.querySelector(".entry-icon")?.getAttribute("aria-label"),
+      open: block?.hasAttribute("open"),
+      paths: Array.from(block?.querySelectorAll("svg path") ?? [], (path) =>
+        path.getAttribute("d")
+      ),
+      regularAssistant: document.querySelector(".entry.assistant"),
+      regularUser: document.querySelector(".entry.user"),
+      visibleCommand: document.body.textContent?.includes("/compact"),
+    }).toStrictEqual({
+      body: "Compaction completed.\nTokens before: 123\n\nKeep this context.",
+      heading: "Compaction",
+      icon: "Compaction",
+      open: false,
+      paths: [
+        "m15 15 6 6m-6-6v4.8m0-4.8h4.8",
+        "M9 19.8V15m0 0H4.2M9 15l-6 6",
+        "M15 4.2V9m0 0h4.8M15 9l6-6",
+        "M9 4.2V9m0 0H4.2M9 9 3 3",
+      ],
+      regularAssistant: null,
+      regularUser: null,
+      visibleCommand: false,
+    });
+    await unmount();
+  });
+
   test("collapses completed turn activity after the next user message", async () => {
     const unmount = await renderApp();
     const state = threadState("selected", []);

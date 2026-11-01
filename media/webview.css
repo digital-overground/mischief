@@ -1299,7 +1299,8 @@ article.entry {
 .entry.system {
   --entry-accent: var(--vscode-descriptionForeground);
 }
-.entry.branch-summary {
+.entry.branch-summary,
+.entry.compaction {
   --entry-accent: var(--hl-accent-alt);
 }
 .entry-icon {

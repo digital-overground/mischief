@@ -514,6 +514,31 @@ const entryMeta: Partial<
   user: { icon: "user", label: "You" },
 };
 
+const isCompactionRequest = (item: RenderedTranscriptItem): boolean =>
+  item.kind === "user" && /^\/compact(?:\s|$)/u.test(item.text?.trim() ?? "");
+
+const isCompactionSummary = (item: RenderedTranscriptItem): boolean =>
+  item.kind === "assistant" &&
+  item.text?.startsWith("Compaction completed.") === true;
+
+const CompactionBlock = ({
+  result,
+}: {
+  result?: RenderedTranscriptItem;
+}): React.JSX.Element => (
+  <details className="entry tool compaction">
+    <summary>
+      <Icon className="entry-icon" kind="shrink" title="Compaction" />
+      <span>Compaction</span>
+    </summary>
+    {result ? (
+      <div className="tool-body">
+        <pre>{result.text ?? ""}</pre>
+      </div>
+    ) : null}
+  </details>
+);
+
 const TranscriptEntry = ({
   item,
   selected,
@@ -523,6 +548,12 @@ const TranscriptEntry = ({
 }): React.JSX.Element => {
   if (item.kind === "branchSummary") {
     return <BranchSummary item={item} />;
+  }
+  if (isCompactionRequest(item)) {
+    return <CompactionBlock />;
+  }
+  if (isCompactionSummary(item)) {
+    return <CompactionBlock result={item} />;
   }
   if (item.kind === "completedPlan") {
     return (
@@ -593,6 +624,21 @@ const TranscriptItems = memo(
       const item = items[index];
       if (!isDefined(item)) {
         break;
+      }
+      if (isCompactionRequest(item)) {
+        const result = items[index + 1];
+        nodes.push(
+          <CompactionBlock
+            key={item.id}
+            result={
+              isDefined(result) && isCompactionSummary(result)
+                ? result
+                : undefined
+            }
+          />
+        );
+        index += isDefined(result) && isCompactionSummary(result) ? 2 : 1;
+        continue;
       }
       if (item.kind === "thought") {
         const thoughts: RenderedTranscriptItem[] = [];
@@ -800,6 +846,21 @@ const TranscriptNodes = memo(
       }
       const turnItems = items.slice(index + 1, nextUser);
       const response = turnItems.findLast((item) => item.kind === "assistant");
+      if (isCompactionRequest(user)) {
+        nodes.push(
+          <section className="conversation-turn" key={`turn:${user.id}`}>
+            <CompactionBlock
+              result={
+                isDefined(response) && isCompactionSummary(response)
+                  ? response
+                  : undefined
+              }
+            />
+          </section>
+        );
+        index = nextUser;
+        continue;
+      }
       if (turnItems.length === 0) {
         nodes.push(
           <section className="conversation-turn" key={`turn:${user.id}`}>

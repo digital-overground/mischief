@@ -32,6 +32,7 @@ export type IconKind =
   | "search"
   | "send"
   | "shieldCheck"
+  | "shrink"
   | "signpost"
   | "square"
   | "squareCheck"
@@ -270,6 +271,14 @@ const paths: Record<IconKind, React.ReactNode> = {
     <>
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
       <path d="m9 12 2 2 4-4" />
+    </>
+  ),
+  shrink: (
+    <>
+      <path d="m15 15 6 6m-6-6v4.8m0-4.8h4.8" />
+      <path d="M9 19.8V15m0 0H4.2M9 15l-6 6" />
+      <path d="M15 4.2V9m0 0h4.8M15 9l6-6" />
+      <path d="M9 4.2V9m0 0H4.2M9 9 3 3" />
     </>
   ),
   signpost: (
