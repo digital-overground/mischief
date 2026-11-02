@@ -1,4 +1,7 @@
 node_modules/
+macos/.cache/
+macos/Mischief.xcodeproj/xcuserdata/
+macos/Mischief.xcodeproj/project.xcworkspace/xcuserdata/
 dist/
 *.vsix
 .vscode/*

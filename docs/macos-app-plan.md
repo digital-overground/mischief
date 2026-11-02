@@ -2,7 +2,7 @@
 
 ## Status
 
-Phase 1 scope and prototype decisions are agreed; implementation has not started. Later phases remain draft. Storage formats, Phase 3 Host ownership, and remote networking will be designed as those phases approach.
+Phase 1 diagnostic prototype passed the signed packaged-app gate; see [build and observed results](../macos/README.md). Phase 2 is next. Later phases remain draft. Storage formats, Phase 3 Host ownership, and remote networking will be designed as those phases approach.
 
 ## Goal
 
@@ -89,7 +89,7 @@ Build the first useful macOS release without changing ownership of live Threads.
 
 The app should:
 
-1. Connect to one existing local Mischief profile.
+1. Connect to the Default VS Code profile. Profile selection can follow if needed.
 2. Show Projects, Workspaces, and Threads in one window.
 3. Group Git Workspaces under their derived Project and list untracked Workspaces separately.
 4. Add or deactivate a Workspace and refresh Workspace status.
@@ -188,13 +188,12 @@ Notifications should represent transitions, not periodic reminders. Notification
 
 Resolve these before their phase begins:
 
-1. Whether the first companion release supports only the Default VS Code profile or lets the user select another profile.
-2. Whether Phase 3 merges multiple local VS Code profiles into one Host library.
-3. How the production Host is bundled, upgraded, and stopped across clients; Phase 1 only proves a bundled, app-launched diagnostic Node child.
-4. How the VS Code extension finds and starts the local Host when the app is not open.
-5. Whether app Quit stops an idle Host and what happens during a running turn.
-6. Which remote connection model to pursue.
-7. Whether a future Windows or Linux client is a product goal. This plan covers macOS only.
+1. Whether Phase 3 merges multiple local VS Code profiles into one Host library.
+2. How the production Host is bundled, upgraded, and stopped across clients; Phase 1 only proves a bundled, app-launched diagnostic Node child.
+3. How the VS Code extension finds and starts the local Host when the app is not open.
+4. Whether app Quit stops an idle Host and what happens during a running turn.
+5. Which remote connection model to pursue.
+6. Whether a future Windows or Linux client is a product goal. This plan covers macOS only.
 
 ## Documentation changes
 
