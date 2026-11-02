@@ -550,9 +550,10 @@ export class Threads {
       kind: "user",
       text: message || "Pasted image",
       ...(images.length ? { images } : {}),
-      ...(runtime.pending.length ? { queued: runtime.pending.length } : {}),
     };
-    runtime.items.push(item);
+    if (!runtime.pending.length) {
+      runtime.items.push(item);
+    }
     runtime.pending.push({ id: messageId, images, text: message });
     runtime.status = "running";
     record.error = undefined;
@@ -646,12 +647,21 @@ export class Threads {
     if (clearRetryImages && this.stored.includes(record)) {
       await this.database.saveRetryImages(record.workspace, record.id, []);
     }
-    this.emit();
     const [next] = runtime.pending;
-    const nextItem = isDefined(next)
-      ? runtime.items.find((candidate) => candidate.id === next.id)
-      : undefined;
-    if (runtime.status === "running" && nextItem) {
+    const nextItem =
+      runtime.status === "running" && isDefined(next)
+        ? {
+            id: next.id,
+            kind: "user" as const,
+            text: next.text || "Pasted image",
+            ...(next.images.length ? { images: next.images } : {}),
+          }
+        : undefined;
+    if (nextItem) {
+      runtime.items.push(nextItem);
+    }
+    this.emit();
+    if (nextItem) {
       void this.runPrompt(record, runtime, nextItem);
     }
   }

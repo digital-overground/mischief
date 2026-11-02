@@ -920,7 +920,9 @@ describe("threads module", () => {
     const first = threads.prompt("Same", [image]);
     await agent.firstPromptStarted;
     const second = threads.prompt("Same");
-    const queuedId = threads.snapshot().selected?.items.at(-1)?.id;
+    expect(threads.snapshot().selected?.steering).toMatchObject([
+      { text: "Same" },
+    ]);
     agent.update?.({
       kind: "user",
       messageId: "acp-first",
@@ -938,7 +940,9 @@ describe("threads module", () => {
       images: [image],
       text: "Same",
     });
-    expect(threads.snapshot().selected?.items.at(-1)?.id).toBe(queuedId);
+    expect(
+      threads.snapshot().selected?.items.filter((item) => item.kind === "user")
+    ).toHaveLength(1);
     expect(changes.at(-1)).toBeUndefined();
     agent.promptResolvers[0]?.({ stopReason: "completed" });
     await first;
@@ -1023,7 +1027,6 @@ describe("threads module", () => {
       items: [
         { kind: "user", text: "First" },
         { kind: "assistant", text: "Partial" },
-        { kind: "user", queued: 1, text: "Second" },
       ],
       status: "running",
       steering: [{ text: "Second" }],
