@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft. This plan starts with product shape and delivery order. Technical interfaces, storage formats, and remote networking will be designed as each phase approaches.
+Phase 1 scope and prototype decisions are agreed; implementation has not started. Later phases remain draft. Storage formats, Phase 3 Host ownership, and remote networking will be designed as those phases approach.
 
 ## Goal
 
@@ -38,7 +38,7 @@ A `WKWebView` renders the existing React interface, adapted for a full applicati
 - The selected Thread transcript and composer
 - Settings and Agent controls
 
-The macOS app and VS Code extension should share this interface where their behavior matches. Platform-specific actions remain outside React.
+The macOS app and VS Code extension should share this interface where their behavior matches. During Phase 2, move platform-independent React controls and domain classes out of `vscode-extension/` into a root-level `shared/` library as real second callers emerge. VS Code APIs remain in `vscode-extension/`; AppKit and WebKit APIs remain in `macos/`. Do not extract the extension's interface for the Phase 1 diagnostic page.
 
 ### Mischief Host
 
@@ -75,9 +75,13 @@ The prototype should:
 6. Show a notification and open the correct view when it is clicked.
 7. Quit cleanly without leaving an unknown child process behind.
 
-This phase is complete when the shell, webview, and Host work together in a packaged app. The UI can remain a small diagnostic screen.
+The prototype lives in `macos/` and has a small, separate React diagnostic screen, not the VS Code navigator. It reads no profile data and performs no real Thread actions. Bundle the React assets and a Node runtime with the app; do not require a development server or an installed Node. For this prototype, Swift launches Node and exchanges messages over the child process's standard input/output; Swift and React exchange typed, runtime-validated messages through WebKit. No TCP listener is needed. These choices do not define the Phase 3 client-to-Host transport.
 
-If bundling, signing, or supervising the Node Host proves unreliable, stop and reconsider Electron before moving more code.
+Closing the window leaves the diagnostic Host running. Clicking the Dock icon reopens one window and reconnects it without starting a second Host. Quit stops and reaps the Host. An unexpected Host exit is visible, with an explicit restart action rather than a silent restart loop. This does not decide what happens to running Threads on Quit in Phase 3.
+
+A manual test action sets and clears a badge from diagnostic Host state and sends a notification addressed to a diagnostic view. Show notification authorization or denial clearly. Clicking the notification opens the target view while the app is running, even if its window was closed; notification handling after Quit is deferred.
+
+This phase is complete only after a repeatable check of the packaged arm64 `.app` signed with an Apple Development identity verifies launch, local React loading, typed round-trip, Host start/reconnect and failure, badge changes, notification permission and click routing, and Quit without an orphaned child. Record the commands, prerequisites, observed results, and a go/no-go decision. If bundling, signing, or supervising the Node Host proves unreliable, stop and reconsider Electron before moving product behavior. Universal binaries and minimum supported macOS version are release decisions, not prototype gates.
 
 ## Phase 2: Ship a local companion app
 
@@ -186,7 +190,7 @@ Resolve these before their phase begins:
 
 1. Whether the first companion release supports only the Default VS Code profile or lets the user select another profile.
 2. Whether Phase 3 merges multiple local VS Code profiles into one Host library.
-3. How the Host is bundled, launched, upgraded, and stopped by the signed app.
+3. How the production Host is bundled, upgraded, and stopped across clients; Phase 1 only proves a bundled, app-launched diagnostic Node child.
 4. How the VS Code extension finds and starts the local Host when the app is not open.
 5. Whether app Quit stops an idle Host and what happens during a running turn.
 6. Which remote connection model to pursue.

@@ -241,7 +241,7 @@ export class AgentManager {
     if (id === "magpi-acp") {
       const candidate =
         this.magpiOverride ??
-        path.resolve(this.extensionPath, "../magpi-acp/dist/index.js");
+        path.resolve(this.extensionPath, "../../magpi-acp/dist/index.js");
       if (this.magpiOverride !== undefined || existsSync(candidate)) {
         return candidate.endsWith(".js")
           ? {

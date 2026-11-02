@@ -6,7 +6,9 @@ settings:
 
 importers:
 
-  .:
+  .: {}
+
+  vscode-extension:
     dependencies:
       '@agentclientprotocol/sdk':
         specifier: ^1.4.0
