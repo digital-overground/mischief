@@ -13,7 +13,8 @@
 		A10000000000000000000002 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		A10000000000000000000003 /* Mischief.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mischief.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000004 /* page.tsx */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.tsx; path = page.tsx; sourceTree = "<group>"; };
-		A10000000000000000000005 /* Host.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Host.js; sourceTree = "<group>"; };
+		A10000000000000000000005 /* host.ts */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.typescript; path = host.ts; sourceTree = "<group>"; };
+		A10000000000000000000017 /* library.ts */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.typescript; path = library.ts; sourceTree = "<group>"; };
 		A10000000000000000000006 /* index.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = index.html; sourceTree = "<group>"; };
 		A10000000000000000000007 /* prepare-resources.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "prepare-resources.sh"; sourceTree = "<group>"; };
 		A10000000000000000000008 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
@@ -27,7 +28,8 @@
 			children = (
 				A10000000000000000000002 /* main.swift */,
 				A10000000000000000000004 /* page.tsx */,
-				A10000000000000000000005 /* Host.js */,
+				A10000000000000000000005 /* host.ts */,
+				A10000000000000000000017 /* library.ts */,
 				A10000000000000000000006 /* index.html */,
 				A10000000000000000000015 /* Info.plist */,
 				A10000000000000000000016 /* icon.swift */,

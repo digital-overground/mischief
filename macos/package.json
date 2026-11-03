@@ -1,1 +1,28 @@
-{"name":"mischief-macos-diagnostic","private":true,"type":"module","scripts":{"build":"bash build.sh","test":"node --test Host.test.js","typecheck":"tsc --noEmit --jsx react-jsx --target es2022 --moduleResolution bundler --module esnext --esModuleInterop page.tsx"},"dependencies":{"react":"^19.2.8","react-dom":"^19.2.8"},"devDependencies":{"esbuild":"^0.25.0","@types/react":"^19.2.18","@types/react-dom":"^19.2.5","typescript":"^5.7.0"}}
+{
+  "name": "mischief-macos-diagnostic",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bash build.sh",
+    "test": "vitest run --maxWorkers=2",
+    "typecheck": "tsc --noEmit",
+    "format": "oxfmt -c ../vscode-extension/oxfmt.config.ts host.ts host.test.ts library.ts library.test.ts page.tsx package.json README.md",
+    "format:check": "oxfmt --check -c ../vscode-extension/oxfmt.config.ts host.ts host.test.ts library.ts library.test.ts page.tsx package.json README.md",
+    "lint": "oxlint -c ../vscode-extension/oxlint.config.ts --deny-warnings host.ts host.test.ts library.ts library.test.ts page.tsx",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm build && pnpm test"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "esbuild": "^0.25.0",
+    "oxfmt": "0.68.0",
+    "oxlint": "1.83.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.7"
+  }
+}

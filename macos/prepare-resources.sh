@@ -17,7 +17,8 @@ tar -xOf ".cache/$archive" "node-$version-darwin-arm64/bin/node" > "$resources/n
 chmod +x "$resources/node"
 codesign --force --sign "$identity" --options runtime --entitlements node.entitlements "$resources/node"
 PATH="$resources:$PATH" ./node_modules/.bin/esbuild page.tsx --bundle --minify --format=iife --outfile="$resources/page.js"
-cp index.html Host.js "$resources/"
+PATH="$resources:$PATH" ./node_modules/.bin/esbuild host.ts --bundle --platform=node --format=esm --outfile="$resources/Host.mjs"
+cp index.html "$resources/"
 xcrun swift icon.swift ../vscode-extension/media/icon.png "$resources/Mischief.png"
 sips -s format icns "$resources/Mischief.png" --out "$resources/Mischief.icns" >/dev/null
 rm "$resources/Mischief.png"

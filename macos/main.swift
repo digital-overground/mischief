@@ -2,11 +2,31 @@ import AppKit
 import WebKit
 import UserNotifications
 
+private struct LibraryThread: Decodable {
+    let id: String
+    let name: String
+    let status: String
+    let unread: Bool
+    let updatedAt: String
+}
+
+private struct LibraryWorkspace: Decodable {
+    let path: String
+    let projectRoot: String?
+    let name: String
+    let threads: [LibraryThread]
+}
+
 private struct HostMessage: Decodable {
     let type: String
     let pid: Int?
     let badge: Int?
     let view: String?
+    let workspaces: [LibraryWorkspace]?
+    let attention: Int?
+    let workspace: String?
+    let path: String?
+    let threadId: String?
 }
 
 final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMessageHandler, WKNavigationDelegate, UNUserNotificationCenterDelegate {
@@ -19,6 +39,8 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
     private var view = "home"
     private var permission = "checking"
     private var quitting = false
+    private var library: HostMessage?
+    private var pendingSelection: (String, String)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -88,7 +110,11 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { updatePage() }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        updatePage()
+        updateLibrary()
+        updateSelection()
+    }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: String], body["type"] == "command", let action = body["action"] else { return }
@@ -96,8 +122,28 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
         case "restart":
             if host?.isRunning != true { startHost() }
             updatePage()
-        case "badge", "notify":
+        case "notify", "refresh":
             send(["type": "command", "action": action])
+        case "addWorkspace":
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.begin { response in
+                if response == .OK, let path = panel.url?.path {
+                    self.send(["type": "command", "action": "addWorkspace", "path": path])
+                }
+            }
+        case "deactivateWorkspace":
+            guard let path = body["path"], library?.workspaces?.contains(where: { $0.path == path }) == true else { return }
+            send(["type": "command", "action": action, "path": path])
+        case "openWorkspace", "openThread":
+            guard let path = body["path"], library?.workspaces?.contains(where: { $0.path == path }) == true else { return }
+            if action == "openThread" {
+                guard let threadId = body["threadId"], library?.workspaces?.contains(where: { $0.path == path && $0.threads.contains(where: { $0.id == threadId }) }) == true else { return }
+                send(["type": "command", "action": action, "path": path, "threadId": threadId])
+            } else {
+                send(["type": "command", "action": action, "path": path])
+            }
         default: break
         }
     }
@@ -106,7 +152,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
         guard host?.isRunning != true else { return }
         let process = Process()
         process.executableURL = Bundle.main.resourceURL!.appendingPathComponent("node")
-        process.arguments = [Bundle.main.resourceURL!.appendingPathComponent("Host.js").path]
+        process.arguments = [Bundle.main.resourceURL!.appendingPathComponent("Host.mjs").path]
         let stdin = Pipe()
         let stdout = Pipe()
         process.standardInput = stdin
@@ -162,6 +208,23 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
             self.view = view
             NSApp.dockTile.badgeLabel = badge == 0 ? nil : String(badge)
             updatePage()
+        case "library":
+            guard let attention = message.attention, attention >= 0, message.workspaces != nil else { return }
+            library = message
+            badge = attention
+            NSApp.dockTile.badgeLabel = attention == 0 ? nil : String(attention)
+            updatePage()
+            updateLibrary()
+        case "openWorkspace":
+            guard let path = message.path, let workspace = library?.workspaces?.first(where: { $0.path == path }),
+                  let code = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.microsoft.VSCode") else { return }
+            NSWorkspace.shared.open([URL(fileURLWithPath: workspace.path)], withApplicationAt: code, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+                if let error { NSLog("Could not open VS Code: %@", error.localizedDescription) }
+            }
+        case "attention":
+            guard let workspace = message.workspace, let threadId = message.threadId,
+                  library?.workspaces?.contains(where: { $0.path == workspace && $0.threads.contains(where: { $0.id == threadId }) }) == true else { return }
+            requestNotification(workspace: workspace, threadId: threadId)
         case "notify":
             guard message.view == "diagnostic" else { return }
             requestNotification()
@@ -181,6 +244,34 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
         webView.evaluateJavaScript("window.receiveDiagnostic?.(\(json))", completionHandler: nil)
     }
 
+    private func updateLibrary() {
+        guard let webView, let library, let workspaces = library.workspaces, let attention = library.attention else { return }
+        let entries: [[String: Any]] = workspaces.map { workspace in
+            ["path": workspace.path, "projectRoot": workspace.projectRoot as Any? ?? NSNull(), "name": workspace.name,
+             "threads": workspace.threads.map { ["id": $0.id, "name": $0.name, "status": $0.status, "unread": $0.unread, "updatedAt": $0.updatedAt] }]
+        }
+        let data: [String: Any] = ["type": "library", "workspaces": entries, "attention": attention]
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: data), let json = String(data: jsonData, encoding: .utf8) else { return }
+        webView.evaluateJavaScript("if (window.receiveDiagnostic) window.receiveDiagnostic(\(json)); else window.pendingLibrary = \(json)", completionHandler: nil)
+    }
+
+    private func updateSelection() {
+        guard let webView, let (workspace, threadId) = pendingSelection else { return }
+        webView.evaluateJavaScript("window.pendingThreadId = \(jsonString(threadId)); window.selectThread?.(\(jsonString(workspace)), \(jsonString(threadId)))", completionHandler: nil)
+        pendingSelection = nil
+    }
+
+    private func jsonString(_ text: String) -> String {
+        let data = try! JSONSerialization.data(withJSONObject: [text])
+        return String(data: data, encoding: .utf8)!.dropFirst().dropLast().description
+    }
+
+    func verifyLibraryLoaded() {
+        webView?.evaluateJavaScript("window.libraryReady === true") { result, _ in
+            if result as? Bool == true { NSApp.terminate(nil) } else { exit(1) }
+        }
+    }
+
     private func permissionName(_ status: UNAuthorizationStatus) -> String {
         switch status {
         case .authorized, .provisional, .ephemeral: "authorized"
@@ -190,7 +281,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
         }
     }
 
-    private func requestNotification() {
+    private func requestNotification(workspace: String? = nil, threadId: String? = nil) {
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             DispatchQueue.main.async {
@@ -198,9 +289,14 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
                 self.updatePage()
                 guard granted else { return }
                 let content = UNMutableNotificationContent()
-                content.title = "Mischief diagnostic"
-                content.body = "Open the diagnostic view"
-                content.userInfo = ["view": "diagnostic"]
+                let target = self.library?.workspaces?.first(where: { $0.path == workspace })
+                content.title = target?.threads.first(where: { $0.id == threadId })?.name ?? "Mischief diagnostic"
+                content.body = target == nil ? "Open the diagnostic view" : "Thread needs attention in \(target?.name ?? "Workspace")"
+                if let workspace, let threadId {
+                    content.userInfo = ["workspace": workspace, "threadId": threadId]
+                } else {
+                    content.userInfo = ["view": "diagnostic"]
+                }
                 center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)) { error in
                     if let error { NSLog("Notification failed: %@", error.localizedDescription) }
                 }
@@ -214,18 +310,29 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
         DispatchQueue.main.async {
-            if response.notification.request.content.userInfo["view"] as? String == "diagnostic" {
+            let info = response.notification.request.content.userInfo
+            if info["view"] as? String == "diagnostic" {
                 self.openWindow()
                 self.send(["type": "command", "action": "navigate", "view": "diagnostic"])
+            } else if let workspace = info["workspace"] as? String, let threadId = info["threadId"] as? String {
+                self.pendingSelection = (workspace, threadId)
+                self.openWindow()
+                self.updateSelection()
+                if self.library?.workspaces?.contains(where: { $0.path == workspace && $0.threads.contains(where: { $0.id == threadId }) }) == true {
+                    self.send(["type": "command", "action": "openThread", "path": workspace, "threadId": threadId])
+                }
             }
             completionHandler()
         }
     }
-}]
+}
 
-let app = NSApplication.shared]
+let app = NSApplication.shared
 let delegate = App()
 app.delegate = delegate
+if ProcessInfo.processInfo.arguments.contains("--smoke-library") {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { delegate.verifyLibraryLoaded() }
+}
 if ProcessInfo.processInfo.arguments.contains("--smoke-close") {
     DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
         guard let window = NSApp.windows.first else { fatalError("Diagnostic window did not open") }

@@ -4,12 +4,12 @@
   "packageManager": "pnpm@10.32.1",
   "scripts": {
     "build": "pnpm --dir vscode-extension build",
-    "format": "pnpm --dir vscode-extension format",
-    "format:check": "pnpm --dir vscode-extension format:check",
-    "lint": "pnpm --dir vscode-extension lint",
-    "typecheck": "pnpm --dir vscode-extension typecheck",
+    "format": "pnpm --dir vscode-extension format && pnpm --dir macos format",
+    "format:check": "pnpm --dir vscode-extension format:check && pnpm --dir macos format:check",
+    "lint": "pnpm --dir vscode-extension lint && pnpm --dir macos lint",
+    "typecheck": "pnpm --dir vscode-extension typecheck && pnpm --dir macos typecheck",
     "test": "pnpm --dir vscode-extension test",
-    "check": "pnpm --dir vscode-extension check",
+    "check": "pnpm --dir vscode-extension check && pnpm --dir macos format:check && pnpm --dir macos lint && pnpm --dir macos typecheck",
     "install:local": "pnpm --dir vscode-extension install:local"
   }
 }

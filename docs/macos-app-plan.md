@@ -2,7 +2,7 @@
 
 ## Status
 
-Phase 1 diagnostic prototype passed the signed packaged-app gate; see [build and observed results](../macos/README.md). Phase 2 is next. Later phases remain draft. Storage formats, Phase 3 Host ownership, and remote networking will be designed as those phases approach.
+Phases 1 and 2 passed their signed-app and cross-client checks; see [build and observed results](../macos/README.md). The Phase 2 companion deliberately leaves a VS Code window open when it deactivates a Workspace. Phase 3 is next; later phases remain draft. Storage formats, Phase 3 Host ownership, and remote networking will be designed as those phases approach.
 
 ## Goal
 
@@ -100,7 +100,7 @@ The app should:
 9. Avoid sending a notification for every existing attention item at startup.
 10. Open the relevant Thread when the user clicks a notification.
 
-The companion app may read all Thread summaries, but VS Code still owns Agent processes and Thread mutation during this phase. Thread creation, prompts, cancellation, permission responses, rename, and removal continue in VS Code.
+The companion app may read all Thread summaries, but VS Code still owns Agent processes and Thread mutation during this phase. Thread creation, prompts, cancellation, permission responses, rename, and removal continue in VS Code. For this companion release, Deactivate hides a Workspace record without closing an already-open VS Code window; it is not the extension's Close Workspace action.
 
 This phase tests whether the Project hierarchy, background behavior, and native shell are useful before the runtime moves.
 
