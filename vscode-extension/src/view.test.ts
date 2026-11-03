@@ -2432,6 +2432,7 @@ describe("view provider", () => {
 
     expect(html).toContain('id="root"');
     expect(html).toContain('src="{{scriptUri}}"');
+    expect(html).toContain('href="{{themeUri}}"');
     expect(html).toContain('href="{{styleUri}}"');
   });
 
@@ -2443,6 +2444,7 @@ describe("view provider", () => {
 
     expect(policy).toContain("style-src-attr 'unsafe-inline'");
     expect(policy).toContain("style-src-elem {{cspSource}}");
+    expect(policy).toContain("font-src {{cspSource}}");
     expect(policy).not.toContain("style-src-elem 'unsafe-inline'");
   });
 

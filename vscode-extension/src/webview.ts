@@ -20,6 +20,7 @@ export const webviewHtml = async (
   return document
     .replaceAll("{{cspSource}}", webview.cspSource)
     .replaceAll("{{nonce}}", randomBytes(16).toString("hex"))
+    .replaceAll("{{themeUri}}", assetUri("media", "theme.css"))
     .replaceAll("{{styleUri}}", assetUri("media", "webview.css"))
     .replaceAll("{{scriptUri}}", assetUri("dist", "webview.js"));
 };

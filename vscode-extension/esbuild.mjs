@@ -1,4 +1,9 @@
+import { copyFileSync, cpSync } from "node:fs";
+
 import esbuild from "esbuild";
+
+copyFileSync("../shared/theme/tokens.css", "media/theme.css");
+cpSync("../shared/theme/fonts", "media/fonts", { recursive: true });
 
 const watch = process.argv.includes("--watch");
 const contexts = await Promise.all([

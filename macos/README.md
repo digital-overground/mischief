@@ -2,7 +2,7 @@
 
 Phase 1 proved the diagnostic app shape; Phase 2 is building a read-mostly companion for real Projects, Workspaces, and Threads. See the [plan](../docs/macos-app-plan.md) and [architecture decision](../docs/adr/0002-macos-shell-webview-host.md).
 
-Phase 1 validated the packaged shell. Phase 2 is in progress: the Host reads Workspace and Thread summaries from the Default VS Code profile and opens no network port. VS Code still owns live Threads.
+Phase 1 validated the packaged shell. The companion Host reads Workspace and Thread summaries from the Default VS Code profile and opens no network port. VS Code still owns live Threads. Both clients use `shared/theme/tokens.css`, the bundled IBM Plex Sans and Lilex fonts in `shared/theme/fonts/`, and the React icons in `shared/icons/icon.tsx`. The fonts' OFL licenses are included with the font files. macOS-specific layout lives in `macos/app.css`; theme CSS and font files are copied into both packaged apps on build.
 
 ## Build and check
 

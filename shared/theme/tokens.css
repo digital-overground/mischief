@@ -1,0 +1,54 @@
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("./fonts/IBMPlexSans-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("./fonts/IBMPlexSans-SemiBold.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Lilex";
+  src: url("./fonts/Lilex-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+.lucide {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+:root {
+  /* HumanLayer Tokyo Night Storm, shared by the extension and macOS companion. */
+  --hl-bg: #24283b;
+  --hl-bg-alt: #1f2335;
+  --hl-fg: #c0caf5;
+  --hl-fg-dim: #a9b1d6;
+  --hl-accent: #7aa2f7;
+  --hl-accent-dim: #3d59a1;
+  --hl-accent-alt: #bb9af7;
+  --hl-border: #3b4261;
+  --hl-hover: #414868;
+  --hl-success: #9ece6a;
+  --hl-warning: #e0af68;
+  --hl-error: #f7768e;
+  --hl-cyan: #7dcfff;
+  --hl-selection: #6f7bb640;
+  --hl-shadow: rgb(0 0 0 / 40%);
+  --mischief-ui-font:
+    "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
+  --mischief-mono-font:
+    "Lilex", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}

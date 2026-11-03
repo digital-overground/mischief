@@ -2,6 +2,8 @@
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 
+import { SvgIcon } from "../shared/icons/icon";
+
 interface Thread {
   id: string;
   name: string;
@@ -106,43 +108,51 @@ interface WorkspaceRowProps {
   onSelect: (id: string) => void;
 }
 const WorkspaceRow = ({ workspace, selected, onSelect }: WorkspaceRowProps) => (
-  <li>
-    <button
-      onClick={() => {
-        send("openWorkspace", workspace.path);
-      }}
-    >
-      {workspace.name} ↗ VS Code
-    </button>{" "}
-    <small>{workspace.path}</small>{" "}
-    <button
-      onClick={() => {
-        send("deactivateWorkspace", workspace.path);
-      }}
-    >
-      Deactivate
-    </button>
+  <li className="workspace">
+    <div className="workspace-heading">
+      <button
+        className="link workspace-link"
+        onClick={() => {
+          send("openWorkspace", workspace.path);
+        }}
+      >
+        <SvgIcon kind="folder" /> {workspace.name} ↗
+      </button>
+      <button
+        className="link"
+        onClick={() => {
+          send("deactivateWorkspace", workspace.path);
+        }}
+        aria-label={`Deactivate ${workspace.name}`}
+        title="Deactivate Workspace"
+      >
+        <SvgIcon kind="archive" /> Deactivate
+      </button>
+    </div>
+    <span className="workspace-path" title={workspace.path}>
+      {workspace.path}
+    </span>
     <ul>
-      {workspace.threads.map((thread) => (
-        <li key={thread.id}>
-          <button
-            aria-current={selected === thread.id ? "true" : undefined}
-            onClick={() => {
-              onSelect(thread.id);
-            }}
-          >
-            {thread.name} — {thread.status}
-            {thread.unread ? " · unread" : ""}
-          </button>{" "}
-          <button
-            onClick={() => {
-              send("openThread", workspace.path, thread.id);
-            }}
-          >
-            Open in VS Code
-          </button>
-        </li>
-      ))}
+      {workspace.threads.map((thread) => {
+        const status =
+          thread.unread && thread.status === "idle" ? "unread" : thread.status;
+        return (
+          <li key={thread.id}>
+            <button
+              className="link thread-link"
+              aria-current={selected === thread.id ? "true" : undefined}
+              onClick={() => {
+                onSelect(thread.id);
+              }}
+            >
+              <SvgIcon kind="chat" />
+              <span className={`thread-status ${status}`} aria-hidden="true" />
+              <span className="thread-name">{thread.name}</span>
+              <span className="thread-state">{status}</span>
+            </button>
+          </li>
+        );
+      })}
     </ul>
   </li>
 );
@@ -177,9 +187,12 @@ const App = () => {
       delete (window as Partial<Window>).selectThread;
     };
   }, []);
-  const selectedThread = library?.workspaces
-    .flatMap((w) => w.threads)
-    .find((t) => t.id === selected);
+  const selectedWorkspace = library?.workspaces.find((w) =>
+    w.threads.some((t) => t.id === selected)
+  );
+  const selectedThread = selectedWorkspace?.threads.find(
+    (t) => t.id === selected
+  );
   const projects = new Map<string, Workspace[]>();
   for (const workspace of library?.workspaces ?? []) {
     if (workspace.projectRoot !== null) {
@@ -209,13 +222,17 @@ const App = () => {
         <>
           {[...projects].map(([root, workspaces]) => (
             <section key={root}>
-              <h2>Project: {root}</h2>
+              <h2 title={root}>
+                <SvgIcon kind="folderGit2" /> {root.split("/").at(-1) ?? root}
+              </h2>
               <ul>{rows(workspaces)}</ul>
             </section>
           ))}
           {untracked.length > 0 && (
             <section>
-              <h2>Untracked Workspaces</h2>
+              <h2>
+                <SvgIcon kind="folder" /> Untracked Workspaces
+              </h2>
               <ul>{rows(untracked)}</ul>
             </section>
           )}
@@ -224,60 +241,97 @@ const App = () => {
   }
   return (
     <main>
-      <h1>Mischief</h1>
-      <p>
-        Host: {state?.host ?? "connecting"}{" "}
-        {state?.pid === null || state?.pid === undefined
-          ? ""
-          : `(PID ${state.pid})`}{" "}
-        · Threads needing attention: {library?.attention ?? "—"}
-      </p>
-      <button
-        disabled={state?.host !== "running"}
-        onClick={() => {
-          send("refresh");
-        }}
-      >
-        Refresh
-      </button>{" "}
-      <button
-        disabled={state?.host !== "running"}
-        onClick={() => {
-          send("addWorkspace");
-        }}
-      >
-        Add Workspace…
-      </button>{" "}
-      <button
-        disabled={state?.host !== "stopped"}
-        onClick={() => {
-          send("restart");
-        }}
-      >
-        Restart Host
-      </button>
-      {selectedThread && (
-        <section>
-          <h2>{selectedThread.name}</h2>
-          <p>
-            Status: {selectedThread.status}. Continue this Thread in VS Code.
-          </p>
+      <header className="toolbar">
+        <h1>Mischief</h1>
+        <span
+          className="count"
+          aria-label={`${library?.attention ?? 0} Threads needing attention`}
+        >
+          {library?.attention ?? 0} need attention
+        </span>
+        <button
+          className="action"
+          disabled={state?.host !== "running"}
+          onClick={() => {
+            send("refresh");
+          }}
+        >
+          <SvgIcon kind="history" /> Refresh
+        </button>
+        <button
+          className="action primary"
+          disabled={state?.host !== "running"}
+          onClick={() => {
+            send("addWorkspace");
+          }}
+        >
+          <SvgIcon kind="plus" /> Add Workspace…
+        </button>
+        {state?.host === "stopped" && (
+          <button
+            className="action"
+            onClick={() => {
+              send("restart");
+            }}
+          >
+            <SvgIcon kind="history" /> Restart Host
+          </button>
+        )}
+      </header>
+      <div className="library">
+        <nav
+          className="navigator"
+          aria-label="Projects, Workspaces, and Threads"
+        >
+          {contents}
+        </nav>
+        <section className="detail" aria-label="Selected Thread">
+          {selectedThread && selectedWorkspace ? (
+            <>
+              <h2>{selectedThread.name}</h2>
+              <p>
+                {selectedWorkspace.name} ·{" "}
+                <span className="status-text">
+                  {selectedThread.unread && selectedThread.status === "idle"
+                    ? "unread"
+                    : selectedThread.status}
+                </span>
+              </p>
+              <p className="hint">
+                VS Code owns this Thread. Open it there to read, respond, or
+                continue working.
+              </p>
+              <button
+                className="action primary"
+                onClick={() => {
+                  send("openThread", selectedWorkspace.path, selectedThread.id);
+                }}
+              >
+                <SvgIcon kind="chat" /> Open in VS Code ↗
+              </button>
+            </>
+          ) : (
+            <p className="hint">
+              Select a Thread to see its status and open it in VS Code.
+            </p>
+          )}
         </section>
-      )}
-      {contents}
-      <details>
-        <summary>Diagnostic controls</summary>
+      </div>
+      <details className="diagnostics">
+        <summary>Diagnostics · Host {state?.host ?? "connecting"}</summary>
         <p>
-          View: {state?.view ?? "—"} · Badge: {state?.badge ?? "—"} ·
-          Notification permission: {state?.permission ?? "checking"}
+          PID: {state?.pid ?? "—"} · View: {state?.view ?? "—"} · Badge:{" "}
+          {state?.badge ?? "—"} · Notification permission:{" "}
+          {state?.permission ?? "checking"}
         </p>
         <button
+          className="action"
           disabled={state?.host !== "running"}
           onClick={() => {
             send("notify");
           }}
         >
-          Notify diagnostic view
+          <SvgIcon kind="alert" /> Test notification
         </button>
       </details>
     </main>

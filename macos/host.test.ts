@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -28,6 +28,37 @@ const waitForExit = async (child: ChildProcess): Promise<unknown> => {
 
 // The packaged executable, not the development Node runtime, is exercised here.
 describe("signed macOS app", () => {
+  test("packages the shared extension theme and companion styles", async () => {
+    const resources = new URL(
+      "dist/Mischief.app/Contents/Resources/",
+      import.meta.url
+    );
+    const theme = await readFile(new URL("theme.css", resources), "utf-8");
+    const source = await readFile(
+      new URL("../shared/theme/tokens.css", import.meta.url),
+      "utf-8"
+    );
+    const html = await readFile(new URL("index.html", resources), "utf-8");
+    const css = await readFile(new URL("app.css", resources), "utf-8");
+    assert.equal(theme, source);
+    await Promise.all(
+      [
+        "IBMPlexSans-Regular.woff2",
+        "IBMPlexSans-SemiBold.woff2",
+        "Lilex-Regular.woff2",
+      ].map(async (font) => {
+        const [packaged, original] = await Promise.all([
+          readFile(new URL(`fonts/${font}`, resources)),
+          readFile(new URL(`../shared/theme/fonts/${font}`, import.meta.url)),
+        ]);
+        assert.deepEqual(packaged, original);
+      })
+    );
+    assert.match(html, /href="theme\.css"/u);
+    assert.match(html, /href="app\.css"/u);
+    assert.match(css, /var\(--hl-accent\)/u);
+  });
+
   test("Host exchanges commands on stdin/stdout", async () => {
     const child = spawn(binary, [script], { stdio: ["pipe", "pipe", "pipe"] });
     let output = "";
@@ -69,7 +100,7 @@ describe("signed macOS app", () => {
     );
   });
 
-  test("initial library snapshot reaches React", async () => {
+  test("initial library snapshot and bundled fonts reach React", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "mischief-empty-library-"));
     try {
       const child = spawn(app, ["--smoke-library"], {

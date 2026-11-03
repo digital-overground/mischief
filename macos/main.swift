@@ -267,7 +267,14 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
     }
 
     func verifyLibraryLoaded() {
-        webView?.evaluateJavaScript("window.libraryReady === true") { result, _ in
+        let probe = """
+            window.libraryReady === true &&
+            getComputedStyle(document.body).fontFamily.includes('IBM Plex Sans') &&
+            getComputedStyle(document.querySelector('.count')).fontFamily.includes('Lilex') &&
+            document.fonts.check('13px "IBM Plex Sans"') &&
+            document.fonts.check('11px "Lilex"')
+            """
+        webView?.evaluateJavaScript(probe) { result, _ in
             if result as? Bool == true { NSApp.terminate(nil) } else { exit(1) }
         }
     }
