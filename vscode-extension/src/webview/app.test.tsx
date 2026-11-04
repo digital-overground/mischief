@@ -2369,6 +2369,40 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("collapses long user messages to a preview without losing the full message", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (state.type !== "state" || !state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    const longText = `First line\n${"x".repeat(500)}`;
+    state.threads.selected.items = [
+      { id: "short", kind: "user", text: "Short prompt" },
+      { id: "long", kind: "user", text: longText },
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    expect(
+      document.querySelector(
+        '.entry.user[data-message-id="short"] .long-user-message'
+      )
+    ).toBeNull();
+    const details = document.querySelector<HTMLDetailsElement>(
+      '.entry.user[data-message-id="long"] .long-user-message'
+    );
+    expect(details?.open).toBeFalsy();
+    expect(details?.querySelector("summary")?.textContent).toContain(
+      longText.slice(0, 240)
+    );
+    expect(details?.querySelector(".body")?.textContent).toBe(longText);
+    act(() => {
+      details?.querySelector("summary")?.click();
+    });
+    expect(details?.open).toBeTruthy();
+    await unmount();
+  });
+
   test("collapses completed turn activity after the next user message", async () => {
     const unmount = await renderApp();
     const state = threadState("selected", []);
@@ -2981,6 +3015,64 @@ describe("React webview", () => {
       dialog.querySelector<HTMLButtonElement>(".image-preview-close")?.click();
     });
     expect(dialog.hasAttribute("open")).toBeFalsy();
+    await unmount();
+  });
+
+  test("shows a long paste compactly but sends its full text", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("selected", []) })
+      );
+    });
+    const composer = document.querySelector<HTMLDivElement>("#composer");
+    if (!composer) {
+      throw new Error("Missing composer");
+    }
+    setComposerText(composer, "Before ");
+    act(() => {
+      composer.focus();
+    });
+    const text = Array.from({ length: 80 }, (_, index) => `line ${index}`).join(
+      "\n"
+    );
+    const paste = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, "clipboardData", {
+      value: { getData: () => text, items: [] },
+    });
+    act(() => {
+      composer.dispatchEvent(paste);
+    });
+    expect(paste.defaultPrevented).toBeTruthy();
+    await Promise.resolve();
+    expect(composerText(composer)).toBe("Before [Pasted 80 lines]");
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("other", []) })
+      );
+    });
+    expect(composerText(composer)).toBe("");
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: threadState("selected", []) })
+      );
+    });
+    expect(composerText(composer)).toBe("Before [Pasted 80 lines]");
+    postMessage.mockClear();
+    act(() => {
+      composer.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "Enter",
+        })
+      );
+    });
+    expect(postMessage).toHaveBeenCalledWith({
+      images: [],
+      text: `Before ${text}`,
+      type: "prompt",
+    });
     await unmount();
   });
 

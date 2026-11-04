@@ -193,8 +193,13 @@ const ComposerInput = ({
   const consumedDrafts = useRef("");
   const activeThread = useRef<string | null>(null);
   const draftsByThread = useRef(
-    new Map<string, { images: PromptImage[]; text: string }>()
+    new Map<
+      string,
+      { images: PromptImage[]; pastes: Map<string, string>; text: string }
+    >()
   );
+  // shortcut: paste labels are editable text; use editor nodes if editing inside labels is needed.
+  const pastes = useRef(new Map<string, string>());
   const [images, setImages] = useState<PromptImage[]>([]);
   const [missingAnswer, setMissingAnswer] = useState(false);
   const [context, setContext] = useState<ComposerMatch>();
@@ -308,6 +313,7 @@ const ComposerInput = ({
     if (isNonEmpty(activeThread.current)) {
       draftsByThread.current.set(activeThread.current, {
         images,
+        pastes: pastes.current,
         text: getComposerText(),
       });
     }
@@ -317,6 +323,7 @@ const ComposerInput = ({
       ? draftsByThread.current.get(threadId)
       : undefined;
     updateComposerText(threadDraft?.text ?? "");
+    pastes.current = threadDraft?.pastes ?? new Map<string, string>();
     setImages(threadDraft?.images ?? []);
     setContext(undefined);
     setCommand(undefined);
@@ -352,11 +359,15 @@ const ComposerInput = ({
       postMessage({ selected: setupSelected, type: "setupContinue" });
       return;
     }
-    const text = getComposerText();
+    let text = getComposerText();
+    for (const [label, pasted] of pastes.current) {
+      text = text.replaceAll(label, pasted);
+    }
     if (selected?.interaction?.kind === "elicitation") {
       if (respondToElicitation(selected.interaction, text)) {
         setMissingAnswer(false);
         updateComposerText("");
+        pastes.current.clear();
         setContext(undefined);
         setCommand(undefined);
       } else {
@@ -376,6 +387,7 @@ const ComposerInput = ({
       draftsByThread.current.delete(selected.id);
     }
     updateComposerText("");
+    pastes.current.clear();
     setImages([]);
     setContext(undefined);
     setCommand(undefined);
@@ -545,12 +557,24 @@ const ComposerInput = ({
             .filter((item) => item.type.startsWith("image/"))
             .map((item) => item.getAsFile())
             .filter((file): file is File => file !== null);
-          if (!files.length) {
+          if (files.length) {
+            event.preventDefault();
+            for (const file of files) {
+              readImage(file);
+            }
+            return true;
+          }
+          const text = event.clipboardData.getData("text/plain");
+          if (text.length <= 500) {
             return false;
           }
           event.preventDefault();
-          for (const file of files) {
-            readImage(file);
+          const lines = text.split(/\r\n|\r|\n/u).length;
+          const label = `[Pasted ${lines > 1 ? `${lines} lines` : `${text.length} characters`}${pastes.current.size ? ` #${pastes.current.size + 1}` : ""}]`;
+          pastes.current.set(label, text);
+          const selection = $getSelection() ?? $getRoot().selectEnd();
+          if ($isRangeSelection(selection)) {
+            selection.insertText(label);
           }
           return true;
         },

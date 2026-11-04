@@ -539,6 +539,39 @@ const CompactionBlock = ({
   </details>
 );
 
+const MessageContent = ({
+  item,
+}: {
+  item: RenderedTranscriptItem;
+}): React.JSX.Element => {
+  const body = (
+    <>
+      <MarkdownBody item={item} />
+      {isNonZero(item.images?.length) ? (
+        <ImageGallery images={item.images} />
+      ) : null}
+      {isNonZero(item.queued) ? (
+        <div className="cancelled">Queued · position {item.queued}</div>
+      ) : null}
+      {item.cancelled === true ? (
+        <div className="cancelled">Cancelled</div>
+      ) : null}
+    </>
+  );
+  return item.kind === "user" && (item.text?.length ?? 0) > 500 ? (
+    <details className="entry-content long-user-message">
+      <summary>
+        <span className="message-preview">{item.text?.slice(0, 240)}…</span>
+        <span className="message-expand">Show more</span>
+        <span className="message-collapse">Show less</span>
+      </summary>
+      {body}
+    </details>
+  ) : (
+    <div className="entry-content">{body}</div>
+  );
+};
+
 const TranscriptEntry = ({
   item,
   selected,
@@ -577,20 +610,6 @@ const TranscriptEntry = ({
     icon: "alert",
     label: "Mischief",
   };
-  const content = (
-    <div className="entry-content">
-      <MarkdownBody item={item} />
-      {isNonZero(item.images?.length) ? (
-        <ImageGallery images={item.images} />
-      ) : null}
-      {isNonZero(item.queued) ? (
-        <div className="cancelled">Queued · position {item.queued}</div>
-      ) : null}
-      {item.cancelled === true ? (
-        <div className="cancelled">Cancelled</div>
-      ) : null}
-    </div>
-  );
   return (
     <article
       className={`entry ${item.kind}`}
@@ -605,7 +624,7 @@ const TranscriptEntry = ({
           title={meta.label}
         />
       )}
-      {content}
+      <MessageContent item={item} />
       <MessageActions item={item} selected={selected} />
     </article>
   );

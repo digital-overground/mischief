@@ -1202,6 +1202,25 @@ article.entry {
 .entry.user .body {
   font-family: var(--mischief-mono-font);
 }
+.long-user-message summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.long-user-message .message-expand,
+.long-user-message .message-collapse {
+  display: block;
+  margin-top: 6px;
+  color: var(--vscode-textLink-foreground);
+}
+.long-user-message .message-collapse,
+.long-user-message[open] .message-preview,
+.long-user-message[open] .message-expand {
+  display: none;
+}
+.long-user-message[open] .message-collapse {
+  display: block;
+}
 .entry.assistant,
 .collapsed-turn.assistant-card {
   --entry-accent: var(--hl-accent);
