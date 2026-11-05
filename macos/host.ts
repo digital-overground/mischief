@@ -7,7 +7,10 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { writeClient } from "./host-output.js";
-import { acquireHostOwnership } from "./host-ownership.js";
+import {
+  acquireHostOwnership,
+  acquireProfileOwnership,
+} from "./host-ownership.js";
 import {
   activateWorkspace,
   deactivateWorkspace,
@@ -176,7 +179,16 @@ const startDaemon = async (): Promise<void> => {
   ) {
     throw new Error("Host socket directory must be private to this user");
   }
-  const releaseOwnership = await acquireHostOwnership(socketPath);
+  const profilePath =
+    process.env.MISCHIEF_HOST_PROFILE ?? path.join(parent, "profile");
+  const releaseProfile = await acquireProfileOwnership(profilePath);
+  let releaseOwnership: (() => Promise<void>) | undefined;
+  try {
+    releaseOwnership = await acquireHostOwnership(socketPath);
+  } catch (error) {
+    await releaseProfile();
+    throw error;
+  }
   const server = createServer((client) => {
     let accepted = false;
     let clientPending = "";
@@ -248,7 +260,11 @@ const startDaemon = async (): Promise<void> => {
     if (server.listening) {
       server.close();
     }
-    await releaseOwnership();
+    try {
+      await releaseOwnership();
+    } finally {
+      await releaseProfile();
+    }
     throw error;
   }
   const socket = await lstat(socketPath);
@@ -264,7 +280,11 @@ const startDaemon = async (): Promise<void> => {
         process.stderr.write(`Socket cleanup failed: ${String(error)}\n`);
       } finally {
         try {
-          await releaseOwnership();
+          try {
+            await releaseOwnership();
+          } finally {
+            await releaseProfile();
+          }
         } catch (error) {
           process.stderr.write(
             `Host ownership cleanup failed: ${String(error)}\n`

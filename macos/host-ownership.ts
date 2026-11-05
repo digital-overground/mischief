@@ -4,6 +4,7 @@ import {
   chmod,
   link,
   lstat,
+  mkdir,
   open,
   readFile,
   rm,
@@ -63,6 +64,67 @@ const removeStaleEndpoint = async (socketPath: string): Promise<void> => {
     throw new Error("Host endpoint changed during recovery");
   }
   await rm(socketPath);
+};
+
+/** Exclusively owns the Host's private profile before it can serve clients. */
+export const acquireProfileOwnership = async (
+  profilePath: string
+): Promise<() => Promise<void>> => {
+  await mkdir(profilePath, { mode: 0o700, recursive: true });
+  const directory = await lstat(profilePath);
+  if (
+    !directory.isDirectory() ||
+    directory.uid !== process.getuid?.() ||
+    directory.mode % 0o100 !== 0
+  ) {
+    throw new Error("Host profile directory must be private to this user");
+  }
+  const lockPath = path.join(profilePath, "profile.lock");
+  const recoveryPath = `${lockPath}.recovering`;
+  const content = JSON.stringify({ nonce: randomUUID(), pid: process.pid });
+  const recover = async (): Promise<void> => {
+    // shortcut: a crash during recovery leaves this guard; require manual inspection before removal.
+    const recovery = await open(recoveryPath, "wx", 0o600);
+    await recovery.close();
+    try {
+      const existing = await readFile(lockPath, "utf-8");
+      if (existing.length > 256) {
+        throw new Error("Host profile ownership record is invalid");
+      }
+      const owner: unknown = JSON.parse(existing);
+      if (
+        typeof owner !== "object" ||
+        owner === null ||
+        !("pid" in owner) ||
+        typeof owner.pid !== "number" ||
+        !Number.isSafeInteger(owner.pid) ||
+        owner.pid <= 0 ||
+        !isDead(owner.pid)
+      ) {
+        throw new Error("Host profile ownership is held or cannot be verified");
+      }
+      if ((await readFile(lockPath, "utf-8")) !== existing) {
+        throw new Error("Host profile ownership changed during recovery");
+      }
+      await rm(lockPath);
+      await writeFile(lockPath, content, { flag: "wx", mode: 0o600 });
+    } finally {
+      await rm(recoveryPath);
+    }
+  };
+  try {
+    await writeFile(lockPath, content, { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    if (code(error) !== "EEXIST") {
+      throw error;
+    }
+    await recover();
+  }
+  return async () => {
+    if ((await readFile(lockPath, "utf-8")) === content) {
+      await rm(lockPath);
+    }
+  };
 };
 
 /** The Host endpoint lock is acquired before a daemon can publish its local endpoint. */

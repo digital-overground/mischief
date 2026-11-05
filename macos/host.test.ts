@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -94,6 +95,7 @@ describe("signed macOS app", () => {
 
   test("installs a private signed Host outside the app bundle", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "mischief-host-install-"));
+    await chmod(root, 0o755);
     try {
       const child = spawn(app, ["--smoke-install-host"], {
         env: {
@@ -125,8 +127,12 @@ describe("signed macOS app", () => {
           assert.equal(installedStats.mode % 0o1000, mode);
         })
       );
-      const installedStats = await stat(installed);
+      const [installedStats, parentStats] = await Promise.all([
+        stat(installed),
+        stat(root),
+      ]);
       assert.equal(installedStats.mode % 0o1000, 0o700);
+      assert.equal(parentStats.mode % 0o1000, 0o700);
       const verify = spawn("/usr/bin/codesign", [
         "--verify",
         "--strict",
@@ -296,6 +302,40 @@ describe("signed macOS app", () => {
     }
   });
 
+  test("only one Host owns a profile across different endpoints", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "mischief-profile-owner-"));
+    const profilePath = path.join(root, "profile");
+    const start = (socketPath: string): ChildProcess =>
+      spawn(binary, [script, "--daemon"], {
+        env: {
+          ...process.env,
+          MISCHIEF_HOST_PROFILE: profilePath,
+          MISCHIEF_HOST_SOCKET: socketPath,
+          MISCHIEF_PROFILE_DB: root,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    const firstSocket = path.join(root, "first", "host.sock");
+    const secondSocket = path.join(root, "second", "host.sock");
+    const first = start(firstSocket);
+    try {
+      assert.ok(first.stdout);
+      const ready: unknown[] = await once(first.stdout, "data");
+      assert.match(String(ready[0]), /"type":"ready"/u);
+      const second = start(secondSocket);
+      assert.equal(await waitForExit(second), 1);
+      assert.equal(first.exitCode, null);
+      await assert.rejects(stat(secondSocket), { code: "ENOENT" });
+    } finally {
+      first.kill("SIGTERM");
+      await waitForExit(first);
+      await assert.rejects(stat(path.join(profilePath, "profile.lock")), {
+        code: "ENOENT",
+      });
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   test("reclaims a crashed Host without stealing a live owner", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "mischief-host-crash-"));
     const socketPath = path.join(root, "private", "host.sock");
@@ -368,7 +408,13 @@ describe("signed macOS app", () => {
       );
       assert.match(String(replacementReady[0]), /"type":"ready"/u);
       await rm(lockPath);
-      const rival = start();
+      const rival = spawn(binary, [script, "--daemon"], {
+        env: {
+          ...env,
+          MISCHIEF_HOST_PROFILE: path.join(root, "rival-profile"),
+        },
+        stdio: "ignore",
+      });
       assert.equal(await waitForExit(rival), 1);
       assert.equal(replacement.exitCode, null);
       const client = connect(socketPath);

@@ -3,6 +3,17 @@ import Darwin
 import WebKit
 import UserNotifications
 
+private func ensurePrivateDirectory(_ directory: URL) throws {
+    let files = FileManager.default
+    try files.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    let attributes = try files.attributesOfItem(atPath: directory.path)
+    guard attributes[.type] as? FileAttributeType == .typeDirectory,
+          (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() else {
+        throw CocoaError(.fileWriteNoPermission)
+    }
+    try files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+}
+
 private func installHost() throws -> URL {
     let files = FileManager.default
     let root: URL
@@ -13,13 +24,8 @@ private func installHost() throws -> URL {
         root = try files.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             .appendingPathComponent("Mischief/Host", isDirectory: true)
     }
-    try files.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-    let attributes = try files.attributesOfItem(atPath: root.path)
-    guard attributes[.type] as? FileAttributeType == .typeDirectory,
-          (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() else {
-        throw CocoaError(.fileWriteNoPermission)
-    }
-    try files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+    try ensurePrivateDirectory(root.deletingLastPathComponent())
+    try ensurePrivateDirectory(root)
 
     guard let resources = Bundle.main.resourceURL else { throw CocoaError(.fileNoSuchFile) }
     let staging = root.deletingLastPathComponent().appendingPathComponent(".Host.\(UUID().uuidString).staged", isDirectory: true)
@@ -91,7 +97,7 @@ private func startBackgroundHost(_ host: URL) throws {
     }
     try files.createDirectory(at: plist.deletingLastPathComponent(), withIntermediateDirectories: true)
     var hostEnvironment: [String: String] = [:]
-    for name in ["MISCHIEF_HOST_SOCKET", "MISCHIEF_PROFILE_DB"] {
+    for name in ["MISCHIEF_HOST_PROFILE", "MISCHIEF_HOST_SOCKET", "MISCHIEF_PROFILE_DB"] {
         if let value = environment[name] { hostEnvironment[name] = value }
     }
     let job: [String: Any] = [
