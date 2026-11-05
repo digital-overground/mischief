@@ -13,6 +13,7 @@ import {
 import { connect, Socket } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { describe, test } from "vitest";
 
@@ -67,6 +68,135 @@ describe("signed macOS app", () => {
     assert.match(html, /href="theme\.css"/u);
     assert.match(html, /href="app\.css"/u);
     assert.match(css, /var\(--hl-accent\)/u);
+  });
+
+  test("installs a private signed Host outside the app bundle", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "mischief-host-install-"));
+    try {
+      const child = spawn(app, ["--smoke-install-host"], {
+        env: {
+          ...process.env,
+          MISCHIEF_DISABLE_BACKGROUND_HOST: "1",
+          MISCHIEF_HOST_INSTALL_ROOT: path.join(root, "Host"),
+        },
+        stdio: "ignore",
+      });
+      assert.equal(await waitForExit(child), 0);
+      const installed = path.join(root, "Host");
+      const resources = new URL(
+        "dist/Mischief.app/Contents/Resources/",
+        import.meta.url
+      );
+      await Promise.all(
+        [
+          ["node", 0o700],
+          ["Host.mjs", 0o600],
+        ].map(async ([name, mode]) => {
+          const target = path.join(installed, String(name));
+          const [installedFile, resourceFile, installedStats] =
+            await Promise.all([
+              readFile(target),
+              readFile(new URL(String(name), resources)),
+              stat(target),
+            ]);
+          assert.deepEqual(installedFile, resourceFile);
+          assert.equal(installedStats.mode % 0o1000, mode);
+        })
+      );
+      const installedStats = await stat(installed);
+      assert.equal(installedStats.mode % 0o1000, 0o700);
+      const verify = spawn("/usr/bin/codesign", [
+        "--verify",
+        "--strict",
+        path.join(installed, "node"),
+      ]);
+      assert.equal(await waitForExit(verify), 0);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("launchd Host survives app Quit and is reused on reopen", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "mischief-launchd-"));
+    const label = `works.digitaloverground.mischief.host.test.${process.pid}.${Date.now()}`;
+    const service = `gui/${process.getuid?.() ?? -1}/${label}`;
+    const socketPath = path.join(root, "run", "host.sock");
+    const plistPath = path.join(root, "host.plist");
+    const env = {
+      ...process.env,
+      MISCHIEF_HOST_INSTALL_ROOT: path.join(root, "Host"),
+      MISCHIEF_HOST_JOB_LABEL: label,
+      MISCHIEF_HOST_LAUNCH_AGENT_PATH: plistPath,
+      MISCHIEF_HOST_SOCKET: socketPath,
+      MISCHIEF_PROFILE_DB: path.join(root, "profile"),
+    };
+    const readPid = async (): Promise<number> => {
+      const client = connect(socketPath);
+      let output = "";
+      try {
+        await once(client, "connect");
+        client.write('{"type":"hello","version":1}\n');
+        for await (const chunk of client) {
+          output += String(chunk);
+          const state = output
+            .split("\n")
+            .slice(0, -1)
+            .filter(Boolean)
+            .map((line): unknown => JSON.parse(line) as unknown)
+            .find(
+              (message) =>
+                typeof message === "object" &&
+                message !== null &&
+                "type" in message &&
+                message.type === "state"
+            );
+          if (
+            typeof state === "object" &&
+            state !== null &&
+            "pid" in state &&
+            typeof state.pid === "number"
+          ) {
+            return state.pid;
+          }
+        }
+        throw new Error("Host disconnected before sending its PID");
+      } finally {
+        client.destroy();
+      }
+    };
+    const waitForPid = async (deadline: number): Promise<number> => {
+      try {
+        return await readPid();
+      } catch (error) {
+        if (Date.now() >= deadline) {
+          throw error;
+        }
+        await delay(50);
+        return await waitForPid(deadline);
+      }
+    };
+    const launchApp = async (): Promise<void> => {
+      const child = spawn(app, ["--smoke-launch-host"], {
+        env,
+        stdio: "ignore",
+      });
+      assert.equal(await waitForExit(child), 0);
+    };
+    try {
+      await launchApp();
+      const firstPid = await waitForPid(Date.now() + 5000);
+      process.kill(firstPid, 0);
+      await launchApp();
+      assert.equal(await waitForPid(Date.now() + 5000), firstPid);
+      const plist = await stat(plistPath);
+      assert.equal(plist.mode % 0o1000, 0o600);
+    } finally {
+      const bootout = spawn("/bin/launchctl", ["bootout", service], {
+        stdio: "ignore",
+      });
+      await once(bootout, "exit");
+      await rm(root, { force: true, recursive: true });
+    }
   });
 
   test("standalone Host serves two local clients without stopping on disconnect", async () => {
@@ -361,7 +491,12 @@ describe("signed macOS app", () => {
     const root = await mkdtemp(path.join(tmpdir(), "mischief-empty-library-"));
     try {
       const child = spawn(app, ["--smoke-library"], {
-        env: { ...process.env, MISCHIEF_PROFILE_DB: root },
+        env: {
+          ...process.env,
+          MISCHIEF_DISABLE_BACKGROUND_HOST: "1",
+          MISCHIEF_HOST_INSTALL_ROOT: path.join(root, "Host"),
+          MISCHIEF_PROFILE_DB: root,
+        },
         stdio: "ignore",
       });
       assert.equal(await waitForExit(child), 0);
@@ -371,7 +506,19 @@ describe("signed macOS app", () => {
   });
 
   test("window closes and reopens without crashing", async () => {
-    const child = spawn(app, ["--smoke-close"], { stdio: "ignore" });
-    assert.equal(await waitForExit(child), 0);
+    const root = await mkdtemp(path.join(tmpdir(), "mischief-close-"));
+    try {
+      const child = spawn(app, ["--smoke-close"], {
+        env: {
+          ...process.env,
+          MISCHIEF_DISABLE_BACKGROUND_HOST: "1",
+          MISCHIEF_HOST_INSTALL_ROOT: path.join(root, "Host"),
+        },
+        stdio: "ignore",
+      });
+      assert.equal(await waitForExit(child), 0);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
   });
 });

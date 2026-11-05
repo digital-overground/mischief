@@ -2,6 +2,95 @@ import AppKit
 import WebKit
 import UserNotifications
 
+private func installHost() throws -> URL {
+    let files = FileManager.default
+    let root: URL
+    if let override = ProcessInfo.processInfo.environment["MISCHIEF_HOST_INSTALL_ROOT"] {
+        guard override.hasPrefix("/") else { throw CocoaError(.fileWriteInvalidFileName) }
+        root = URL(fileURLWithPath: override, isDirectory: true)
+    } else {
+        root = try files.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            .appendingPathComponent("Mischief/Host", isDirectory: true)
+    }
+    try files.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    let attributes = try files.attributesOfItem(atPath: root.path)
+    guard attributes[.type] as? FileAttributeType == .typeDirectory,
+          (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() else {
+        throw CocoaError(.fileWriteNoPermission)
+    }
+    try files.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+
+    guard let resources = Bundle.main.resourceURL else { throw CocoaError(.fileNoSuchFile) }
+    let staging = root.deletingLastPathComponent().appendingPathComponent(".Host.\(UUID().uuidString).staged", isDirectory: true)
+    defer { try? files.removeItem(at: staging) }
+    try files.createDirectory(at: staging, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    for (name, permissions) in [("node", 0o700), ("Host.mjs", 0o600)] {
+        let destination = staging.appendingPathComponent(name)
+        try files.copyItem(at: resources.appendingPathComponent(name), to: destination)
+        try files.setAttributes([.posixPermissions: permissions], ofItemAtPath: destination.path)
+    }
+    if files.fileExists(atPath: root.path) {
+        _ = try files.replaceItemAt(root, withItemAt: staging)
+    } else {
+        try files.moveItem(at: staging, to: root)
+    }
+    return root
+}
+
+private func runLaunchctl(_ arguments: [String]) throws -> Int32 {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+    process.arguments = arguments
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    process.waitUntilExit()
+    return process.terminationStatus
+}
+
+private func startBackgroundHost(_ host: URL) throws {
+    if ProcessInfo.processInfo.environment["MISCHIEF_DISABLE_BACKGROUND_HOST"] == "1" { return }
+    let environment = ProcessInfo.processInfo.environment
+    let label = environment["MISCHIEF_HOST_JOB_LABEL"] ?? "works.digitaloverground.mischief.host"
+    let domain = "gui/\(getuid())"
+    let service = "\(domain)/\(label)"
+    let files = FileManager.default
+    let plist: URL
+    if let override = environment["MISCHIEF_HOST_LAUNCH_AGENT_PATH"] {
+        guard override.hasPrefix("/") else { throw CocoaError(.fileWriteInvalidFileName) }
+        plist = URL(fileURLWithPath: override)
+    } else {
+        plist = files.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/\(label).plist")
+    }
+    try files.createDirectory(at: plist.deletingLastPathComponent(), withIntermediateDirectories: true)
+    var hostEnvironment: [String: String] = [:]
+    for name in ["MISCHIEF_HOST_SOCKET", "MISCHIEF_PROFILE_DB"] {
+        if let value = environment[name] { hostEnvironment[name] = value }
+    }
+    let job: [String: Any] = [
+        "EnvironmentVariables": hostEnvironment,
+        "KeepAlive": false,
+        "Label": label,
+        "ProcessType": "Background",
+        "ProgramArguments": [host.appendingPathComponent("node").path, host.appendingPathComponent("Host.mjs").path, "--daemon"],
+        "RunAtLoad": false,
+        "StandardErrorPath": host.appendingPathComponent("Host.log").path,
+        "StandardOutPath": "/dev/null",
+        "Umask": 0o077,
+        "WorkingDirectory": host.path,
+    ]
+    let data = try PropertyListSerialization.data(fromPropertyList: job, format: .xml, options: 0)
+    try data.write(to: plist, options: .atomic)
+    try files.setAttributes([.posixPermissions: 0o600], ofItemAtPath: plist.path)
+    if try runLaunchctl(["print", service]) != 0 {
+        let bootstrapped = try runLaunchctl(["bootstrap", domain, plist.path]) == 0
+        if !bootstrapped {
+            guard try runLaunchctl(["print", service]) == 0 else { throw CocoaError(.executableLoad) }
+        }
+    }
+    guard try runLaunchctl(["kickstart", service]) == 0 else { throw CocoaError(.executableLoad) }
+}
+
 private struct LibraryThread: Decodable {
     let id: String
     let name: String
@@ -56,6 +145,12 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
                 self.permission = self.permissionName(settings.authorizationStatus)
                 self.updatePage()
             }
+        }
+        do {
+            let installed = try installHost()
+            try startBackgroundHost(installed)
+        } catch {
+            permission = "Background Host failed: \(error.localizedDescription)"
         }
         startHost()
         openWindow()
@@ -339,6 +434,9 @@ let delegate = App()
 app.delegate = delegate
 if ProcessInfo.processInfo.arguments.contains("--smoke-library") {
     DispatchQueue.main.asyncAfter(deadline: .now() + 3) { delegate.verifyLibraryLoaded() }
+}
+if ProcessInfo.processInfo.arguments.contains("--smoke-install-host") || ProcessInfo.processInfo.arguments.contains("--smoke-launch-host") {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { app.terminate(nil) }
 }
 if ProcessInfo.processInfo.arguments.contains("--smoke-close") {
     DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
