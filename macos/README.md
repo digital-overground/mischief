@@ -4,6 +4,10 @@ Phase 1 proved the diagnostic app shape; Phase 2 is building a read-mostly compa
 
 Phase 1 validated the packaged shell. The companion Host reads Workspace and Thread summaries from the Default VS Code profile and opens no network port. VS Code still owns live Threads. Both clients use `shared/theme/tokens.css`, the bundled IBM Plex Sans and Lilex fonts in `shared/theme/fonts/`, and the React icons in `shared/icons/icon.tsx`. The fonts' OFL licenses are included with the font files. macOS-specific layout lives in `macos/app.css`; theme CSS and font files are copied into both packaged apps on build.
 
+## Experimental local Host connection
+
+The bundled `node` can run `Host.mjs --daemon` independently of the app. It publishes read-only library snapshots to clients that send `{"type":"hello","version":1}` followed by a newline on a Unix socket at `~/Library/Application Support/Mischief/host.sock` (override with `MISCHIEF_HOST_SOCKET` for tests). The socket directory must be private to the current user. This does **not** yet replace the app's child Host or VS Code's ACP ownership: no client launches or controls this background process yet. The experimental Host acquires an exclusive lock beside its socket before binding; it reclaims a crashed process's stale lock and socket only when the recorded PID is gone and the socket does not answer; a dead socket without a lock is also recovered after acquiring the lock. Live or unverifiable owners, or a crash during recovery, fail closed for manual inspection. A socket client with more than 8 MiB of pending output is disconnected and can reconnect for the latest snapshot. This protects this experimental daemon, not the VS Code profile, which still has its own writers. Do not run this against a live profile expecting Thread control.
+
 ## Build and check
 
 Requires an arm64 Mac, Xcode at `/Applications/Xcode.app`, pnpm, an Apple Development signing identity in the keychain, and internet access to download the pinned Node 22 arm64 archive from nodejs.org. The Node download is SHA-256 checked against Node's published SHASUMS. Build outputs and the download cache are ignored by Git.

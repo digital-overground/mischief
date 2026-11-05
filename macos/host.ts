@@ -1,4 +1,13 @@
 /* oxlint-disable promise/prefer-await-to-then, promise/prefer-await-to-callbacks -- async work is dispatched from synchronous stdin events */
+import { once } from "node:events";
+import { chmod, lstat, mkdir, rm } from "node:fs/promises";
+import { createServer } from "node:net";
+import type { Socket } from "node:net";
+import { homedir } from "node:os";
+import path from "node:path";
+
+import { writeClient } from "./host-output.js";
+import { acquireHostOwnership } from "./host-ownership.js";
 import {
   activateWorkspace,
   deactivateWorkspace,
@@ -6,8 +15,17 @@ import {
   snapshot,
 } from "./library.js";
 
+const clients = new Set<Socket>();
+const daemon = process.argv.includes("--daemon");
 const send = (message: unknown): void => {
-  process.stdout.write(`${JSON.stringify(message)}\n`);
+  const line = `${JSON.stringify(message)}\n`;
+  if (daemon) {
+    for (const client of clients) {
+      writeClient(client, line);
+    }
+  } else {
+    process.stdout.write(line);
+  }
 };
 let badge = 0;
 let view = "home";
@@ -144,7 +162,144 @@ const command = (message: unknown): void => {
   }
 };
 
-state();
+const startDaemon = async (): Promise<void> => {
+  const socketPath =
+    process.env.MISCHIEF_HOST_SOCKET ??
+    path.join(homedir(), "Library/Application Support/Mischief/host.sock");
+  const parent = path.dirname(socketPath);
+  await mkdir(parent, { mode: 0o700, recursive: true });
+  const directory = await lstat(parent);
+  if (
+    !directory.isDirectory() ||
+    directory.uid !== process.getuid?.() ||
+    directory.mode % 0o100 !== 0
+  ) {
+    throw new Error("Host socket directory must be private to this user");
+  }
+  const releaseOwnership = await acquireHostOwnership(socketPath);
+  const server = createServer((client) => {
+    let hello = "";
+    client.setEncoding("utf-8");
+    client.on("data", (chunk: string) => {
+      if (clients.has(client)) {
+        // shortcut: Socket clients cannot send commands yet; add command routing at ACP cutover.
+        client.end();
+        return;
+      }
+      hello += chunk;
+      if (hello.length > 4096) {
+        client.destroy();
+        return;
+      }
+      const end = hello.indexOf("\n");
+      if (end === -1) {
+        return;
+      }
+      try {
+        const request: unknown = JSON.parse(hello.slice(0, end));
+        if (
+          typeof request !== "object" ||
+          request === null ||
+          !("type" in request) ||
+          request.type !== "hello" ||
+          !("version" in request) ||
+          request.version !== 1 ||
+          hello.length !== end + 1
+        ) {
+          client.end(
+            '{"type":"error","message":"Incompatible Host protocol"}\n'
+          );
+          return;
+        }
+      } catch {
+        client.destroy();
+        return;
+      }
+      clients.add(client);
+      writeClient(client, `${JSON.stringify({ type: "hello", version: 1 })}\n`);
+      writeClient(
+        client,
+        `${JSON.stringify({ badge, pid: process.pid, type: "state", view })}\n`
+      );
+      if (previous) {
+        writeClient(
+          client,
+          `${JSON.stringify({ attention: previous.attention, type: "library", workspaces: previous.workspaces })}\n`
+        );
+      }
+    });
+    client.on("close", () => {
+      clients.delete(client);
+    });
+    client.on("error", () => {
+      clients.delete(client);
+    });
+  });
+  try {
+    server.listen(socketPath);
+    await once(server, "listening");
+    await chmod(socketPath, 0o600);
+  } catch (error) {
+    if (server.listening) {
+      server.close();
+    }
+    await releaseOwnership();
+    throw error;
+  }
+  const socket = await lstat(socketPath);
+  process.on("SIGTERM", () => {
+    server.close();
+    void (async () => {
+      try {
+        const current = await lstat(socketPath);
+        if (current.dev === socket.dev && current.ino === socket.ino) {
+          await rm(socketPath);
+        }
+      } catch (error) {
+        process.stderr.write(`Socket cleanup failed: ${String(error)}\n`);
+      } finally {
+        try {
+          await releaseOwnership();
+        } catch (error) {
+          process.stderr.write(
+            `Host ownership cleanup failed: ${String(error)}\n`
+          );
+        }
+        process.exit(0);
+      }
+    })();
+  });
+  process.stdout.write(
+    `${JSON.stringify({ socket: socketPath, type: "ready" })}\n`
+  );
+};
+
+if (daemon) {
+  startDaemon().catch((error: unknown) => {
+    process.stderr.write(`Host startup failed: ${String(error)}\n`);
+    process.exit(1);
+  });
+} else {
+  state();
+  process.stdin.setEncoding("utf-8");
+  process.stdin.on("data", (chunk: string) => {
+    pending += chunk;
+    let end = pending.indexOf("\n");
+    while (end !== -1) {
+      const line = pending.slice(0, end);
+      pending = pending.slice(end + 1);
+      try {
+        command(JSON.parse(line) as unknown);
+      } catch (error) {
+        process.stderr.write(`Invalid command: ${String(error)}\n`);
+      }
+      end = pending.indexOf("\n");
+    }
+  });
+  process.stdin.on("end", () => {
+    process.exit(0);
+  });
+}
 refresh().catch((error: unknown) => {
   process.stderr.write(`${String(error)}\n`);
 });
@@ -153,24 +308,8 @@ setInterval(() => {
     process.stderr.write(`${String(error)}\n`);
   });
 }, 1000);
-process.stdin.setEncoding("utf-8");
-process.stdin.on("data", (chunk: string) => {
-  pending += chunk;
-  let end = pending.indexOf("\n");
-  while (end !== -1) {
-    const line = pending.slice(0, end);
-    pending = pending.slice(end + 1);
-    try {
-      command(JSON.parse(line) as unknown);
-    } catch (error) {
-      process.stderr.write(`Invalid command: ${String(error)}\n`);
-    }
-    end = pending.indexOf("\n");
-  }
-});
-process.stdin.on("end", () => {
-  process.exit(0);
-});
-process.on("SIGTERM", () => {
-  process.exit(0);
-});
+if (!daemon) {
+  process.on("SIGTERM", () => {
+    process.exit(0);
+  });
+}

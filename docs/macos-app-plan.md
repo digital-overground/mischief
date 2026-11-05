@@ -2,7 +2,7 @@
 
 ## Status
 
-Phases 1 and 2 passed their signed-app and cross-client checks; see [build and observed results](../macos/README.md). The Phase 2 companion deliberately leaves a VS Code window open when it deactivates a Workspace. Phase 3 is next; later phases remain draft. Storage formats, Phase 3 Host ownership, and remote networking will be designed as those phases approach.
+Phases 1 and 2 passed their signed-app and cross-client checks; see [build and observed results](../macos/README.md). The Phase 2 companion deliberately leaves a VS Code window open when it deactivates a Workspace. Phase 3 Host ownership is now designed in [ADR 0003](adr/0003-host-thread-ownership.md) but has not been implemented; VS Code still owns live Threads. Later phases remain draft. Storage formats, Host lifecycle details, and remote networking remain to be designed.
 
 ## Goal
 
@@ -110,20 +110,16 @@ Make the macOS app an independent Mischief client.
 
 Work through the transition in this order:
 
-1. Give the Host a stable application-support directory for its database and Agent installations.
-2. Add a one-time import from the selected VS Code profile.
-3. Make the Host the single owner of ACP connections and Thread writes.
-4. Connect the macOS app to the Host for all Project, Workspace, and Thread actions.
-5. Connect the VS Code extension to the same Host instead of opening its own Agent sessions.
-6. Preserve existing Thread behavior: create, load, prompt, queue, cancel, retry, rename, unregister, history, permissions, elicitation, configuration, fork, and rollback.
-7. Keep running turns alive when the app window closes.
-8. Define what happens when the user quits while work is running.
-9. Detect incompatible client and Host versions and explain the required update.
-10. Verify that two clients cannot start duplicate runtimes for one Thread.
+1. Install the signed Host outside the replaceable app bundle, with private application-support storage. Start on local demand; keep it running independently of app Quit, and enable start-at-login only when remote access is enabled.
+2. Add one per-user local client transport, exclusive profile ownership, safe stale-owner recovery, version rejection, and two-launcher/crash/update tests **before** accepting ACP work. The current read-only `--daemon` socket is not yet this Host.
+3. Move ACP connections and Thread writes into that single Host. Keep requests waiting while clients are disconnected; never replay an interrupted turn automatically. Stage updates until running turns finish.
+4. Back up and validate the Default VS Code profile, then cut over only when its VS Code windows are closed and turns have finished. Retire the old active Thread index so old extensions cannot automatically restore migrated registrations; require an updated extension. Preserve Agent history and the backup.
+5. Connect VS Code and the macOS app to the Host. Neither may start a duplicate ACP connection or silently fall back when the Host is unavailable.
+6. Preserve existing Thread behavior: create, load, prompt, queue, cancel, retry, rename, unregister, history, permissions, elicitation, configuration, fork, and rollback; test simultaneous clients, app Quit/reconnect, and incompatible versions.
 
 This phase is complete when the app can create and continue a Thread with VS Code closed, and the same Thread can then be viewed and controlled from VS Code without transferring or duplicating its Agent session.
 
-The existing Profile Database ADR must be superseded here. It currently assigns Thread writes to a Workspace's VS Code extension instance and explicitly avoids a broker process.
+[ADR 0003](adr/0003-host-thread-ownership.md) describes the target and safe handoff. The existing Profile Database ADR remains in force until the actual cutover; it currently assigns Thread writes to a Workspace's VS Code extension instance and explicitly avoids a broker process.
 
 ## Phase 4: Finish the macOS product
 
@@ -143,18 +139,13 @@ Include:
 
 ## Phase 5: Add remote access
 
-Treat remote access as a separate product and security plan built on the same Host.
+Treat remote access as a separate product and security plan built on the same Host. [ADR 0004](adr/0004-tailscale-remote-clients.md) records the first client, direct Tailscale connection, pairing model, and initial remote-action scope. Tailscale supplies the private network path, not Mischief's client pairing, authorization, or revocation.
 
 Before implementation, decide:
 
-- Where the Host runs and which files and Agent credentials it can access
-- Whether clients connect through a private network, direct connection, or managed relay
-- How a user pairs a client, reviews access, and revokes it
-- How transport encryption and Host identity are verified
-- Which actions are allowed remotely, especially permission and elicitation responses
-- How file links, diffs, images, and large tool output are delivered
-- What happens when the Host sleeps, disconnects, or changes networks
-- Whether a remote client can install Agents or change Host settings
+- The pairing invitation lifetime, Host-identity check, per-device credential storage, and immediate revocation behavior
+- How to limit binding to the tailnet and handle a changed Tailscale address or Host sleep
+- Safe size limits and delivery for streamed transcripts, images, and tool output (remote file links and uploads are deferred)
 - What audit history the user can inspect
 
 Start remote access as an explicit opt-in. The Host must not bind an unauthenticated port to the LAN or internet.
@@ -188,12 +179,10 @@ Notifications should represent transitions, not periodic reminders. Notification
 
 Resolve these before their phase begins:
 
-1. Whether Phase 3 merges multiple local VS Code profiles into one Host library.
-2. How the production Host is bundled, upgraded, and stopped across clients; Phase 1 only proves a bundled, app-launched diagnostic Node child.
-3. How the VS Code extension finds and starts the local Host when the app is not open.
-4. Whether app Quit stops an idle Host and what happens during a running turn.
-5. Which remote connection model to pursue.
-6. Whether a future Windows or Linux client is a product goal. This plan covers macOS only.
+1. How the production Host is bundled, upgraded, and safely recovered across clients; Phase 1 only proves a bundled, app-launched diagnostic Node child. Local-only startup is on demand and remains running after clients quit; enabling remote access also starts at login.
+2. How VS Code and the macOS app find or start the Host without racing to become its owner.
+3. Whether future VS Code profiles get separate Host libraries or an explicit merge. Phase 3 imports only the Default profile.
+4. Whether a future Windows or Linux client is a product goal. This plan covers macOS only.
 
 ## Documentation changes
 
