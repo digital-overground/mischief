@@ -178,54 +178,59 @@ const startDaemon = async (): Promise<void> => {
   }
   const releaseOwnership = await acquireHostOwnership(socketPath);
   const server = createServer((client) => {
-    let hello = "";
+    let accepted = false;
+    let clientPending = "";
     client.setEncoding("utf-8");
     client.on("data", (chunk: string) => {
-      if (clients.has(client)) {
-        // shortcut: Socket clients cannot send commands yet; add command routing at ACP cutover.
-        client.end();
-        return;
-      }
-      hello += chunk;
-      if (hello.length > 4096) {
+      clientPending += chunk;
+      if (clientPending.length > 65_536) {
         client.destroy();
         return;
       }
-      const end = hello.indexOf("\n");
-      if (end === -1) {
-        return;
-      }
-      try {
-        const request: unknown = JSON.parse(hello.slice(0, end));
-        if (
-          typeof request !== "object" ||
-          request === null ||
-          !("type" in request) ||
-          request.type !== "hello" ||
-          !("version" in request) ||
-          request.version !== 1 ||
-          hello.length !== end + 1
-        ) {
-          client.end(
-            '{"type":"error","message":"Incompatible Host protocol"}\n'
-          );
+      let end = clientPending.indexOf("\n");
+      while (end !== -1) {
+        let message: unknown;
+        try {
+          message = JSON.parse(clientPending.slice(0, end)) as unknown;
+        } catch {
+          client.destroy();
           return;
         }
-      } catch {
-        client.destroy();
-        return;
-      }
-      clients.add(client);
-      writeClient(client, `${JSON.stringify({ type: "hello", version: 1 })}\n`);
-      writeClient(
-        client,
-        `${JSON.stringify({ badge, pid: process.pid, type: "state", view })}\n`
-      );
-      if (previous) {
-        writeClient(
-          client,
-          `${JSON.stringify({ attention: previous.attention, type: "library", workspaces: previous.workspaces })}\n`
-        );
+        clientPending = clientPending.slice(end + 1);
+        if (accepted) {
+          command(message);
+        } else {
+          if (
+            typeof message !== "object" ||
+            message === null ||
+            !("type" in message) ||
+            message.type !== "hello" ||
+            !("version" in message) ||
+            message.version !== 1
+          ) {
+            client.end(
+              '{"type":"error","message":"Incompatible Host protocol"}\n'
+            );
+            return;
+          }
+          accepted = true;
+          clients.add(client);
+          writeClient(
+            client,
+            `${JSON.stringify({ type: "hello", version: 1 })}\n`
+          );
+          writeClient(
+            client,
+            `${JSON.stringify({ badge, pid: process.pid, type: "state", view })}\n`
+          );
+          if (previous) {
+            writeClient(
+              client,
+              `${JSON.stringify({ attention: previous.attention, type: "library", workspaces: previous.workspaces })}\n`
+            );
+          }
+        }
+        end = clientPending.indexOf("\n");
       }
     });
     client.on("close", () => {

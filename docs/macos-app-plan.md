@@ -2,7 +2,7 @@
 
 ## Status
 
-Phases 1 and 2 passed their signed-app and cross-client checks; see [build and observed results](../macos/README.md). The Phase 2 companion deliberately leaves a VS Code window open when it deactivates a Workspace. Phase 3 Host ownership is now designed in [ADR 0003](adr/0003-host-thread-ownership.md) but has not been implemented; VS Code still owns live Threads. Later phases remain draft. Storage formats, Host lifecycle details, and remote networking remain to be designed.
+Phases 1 and 2 passed their signed-app and cross-client checks; see [build and observed results](../macos/README.md). The Phase 2 companion deliberately leaves a VS Code window open when it deactivates a Workspace. Phase 3 now has an installed, `launchd`-owned read-only Host used by the macOS app over a private Unix socket; VS Code still owns live Threads. Exclusive profile ownership, ACP handoff, and the VS Code Host client remain unimplemented. Later phases remain draft. Storage formats, Host update details, and remote networking remain to be designed.
 
 ## Goal
 
@@ -111,7 +111,7 @@ Make the macOS app an independent Mischief client.
 Work through the transition in this order:
 
 1. Install the signed Host outside the replaceable app bundle, with private application-support storage. Start on local demand; keep it running independently of app Quit, and enable start-at-login only when remote access is enabled.
-2. Add one per-user local client transport, exclusive profile ownership, safe stale-owner recovery, version rejection, and two-launcher/crash/update tests **before** accepting ACP work. The current read-only `--daemon` socket is not yet this Host.
+2. Add one per-user local client transport, exclusive profile ownership, safe stale-owner recovery, version rejection, and two-launcher/crash/update tests **before** accepting ACP work. The macOS app now uses the read-only `--daemon` socket; exclusive profile ownership and the VS Code client are still missing.
 3. Move ACP connections and Thread writes into that single Host. Keep requests waiting while clients are disconnected; never replay an interrupted turn automatically. Stage updates until running turns finish.
 4. Back up and validate the Default VS Code profile, then cut over only when its VS Code windows are closed and turns have finished. Retire the old active Thread index so old extensions cannot automatically restore migrated registrations; require an updated extension. Preserve Agent history and the backup.
 5. Connect VS Code and the macOS app to the Host. Neither may start a duplicate ACP connection or silently fall back when the Host is unavailable.
@@ -179,8 +179,8 @@ Notifications should represent transitions, not periodic reminders. Notification
 
 Resolve these before their phase begins:
 
-1. How the production Host is bundled, upgraded, and safely recovered across clients; Phase 1 only proves a bundled, app-launched diagnostic Node child. Local-only startup is on demand and remains running after clients quit; enabling remote access also starts at login.
-2. How VS Code and the macOS app find or start the Host without racing to become its owner.
+1. How Host upgrades are staged until active turns finish. The signed Host is installed outside the app bundle, starts on demand through `launchd`, and remains running after clients quit; enabling remote access will also start it at login.
+2. How VS Code finds or starts the Host. The macOS app now safely starts and connects to it.
 3. Whether future VS Code profiles get separate Host libraries or an explicit merge. Phase 3 imports only the Default profile.
 4. Whether a future Windows or Linux client is a product goal. This plan covers macOS only.
 

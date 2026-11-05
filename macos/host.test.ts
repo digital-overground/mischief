@@ -36,6 +36,28 @@ const waitForExit = async (child: ChildProcess): Promise<unknown> => {
   assert.equal(result[1], null);
   return result[0];
 };
+let jobId = 0;
+const backgroundHostEnvironment = (root: string) => {
+  const label = `works.digitaloverground.mischief.host.test.${process.pid}.${jobId}`;
+  jobId += 1;
+  return {
+    env: {
+      ...process.env,
+      MISCHIEF_HOST_INSTALL_ROOT: path.join(root, "Host"),
+      MISCHIEF_HOST_JOB_LABEL: label,
+      MISCHIEF_HOST_LAUNCH_AGENT_PATH: path.join(root, "host.plist"),
+      MISCHIEF_HOST_SOCKET: path.join(root, "run", "host.sock"),
+      MISCHIEF_PROFILE_DB: root,
+    },
+    service: `gui/${process.getuid?.() ?? -1}/${label}`,
+  };
+};
+const stopService = async (service: string): Promise<void> => {
+  const bootout = spawn("/bin/launchctl", ["bootout", service], {
+    stdio: "ignore",
+  });
+  await once(bootout, "exit");
+};
 
 // The packaged executable, not the development Node runtime, is exercised here.
 describe("signed macOS app", () => {
@@ -191,10 +213,7 @@ describe("signed macOS app", () => {
       const plist = await stat(plistPath);
       assert.equal(plist.mode % 0o1000, 0o600);
     } finally {
-      const bootout = spawn("/bin/launchctl", ["bootout", service], {
-        stdio: "ignore",
-      });
-      await once(bootout, "exit");
+      await stopService(service);
       await rm(root, { force: true, recursive: true });
     }
   });
@@ -217,14 +236,30 @@ describe("signed macOS app", () => {
       const socket = await stat(socketPath);
       assert.equal(directory.mode % 0o100, 0);
       assert.equal(socket.mode % 0o1000, 0o600);
-      const receive = async (version: number): Promise<string> => {
+      const receive = async (
+        version: number,
+        sendCommand = false
+      ): Promise<string> => {
         const client = connect(socketPath);
         let output = "";
+        let commandSent = false;
         try {
           client.write(`${JSON.stringify({ type: "hello", version })}\n`);
           for await (const chunk of client) {
             output += String(chunk);
-            if (output.includes('"type":"library"')) {
+            if (
+              sendCommand &&
+              !commandSent &&
+              output.includes('"type":"library"')
+            ) {
+              commandSent = true;
+              client.write('{"action":"notify","type":"command"}\n');
+            }
+            if (
+              output.includes(
+                sendCommand ? '"type":"notify"' : '"type":"library"'
+              )
+            ) {
               break;
             }
           }
@@ -235,6 +270,7 @@ describe("signed macOS app", () => {
       };
       assert.match(await receive(1), /"version":1/u);
       assert.match(await receive(1), /"type":"library"/u);
+      assert.match(await receive(1, true), /"type":"notify"/u);
       assert.match(await receive(2), /Incompatible Host protocol/u);
       const duplicate = spawn(binary, [script, "--daemon"], {
         env: {
@@ -489,35 +525,30 @@ describe("signed macOS app", () => {
 
   test("initial library snapshot and bundled fonts reach React", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "mischief-empty-library-"));
+    const { env, service } = backgroundHostEnvironment(root);
     try {
       const child = spawn(app, ["--smoke-library"], {
-        env: {
-          ...process.env,
-          MISCHIEF_DISABLE_BACKGROUND_HOST: "1",
-          MISCHIEF_HOST_INSTALL_ROOT: path.join(root, "Host"),
-          MISCHIEF_PROFILE_DB: root,
-        },
+        env,
         stdio: "ignore",
       });
       assert.equal(await waitForExit(child), 0);
     } finally {
+      await stopService(service);
       await rm(root, { force: true, recursive: true });
     }
   });
 
   test("window closes and reopens without crashing", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "mischief-close-"));
+    const { env, service } = backgroundHostEnvironment(root);
     try {
       const child = spawn(app, ["--smoke-close"], {
-        env: {
-          ...process.env,
-          MISCHIEF_DISABLE_BACKGROUND_HOST: "1",
-          MISCHIEF_HOST_INSTALL_ROOT: path.join(root, "Host"),
-        },
+        env,
         stdio: "ignore",
       });
       assert.equal(await waitForExit(child), 0);
     } finally {
+      await stopService(service);
       await rm(root, { force: true, recursive: true });
     }
   });

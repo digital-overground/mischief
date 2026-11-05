@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import WebKit
 import UserNotifications
 
@@ -35,6 +36,32 @@ private func installHost() throws -> URL {
         try files.moveItem(at: staging, to: root)
     }
     return root
+}
+
+private func openHostSocket(_ path: String) throws -> FileHandle {
+    let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard descriptor >= 0 else { throw POSIXError(.ENOTSOCK) }
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let bytes = path.utf8CString
+    guard bytes.count <= MemoryLayout.size(ofValue: address.sun_path) else {
+        Darwin.close(descriptor)
+        throw POSIXError(.ENAMETOOLONG)
+    }
+    withUnsafeMutableBytes(of: &address.sun_path) { destination in
+        bytes.withUnsafeBytes { source in destination.copyBytes(from: source) }
+    }
+    let connected = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    }
+    guard connected == 0 else {
+        let failure = POSIXErrorCode(rawValue: errno) ?? .ECONNREFUSED
+        Darwin.close(descriptor)
+        throw POSIXError(failure)
+    }
+    return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
 }
 
 private func runLaunchctl(_ arguments: [String]) throws -> Int32 {
@@ -116,18 +143,19 @@ private struct HostMessage: Decodable {
     let workspace: String?
     let path: String?
     let threadId: String?
+    let message: String?
 }
 
 final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMessageHandler, WKNavigationDelegate, UNUserNotificationCenterDelegate {
     private var window: NSWindow?
     private var webView: WKWebView?
-    private var host: Process?
-    private var input: FileHandle?
+    private var host: FileHandle?
+    private var hostAttempt = UUID()
+    private var installedHost: URL?
     private var pid: Int?
     private var badge = 0
     private var view = "home"
     private var permission = "checking"
-    private var quitting = false
     private var library: HostMessage?
     private var pendingSelection: (String, String)?
 
@@ -149,10 +177,11 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
         do {
             let installed = try installHost()
             try startBackgroundHost(installed)
+            installedHost = installed
+            startHost()
         } catch {
             permission = "Background Host failed: \(error.localizedDescription)"
         }
-        startHost()
         openWindow()
     }
 
@@ -164,12 +193,9 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationWillTerminate(_ notification: Notification) {
-        quitting = true
-        if let host = host, host.isRunning {
-            host.terminate()
-            host.waitUntilExit()
-        }
-        input?.closeFile()
+        hostAttempt = UUID()
+        host?.readabilityHandler = nil
+        try? host?.close()
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -215,8 +241,14 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
         guard let body = message.body as? [String: String], body["type"] == "command", let action = body["action"] else { return }
         switch action {
         case "restart":
-            if host?.isRunning != true { startHost() }
-            updatePage()
+            guard host == nil, let installedHost else { return }
+            do {
+                try startBackgroundHost(installedHost)
+                startHost()
+            } catch {
+                permission = "Background Host failed: \(error.localizedDescription)"
+                updatePage()
+            }
         case "notify", "refresh":
             send(["type": "command", "action": action])
         case "addWorkspace":
@@ -244,59 +276,79 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
     }
 
     private func startHost() {
-        guard host?.isRunning != true else { return }
-        let process = Process()
-        process.executableURL = Bundle.main.resourceURL!.appendingPathComponent("node")
-        process.arguments = [Bundle.main.resourceURL!.appendingPathComponent("Host.mjs").path]
-        let stdin = Pipe()
-        let stdout = Pipe()
-        process.standardInput = stdin
-        process.standardOutput = stdout
-        process.standardError = FileHandle.standardError
-        do {
-            try process.run()
-        } catch {
-            permission = "Host launch failed: \(error.localizedDescription)"
-            updatePage()
-            return
-        }
-        host = process
-        input = stdin.fileHandleForWriting
+        guard host == nil else { return }
+        let attempt = UUID()
+        hostAttempt = attempt
         pid = nil
-        process.terminationHandler = { [weak self] finished in
+        let socketPath = ProcessInfo.processInfo.environment["MISCHIEF_HOST_SOCKET"] ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Mischief/host.sock").path
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            var connection: FileHandle?
+            for _ in 0 ..< 100 {
+                if let opened = try? openHostSocket(socketPath) {
+                    connection = opened
+                    break
+                }
+                Thread.sleep(forTimeInterval: 0.05)
+            }
             DispatchQueue.main.async {
-                guard let self, self.host === finished, !self.quitting else { return }
-                self.pid = nil
-                self.badge = 0
-                NSApp.dockTile.badgeLabel = nil
-                self.updatePage()
+                guard let self, self.hostAttempt == attempt else {
+                    try? connection?.close()
+                    return
+                }
+                guard let connection else {
+                    self.permission = "Background Host did not start"
+                    self.updatePage()
+                    return
+                }
+                self.attachHost(connection)
             }
         }
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            let handle = stdout.fileHandleForReading
-            var pending = Data()
-            while true {
-                let chunk = handle.availableData
-                if chunk.isEmpty { break }
-                pending.append(chunk)
-                while let newline = pending.firstIndex(of: 10) {
-                    let line = pending.prefix(upTo: newline)
-                    pending.removeSubrange(...newline)
-                    guard let message = try? JSONDecoder().decode(HostMessage.self, from: line) else { continue }
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self, self.host === process else { return }
-                        self.handle(message)
-                    }
+        updatePage()
+    }
+
+    private func attachHost(_ connection: FileHandle) {
+        host = connection
+        var pending = Data()
+        connection.readabilityHandler = { [weak self] readable in
+            let chunk = readable.availableData
+            if chunk.isEmpty {
+                DispatchQueue.main.async { [weak self] in self?.hostDisconnected(readable) }
+                return
+            }
+            pending.append(chunk)
+            while let newline = pending.firstIndex(of: 10) {
+                let line = pending.prefix(upTo: newline)
+                pending.removeSubrange(...newline)
+                guard let message = try? JSONDecoder().decode(HostMessage.self, from: line) else { continue }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.host === readable else { return }
+                    self.handle(message)
                 }
             }
         }
+        do {
+            try connection.write(contentsOf: Data("{\"type\":\"hello\",\"version\":1}\n".utf8))
+        } catch {
+            hostDisconnected(connection)
+        }
+    }
+
+    private func hostDisconnected(_ connection: FileHandle) {
+        guard host === connection else { return }
+        connection.readabilityHandler = nil
+        try? connection.close()
+        host = nil
+        pid = nil
+        badge = 0
+        NSApp.dockTile.badgeLabel = nil
         updatePage()
     }
 
     private func handle(_ message: HostMessage) {
         switch message.type {
         case "state":
-            guard host?.isRunning == true, let pid = message.pid, pid == Int(host?.processIdentifier ?? -1), let badge = message.badge, badge >= 0,
+            guard host != nil, let pid = message.pid, pid > 0, let badge = message.badge, badge >= 0,
                   let view = message.view, ["home", "diagnostic"].contains(view) else { return }
             self.pid = pid
             self.badge = badge
@@ -323,13 +375,20 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
         case "notify":
             guard message.view == "diagnostic" else { return }
             requestNotification()
+        case "error":
+            permission = message.message ?? "Background Host rejected the connection"
+            updatePage()
         default: break
         }
     }
 
     private func send(_ message: [String: String]) {
-        guard host?.isRunning == true, let data = try? JSONSerialization.data(withJSONObject: message), let input else { return }
-        input.write(data + Data([10]))
+        guard let host, let data = try? JSONSerialization.data(withJSONObject: message) else { return }
+        do {
+            try host.write(contentsOf: data + Data([10]))
+        } catch {
+            hostDisconnected(host)
+        }
     }
 
     private func updatePage() {
