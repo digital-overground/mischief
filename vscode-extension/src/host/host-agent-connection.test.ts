@@ -33,6 +33,14 @@ class FakeHost {
       }
       return await Promise.resolve({
         agentId: "codex-acp",
+        configOptions: [
+          {
+            currentValue: true,
+            id: "thinking",
+            name: "Thinking",
+            type: "boolean",
+          },
+        ],
         id: THREAD_ID,
         sessionId: "session-1",
         workspace: "/work",
@@ -47,6 +55,9 @@ class FakeHost {
       });
     }
     if (action === "threadPrompt") {
+      if (fields?.text === "image" && !Array.isArray(fields.images)) {
+        throw new Error("Missing images");
+      }
       this.emit({
         promptId: "prompt-1",
         stopReason: "completed",
@@ -77,7 +88,14 @@ describe("Host Agent connection", () => {
     const connection = hostConnectionFactory(host)(agentHandlers, "codex-acp");
 
     await expect(connection.create("/work", THREAD_ID)).resolves.toStrictEqual({
-      configOptions: [],
+      configOptions: [
+        {
+          currentValue: true,
+          id: "thinking",
+          name: "Thinking",
+          type: "boolean",
+        },
+      ],
       operations: {
         branchSummary: false,
         forkMessage: false,
@@ -133,10 +151,13 @@ describe("Host Agent connection", () => {
       });
     });
     await expect(
-      connection.prompt("session-1", "image", [
-        { data: "data", mimeType: "image/png" },
+      Promise.all([
+        connection.prompt("session-1", "image", [
+          { data: "data", mimeType: "image/png" },
+        ]),
+        connection.setConfig("session-1", "model", "fast"),
       ])
-    ).rejects.toThrow("image prompts");
+    ).resolves.toStrictEqual([{ stopReason: "completed" }, undefined]);
   });
 
   test("loads only Threads present in the Host snapshot", async () => {

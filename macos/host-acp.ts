@@ -10,10 +10,12 @@ import {
 } from "@agentclientprotocol/sdk";
 import type {
   ClientConnection,
+  ContentBlock,
   CreateElicitationRequest,
   CreateElicitationResponse,
   RequestPermissionRequest,
   RequestPermissionResponse,
+  SessionConfigOption,
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
 
@@ -21,6 +23,16 @@ export interface HostAgentLaunch {
   command: string;
   args: string[];
   env?: Record<string, string>;
+}
+
+export interface HostAcpSession {
+  configOptions?: SessionConfigOption[] | null;
+  sessionId: string;
+}
+
+export interface HostPromptImage {
+  data: string;
+  mimeType: string;
 }
 
 export interface HostAcpHandlers {
@@ -40,6 +52,7 @@ export class HostAcpConnection {
   private connection?: ClientConnection;
   private starting?: Promise<void>;
   private disposed = false;
+  private supportsImages = false;
   private readonly launch: HostAgentLaunch;
   private readonly handlers: HostAcpHandlers;
 
@@ -52,31 +65,43 @@ export class HostAcpConnection {
     await this.agent();
   }
 
-  async create(cwd: string): Promise<string> {
+  async create(cwd: string): Promise<HostAcpSession> {
     const agent = await this.agent();
     const response = await agent.request(methods.agent.session.new, {
       cwd,
       mcpServers: [],
     });
-    return response.sessionId;
+    return {
+      configOptions: response.configOptions,
+      sessionId: response.sessionId,
+    };
   }
 
-  async load(sessionId: string, cwd: string): Promise<void> {
+  async load(sessionId: string, cwd: string): Promise<HostAcpSession> {
     const agent = await this.agent();
-    await agent.request(methods.agent.session.load, {
+    const response = await agent.request(methods.agent.session.load, {
       cwd,
       mcpServers: [],
       sessionId,
     });
+    return { configOptions: response.configOptions, sessionId };
   }
 
   async prompt(
     sessionId: string,
-    text: string
+    text: string,
+    images: HostPromptImage[]
   ): Promise<"cancelled" | "completed"> {
     const agent = await this.agent();
+    if (images.length > 0 && !this.supportsImages) {
+      throw new Error("This Agent does not support pasted images");
+    }
+    const prompt: ContentBlock[] = [
+      ...(text.length > 0 ? [{ text, type: "text" as const }] : []),
+      ...images.map((image) => ({ ...image, type: "image" as const })),
+    ];
     const response = await agent.request(methods.agent.session.prompt, {
-      prompt: [{ text, type: "text" }],
+      prompt,
       sessionId,
     });
     return response.stopReason === "cancelled" ? "cancelled" : "completed";
@@ -85,6 +110,20 @@ export class HostAcpConnection {
   async cancel(sessionId: string): Promise<void> {
     const agent = await this.agent();
     await agent.notify(methods.agent.session.cancel, { sessionId });
+  }
+
+  async setConfig(
+    sessionId: string,
+    configId: string,
+    value: string | boolean
+  ): Promise<void> {
+    const agent = await this.agent();
+    await agent.request(
+      methods.agent.session.setConfigOption,
+      typeof value === "boolean"
+        ? { configId, sessionId, type: "boolean", value }
+        : { configId, sessionId, value }
+    );
   }
 
   dispose(): void {
@@ -212,6 +251,8 @@ export class HostAcpConnection {
       const errors: unknown = await once(child, "error");
       throw Array.isArray(errors) ? errors[0] : errors;
     };
-    await Promise.race([initialized, childError()]);
+    const response = await Promise.race([initialized, childError()]);
+    this.supportsImages =
+      response.agentCapabilities?.promptCapabilities?.image === true;
   }
 }

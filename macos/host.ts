@@ -146,6 +146,34 @@ const elicitationResponse = (value: unknown): CreateElicitationResponse => {
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+const promptImages = (value: unknown): { data: string; mimeType: string }[] => {
+  if (!Array.isArray(value) || value.length > 20) {
+    throw new TypeError("Invalid Thread prompt images");
+  }
+  const candidates: unknown[] = value;
+  const images: { data: string; mimeType: string }[] = [];
+  for (const image of candidates) {
+    if (
+      typeof image !== "object" ||
+      image === null ||
+      !("data" in image) ||
+      typeof image.data !== "string" ||
+      image.data.length === 0 ||
+      !("mimeType" in image) ||
+      typeof image.mimeType !== "string" ||
+      image.mimeType.length === 0 ||
+      image.mimeType.length > 256
+    ) {
+      throw new TypeError("Invalid Thread prompt images");
+    }
+    images.push({ data: image.data, mimeType: image.mimeType });
+  }
+  if (images.reduce((size, image) => size + image.data.length, 0) > 7_000_000) {
+    throw new TypeError("Thread prompt images are too large");
+  }
+  return images;
+};
+
 // oxlint-disable-next-line complexity -- validates and routes each IPC command
 const command = (
   message: unknown,
@@ -231,6 +259,7 @@ const command = (
     }
     case "threadPrompt": {
       const text = "text" in message ? message.text : undefined;
+      const images = "images" in message ? message.images : [];
       respond(async () => {
         if (
           !threads ||
@@ -240,7 +269,27 @@ const command = (
         ) {
           throw new TypeError("Invalid Thread prompt request");
         }
-        return await threads.prompt(threadId, text);
+        return await threads.prompt(threadId, text, promptImages(images));
+      });
+      break;
+    }
+    case "threadSetConfig": {
+      const configId = "configId" in message ? message.configId : undefined;
+      const value = "value" in message ? message.value : undefined;
+      respond(async () => {
+        if (
+          !threads ||
+          typeof threadId !== "string" ||
+          typeof configId !== "string" ||
+          configId.length === 0 ||
+          configId.length > 256 ||
+          (typeof value !== "string" && typeof value !== "boolean") ||
+          (typeof value === "string" && value.length > 10_000)
+        ) {
+          throw new TypeError("Invalid Thread configuration request");
+        }
+        await threads.setConfig(threadId, configId, value);
+        return {};
       });
       break;
     }

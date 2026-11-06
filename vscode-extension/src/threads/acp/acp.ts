@@ -150,7 +150,7 @@ const configChoice = (option: {
   name: string;
 }): ThreadConfigChoice => ({ name: option.name, value: option.value });
 
-const configOptions = (
+export const configOptions = (
   options: SessionConfigOption[] | null | undefined
 ): ThreadConfigOption[] =>
   (options ?? []).map((option) => {

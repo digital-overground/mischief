@@ -20,20 +20,42 @@ import type { HostAcpEvent } from "./host-acp-manager.js";
 
 export type HostThreadRecord = ThreadRecord & { agentId: AgentId };
 
+interface PromptImage {
+  data: string;
+  mimeType: string;
+}
+
 interface QueuedPrompt {
   id: string;
+  images: PromptImage[];
   text: string;
+}
+
+interface HostAcpSession {
+  configOptions?: unknown[] | null;
+  sessionId: string;
 }
 
 interface HostThreadAcp {
   cancel: (agentId: string, sessionId: string) => Promise<void>;
-  create: (agentId: string, cwd: string) => Promise<string>;
-  load: (agentId: string, sessionId: string, cwd: string) => Promise<void>;
+  create: (agentId: string, cwd: string) => Promise<HostAcpSession>;
+  load: (
+    agentId: string,
+    sessionId: string,
+    cwd: string
+  ) => Promise<HostAcpSession>;
   prompt: (
     agentId: string,
     sessionId: string,
-    text: string
+    text: string,
+    images: PromptImage[]
   ) => Promise<"cancelled" | "completed">;
+  setConfig: (
+    agentId: string,
+    sessionId: string,
+    configId: string,
+    value: string | boolean
+  ) => Promise<void>;
 }
 
 const parse = (source: string): HostThreadRecord => {
@@ -51,6 +73,7 @@ export class HostThreads {
   private readonly emit: (message: unknown) => void;
   private readonly active = new Set<string>();
   private readonly cancelled = new Set<string>();
+  private readonly configOptions = new Map<string, unknown[] | null>();
   private readonly loaded = new Set<string>();
   // shortcut: queued text is lost on Host crash, persist drafts if crash recovery must preserve queues.
   private readonly queues = new Map<string, QueuedPrompt[]>();
@@ -123,7 +146,7 @@ export class HostThreads {
     agentId: string,
     workspace: string,
     requestedId?: string
-  ): Promise<HostThreadRecord> {
+  ): Promise<HostThreadRecord & { configOptions?: unknown[] | null }> {
     if (
       !isAgentId(agentId) ||
       !path.isAbsolute(workspace) ||
@@ -150,7 +173,9 @@ export class HostThreads {
     await this.write(record);
     this.changed();
     try {
-      record.sessionId = await this.acp.create(agentId, workspace);
+      const session = await this.acp.create(agentId, workspace);
+      record.sessionId = session.sessionId;
+      this.rememberConfig(record.id, session.configOptions);
       this.loaded.add(record.id);
       await this.update(record, "idle");
     } catch (error) {
@@ -160,10 +185,17 @@ export class HostThreads {
         error instanceof Error ? error.message : String(error)
       );
     }
-    return { ...record };
+    return {
+      ...record,
+      ...(this.configOptions.has(record.id)
+        ? { configOptions: this.configOptions.get(record.id) }
+        : {}),
+    };
   }
 
-  async load(threadId: string): Promise<HostThreadRecord> {
+  async load(
+    threadId: string
+  ): Promise<HostThreadRecord & { configOptions?: unknown[] | null }> {
     const record = this.require(threadId);
     if (record.sessionId === undefined) {
       throw new Error("Thread has no Agent session; retry its prompt instead");
@@ -172,18 +204,24 @@ export class HostThreads {
     if (record.status === "error") {
       await this.update(record, "idle");
     }
-    return { ...record };
+    return {
+      ...record,
+      ...(this.configOptions.has(record.id)
+        ? { configOptions: this.configOptions.get(record.id) }
+        : {}),
+    };
   }
 
   async prompt(
     threadId: string,
-    text: string
+    text: string,
+    images: PromptImage[] = []
   ): Promise<{ position: number; promptId: string }> {
     const record = this.require(threadId);
-    if (text.length === 0 || text.length > 1_000_000) {
+    if ((text.length === 0 && images.length === 0) || text.length > 1_000_000) {
       throw new TypeError("Invalid Thread prompt text");
     }
-    const prompt = { id: randomUUID(), text };
+    const prompt = { id: randomUUID(), images, text };
     const queue = this.queues.get(threadId) ?? [];
     queue.push(prompt);
     this.queues.set(threadId, queue);
@@ -201,6 +239,19 @@ export class HostThreads {
       position: queue.length,
       promptId: prompt.id,
     });
+  }
+
+  async setConfig(
+    threadId: string,
+    configId: string,
+    value: string | boolean
+  ): Promise<void> {
+    const record = this.require(threadId);
+    if (record.sessionId === undefined || configId.length === 0) {
+      throw new Error("Thread has no Agent session or invalid configuration");
+    }
+    await this.ensureLoaded(record);
+    await this.acp.setConfig(record.agentId, record.sessionId, configId, value);
   }
 
   async cancel(threadId: string): Promise<void> {
@@ -266,6 +317,15 @@ export class HostThreads {
     return record;
   }
 
+  private rememberConfig(
+    threadId: string,
+    options: unknown[] | null | undefined
+  ): void {
+    if (options !== undefined) {
+      this.configOptions.set(threadId, options);
+    }
+  }
+
   private async ensureLoaded(record: HostThreadRecord): Promise<void> {
     if (record.sessionId === undefined) {
       throw new Error("Thread has no Agent session");
@@ -273,7 +333,12 @@ export class HostThreads {
     if (this.loaded.has(record.id)) {
       return;
     }
-    await this.acp.load(record.agentId, record.sessionId, record.workspace);
+    const session = await this.acp.load(
+      record.agentId,
+      record.sessionId,
+      record.workspace
+    );
+    this.rememberConfig(record.id, session.configOptions);
     this.loaded.add(record.id);
   }
 
@@ -290,8 +355,13 @@ export class HostThreads {
         try {
           let { sessionId } = record;
           if (sessionId === undefined) {
-            sessionId = await this.acp.create(record.agentId, record.workspace);
+            const session = await this.acp.create(
+              record.agentId,
+              record.workspace
+            );
+            ({ sessionId } = session);
             record.sessionId = sessionId;
+            this.rememberConfig(record.id, session.configOptions);
             this.loaded.add(record.id);
           } else {
             await this.ensureLoaded(record);
@@ -304,7 +374,8 @@ export class HostThreads {
             stopReason = await this.acp.prompt(
               record.agentId,
               sessionId,
-              prompt.text
+              prompt.text,
+              prompt.images
             );
             this.cancelled.delete(record.id);
           }

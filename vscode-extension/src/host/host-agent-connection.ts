@@ -8,6 +8,7 @@ import type {
 import { isAgentId } from "../../../shared/threads/record";
 import type { AgentId } from "../agents/update";
 import {
+  configOptions,
   elicitationRequest,
   elicitationResponse,
   permissionRequest,
@@ -35,6 +36,7 @@ interface HostTransport {
 
 interface HostThread {
   agentId: AgentId;
+  configOptions?: unknown[] | null;
   error?: string;
   id: string;
   sessionId?: string;
@@ -57,12 +59,18 @@ const hostThread = (value: unknown): HostThread => {
     typeof value.id !== "string" ||
     typeof value.workspace !== "string" ||
     (value.sessionId !== undefined && typeof value.sessionId !== "string") ||
+    (value.configOptions !== undefined &&
+      value.configOptions !== null &&
+      !Array.isArray(value.configOptions)) ||
     (value.error !== undefined && typeof value.error !== "string")
   ) {
     throw new Error("Mischief Host returned an invalid Thread");
   }
   return {
     agentId: value.agentId,
+    ...(value.configOptions === undefined
+      ? {}
+      : { configOptions: value.configOptions }),
     ...(value.error === undefined ? {} : { error: value.error }),
     id: value.id,
     ...(value.sessionId === undefined ? {} : { sessionId: value.sessionId }),
@@ -86,8 +94,13 @@ const agentSession = (thread: HostThread): AgentSession => {
   if (thread.sessionId === undefined) {
     throw new Error("Mischief Host Thread has no session");
   }
+  // The signed Host forwards ACP SDK-parsed options over the private versioned protocol.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the array envelope is validated above.
+  const rawOptions = thread.configOptions as Parameters<
+    typeof configOptions
+  >[0];
   return {
-    configOptions: [],
+    configOptions: configOptions(rawOptions),
     operations: {
       branchSummary: false,
       forkMessage: false,
@@ -470,11 +483,9 @@ class HostAgentConnection implements AgentConnection {
     images: PromptImage[]
   ): Promise<AgentPromptResult> {
     this.requireSession(sessionId);
-    if (images.length > 0) {
-      return await unsupported("image prompts");
-    }
     const id = promptId(
       await this.coordinator.transport.request("threadPrompt", {
+        images,
         text,
         threadId: this.threadId,
       })
@@ -504,9 +515,17 @@ class HostAgentConnection implements AgentConnection {
     return await unsupported("message tree navigation");
   }
 
-  async setConfig(): Promise<never> {
-    this.requireActive();
-    return await unsupported("session configuration");
+  async setConfig(
+    sessionId: string,
+    configId: string,
+    value: string | boolean
+  ): Promise<void> {
+    this.requireSession(sessionId);
+    await this.coordinator.transport.request("threadSetConfig", {
+      configId,
+      threadId: this.threadId,
+      value,
+    });
   }
 
   dispose(): void {

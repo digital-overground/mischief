@@ -12,7 +12,11 @@ import type {
 
 import agentConfig from "../shared/agents/config.json";
 import { HostAcpConnection } from "./host-acp.js";
-import type { HostAgentLaunch } from "./host-acp.js";
+import type {
+  HostAcpSession,
+  HostAgentLaunch,
+  HostPromptImage,
+} from "./host-acp.js";
 
 export type HostAcpEvent =
   | {
@@ -110,23 +114,38 @@ export class HostAcpManager {
     this.emit = emit;
   }
 
-  async create(agentId: string, cwd: string): Promise<string> {
+  async create(agentId: string, cwd: string): Promise<HostAcpSession> {
     const connection = await this.connection(agentId);
     return await connection.create(cwd);
   }
 
-  async load(agentId: string, sessionId: string, cwd: string): Promise<void> {
+  async load(
+    agentId: string,
+    sessionId: string,
+    cwd: string
+  ): Promise<HostAcpSession> {
     const connection = await this.connection(agentId);
-    await connection.load(sessionId, cwd);
+    return await connection.load(sessionId, cwd);
   }
 
   async prompt(
     agentId: string,
     sessionId: string,
-    text: string
+    text: string,
+    images: HostPromptImage[]
   ): Promise<"cancelled" | "completed"> {
     const connection = await this.connection(agentId);
-    return await connection.prompt(sessionId, text);
+    return await connection.prompt(sessionId, text, images);
+  }
+
+  async setConfig(
+    agentId: string,
+    sessionId: string,
+    configId: string,
+    value: string | boolean
+  ): Promise<void> {
+    const connection = await this.connection(agentId);
+    await connection.setConfig(sessionId, configId, value);
   }
 
   async cancel(agentId: string, sessionId: string): Promise<void> {

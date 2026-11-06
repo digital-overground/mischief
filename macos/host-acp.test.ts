@@ -41,12 +41,18 @@ const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", 
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
-    send({ id: message.id, result: { agentCapabilities: { loadSession: true }, protocolVersion: 1 } });
+    send({ id: message.id, result: { agentCapabilities: { loadSession: true, promptCapabilities: { image: true } }, protocolVersion: 1 } });
   } else if (message.method === "session/new") {
     send({ id: message.id, result: { sessionId: "session-1" } });
   } else if (message.method === "session/load") {
     send({ id: message.id, result: {} });
+  } else if (message.method === "session/set_config_option") {
+    send({ id: message.id, result: {} });
   } else if (message.method === "session/prompt") {
+    if (message.params.prompt[0]?.text === "Hello image" && message.params.prompt[1]?.type !== "image") {
+      send({ id: message.id, error: { code: -32602, message: "Missing image" } });
+      return;
+    }
     promptId = message.id;
     promptSession = message.params.sessionId;
     send({ method: "session/update", params: { sessionId: promptSession, update: { content: { text: "working", type: "text" }, sessionUpdate: "agent_message_chunk" } } });
@@ -89,14 +95,19 @@ describe("Host ACP connection", () => {
       }
     );
     try {
-      const sessionId = await connection.create(root);
-      expect(sessionId).toBe("session-1");
-      await connection.load(sessionId, root);
+      const session = await connection.create(root);
+      expect(session.sessionId).toBe("session-1");
+      await connection.load(session.sessionId, root);
+      await connection.setConfig(session.sessionId, "model", "fast");
       let finished = false;
-      const prompt = connection.prompt(sessionId, "Hello").then((result) => {
-        finished = true;
-        return result;
-      });
+      const prompt = connection
+        .prompt(session.sessionId, "Hello image", [
+          { data: "aGVsbG8=", mimeType: "image/png" },
+        ])
+        .then((result) => {
+          finished = true;
+          return result;
+        });
       await vi.waitFor(() => {
         expect(updates).toHaveLength(1);
       });
@@ -105,7 +116,7 @@ describe("Host ACP connection", () => {
         outcome: { optionId: "allow", outcome: "selected" },
       });
       await expect(prompt).resolves.toBe("completed");
-      expect(updates[0]?.sessionId).toBe(sessionId);
+      expect(updates[0]?.sessionId).toBe(session.sessionId);
     } finally {
       connection.dispose();
     }
@@ -283,10 +294,10 @@ describe("Host ACP connection", () => {
       }
     );
     try {
-      const sessionId = await connection.create(root);
-      const prompt = connection.prompt(sessionId, "Hello");
+      const session = await connection.create(root);
+      const prompt = connection.prompt(session.sessionId, "Hello", []);
       await started.promise;
-      await connection.cancel(sessionId);
+      await connection.cancel(session.sessionId);
       await expect(prompt).resolves.toBe("cancelled");
     } finally {
       connection.dispose();

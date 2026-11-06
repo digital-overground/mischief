@@ -7,6 +7,9 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { HostThreads } from "./host-threads";
 
 const roots: string[] = [];
+const acpSession = (sessionId: string): { sessionId: string } => ({
+  sessionId,
+});
 const deferred = <T>(): {
   promise: Promise<T>;
   resolve: (value: T) => void;
@@ -48,12 +51,13 @@ describe("Host Threads", () => {
           if (creates === 1) {
             throw new Error("Agent unavailable");
           }
-          return await Promise.resolve("session-retry");
+          return await Promise.resolve(acpSession("session-retry"));
         },
-        load: async () => {
+        load: async () => await Promise.resolve(acpSession("session-retry")),
+        prompt: async () => await Promise.resolve("completed" as const),
+        setConfig: async () => {
           await Promise.resolve();
         },
-        prompt: async () => await Promise.resolve("completed" as const),
       },
       () => {}
     );
@@ -83,7 +87,7 @@ describe("Host Threads", () => {
   test("cancels while a failed Thread is recreating its session", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "mischief-host-threads-"));
     roots.push(root);
-    const session = deferred<string>();
+    const session = deferred<{ sessionId: string }>();
     let creates = 0;
     let prompts = 0;
     const threads = await HostThreads.open(
@@ -99,12 +103,13 @@ describe("Host Threads", () => {
           }
           return await session.promise;
         },
-        load: async () => {
-          await Promise.resolve();
-        },
+        load: async () => await Promise.resolve(acpSession("session-retry")),
         prompt: async () => {
           prompts += 1;
           return await Promise.resolve("completed" as const);
+        },
+        setConfig: async () => {
+          await Promise.resolve();
         },
       },
       () => {}
@@ -115,7 +120,7 @@ describe("Host Threads", () => {
       expect(creates).toBe(2);
     });
     await threads.cancel(created.id);
-    session.resolve("session-retry");
+    session.resolve(acpSession("session-retry"));
     await vi.waitFor(() => {
       expect(threads.snapshot()[0]).toMatchObject({ status: "idle" });
     });
@@ -138,10 +143,8 @@ describe("Host Threads", () => {
           turns[1]?.resolve("cancelled");
           await Promise.resolve();
         },
-        create: async () => await Promise.resolve("session-1"),
-        load: async () => {
-          await Promise.resolve();
-        },
+        create: async () => await Promise.resolve(acpSession("session-1")),
+        load: async () => await Promise.resolve(acpSession("session-1")),
         prompt: async (_agentId, _sessionId, text) => {
           prompts.push(text);
           const turn = turns.at(prompts.length - 1);
@@ -149,6 +152,9 @@ describe("Host Threads", () => {
             throw new Error("Unexpected prompt");
           }
           return await turn.promise;
+        },
+        setConfig: async () => {
+          await Promise.resolve();
         },
       },
       (event) => {
@@ -192,12 +198,16 @@ describe("Host Threads", () => {
       cancel: async () => {
         await Promise.resolve();
       },
-      create: async () => await Promise.resolve("session-1"),
+      create: async () => await Promise.resolve(acpSession("session-1")),
       load: async (_agentId: string, sessionId: string) => {
         await Promise.resolve();
         loads.push(sessionId);
+        return acpSession(sessionId);
       },
       prompt: async () => await turn.promise,
+      setConfig: async () => {
+        await Promise.resolve();
+      },
     };
     const threads = await HostThreads.open(root, acp, () => {});
     const created = await threads.create("magpi-acp", "/workspace");
