@@ -130,6 +130,21 @@ export class HostAcpManager {
   }
 
   async cancel(agentId: string, sessionId: string): Promise<void> {
+    for (const [interactionId, pending] of this.permissions) {
+      if (pending.event.request.sessionId === sessionId) {
+        this.permissions.delete(interactionId);
+        pending.resolve({ outcome: { outcome: "cancelled" } });
+      }
+    }
+    for (const [interactionId, pending] of this.elicitations) {
+      if (
+        "sessionId" in pending.event.request &&
+        pending.event.request.sessionId === sessionId
+      ) {
+        this.elicitations.delete(interactionId);
+        pending.resolve({ action: "cancel" });
+      }
+    }
     const connection = await this.connection(agentId);
     await connection.cancel(sessionId);
   }

@@ -63,12 +63,117 @@ describe("Host Threads", () => {
       status: "error",
     });
     expect(created.sessionId).toBeUndefined();
-    await expect(threads.prompt(created.id, "Retry")).resolves.toBe(
-      "completed"
+    await expect(threads.prompt(created.id, "Retry")).resolves.toMatchObject({
+      position: 1,
+    });
+    await vi.waitFor(() => {
+      expect(threads.snapshot()[0]).toMatchObject({
+        sessionId: "session-retry",
+        status: "idle",
+      });
+    });
+  });
+
+  test("cancels while a failed Thread is recreating its session", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "mischief-host-threads-"));
+    roots.push(root);
+    const session = deferred<string>();
+    let creates = 0;
+    let prompts = 0;
+    const threads = await HostThreads.open(
+      root,
+      {
+        cancel: async () => {
+          await Promise.resolve();
+        },
+        create: async () => {
+          creates += 1;
+          if (creates === 1) {
+            throw new Error("Agent unavailable");
+          }
+          return await session.promise;
+        },
+        load: async () => {
+          await Promise.resolve();
+        },
+        prompt: async () => {
+          prompts += 1;
+          return await Promise.resolve("completed" as const);
+        },
+      },
+      () => {}
     );
-    expect(threads.snapshot()[0]).toMatchObject({
-      sessionId: "session-retry",
-      status: "idle",
+    const created = await threads.create("magpi-acp", "/workspace");
+    await threads.prompt(created.id, "Retry");
+    await vi.waitFor(() => {
+      expect(creates).toBe(2);
+    });
+    await threads.cancel(created.id);
+    session.resolve("session-retry");
+    await vi.waitFor(() => {
+      expect(threads.snapshot()[0]).toMatchObject({ status: "idle" });
+    });
+    expect(prompts).toBe(0);
+  });
+
+  test("runs queued prompts in order and returns queued text on cancel", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "mischief-host-threads-"));
+    roots.push(root);
+    const turns = [
+      deferred<"cancelled" | "completed">(),
+      deferred<"cancelled" | "completed">(),
+    ];
+    const prompts: string[] = [];
+    const events: unknown[] = [];
+    const threads = await HostThreads.open(
+      root,
+      {
+        cancel: async () => {
+          turns[1]?.resolve("cancelled");
+          await Promise.resolve();
+        },
+        create: async () => await Promise.resolve("session-1"),
+        load: async () => {
+          await Promise.resolve();
+        },
+        prompt: async (_agentId, _sessionId, text) => {
+          prompts.push(text);
+          const turn = turns.at(prompts.length - 1);
+          if (!turn) {
+            throw new Error("Unexpected prompt");
+          }
+          return await turn.promise;
+        },
+      },
+      (event) => {
+        events.push(event);
+      }
+    );
+    const created = await threads.create("magpi-acp", "/workspace");
+    await expect(threads.prompt(created.id, "First")).resolves.toMatchObject({
+      position: 1,
+    });
+    await expect(threads.prompt(created.id, "Second")).resolves.toMatchObject({
+      position: 2,
+    });
+    await expect(threads.prompt(created.id, "Third")).resolves.toMatchObject({
+      position: 3,
+    });
+    await vi.waitFor(() => {
+      expect(prompts).toStrictEqual(["First"]);
+    });
+    turns[0]?.resolve("completed");
+    await vi.waitFor(() => {
+      expect(prompts).toStrictEqual(["First", "Second"]);
+    });
+    await threads.cancel(created.id);
+    await vi.waitFor(() => {
+      expect(threads.snapshot()[0]).toMatchObject({ status: "idle" });
+    });
+    expect(events).toContainEqual({
+      drafts: ["Third"],
+      threadId: created.id,
+      type: "threadQueueCleared",
     });
   });
 
@@ -90,7 +195,7 @@ describe("Host Threads", () => {
     };
     const threads = await HostThreads.open(root, acp, () => {});
     const created = await threads.create("magpi-acp", "/workspace");
-    const prompt = threads.prompt(created.id, "Keep working");
+    await threads.prompt(created.id, "Keep working");
     const recordPath = path.join(
       root,
       "profile-db-v1/threads",
@@ -118,6 +223,8 @@ describe("Host Threads", () => {
     expect(loads).toStrictEqual(["session-1"]);
     expect(restarted.snapshot()[0]).toMatchObject({ status: "idle" });
     turn.resolve("completed");
-    await expect(prompt).resolves.toBe("completed");
+    await vi.waitFor(() => {
+      expect(threads.snapshot()[0]).toMatchObject({ status: "idle" });
+    });
   });
 });

@@ -1,4 +1,4 @@
-/* oxlint-disable promise/prefer-await-to-then, promise/prefer-await-to-callbacks -- synchronous ACP events dispatch durable async work, and Thread writes are serialized */
+/* oxlint-disable no-await-in-loop, promise/prefer-await-to-then, promise/prefer-await-to-callbacks -- queued prompts must run sequentially; synchronous ACP events dispatch durable async work; Thread writes are serialized */
 import { randomUUID } from "node:crypto";
 import {
   mkdir,
@@ -25,6 +25,11 @@ export interface HostThreadRecord {
   version: 1;
   workspace: string;
   writtenAt: number;
+}
+
+interface QueuedPrompt {
+  id: string;
+  text: string;
 }
 
 interface HostThreadAcp {
@@ -107,7 +112,11 @@ export class HostThreads {
   private readonly acp: HostThreadAcp;
   private readonly directory: string;
   private readonly emit: (message: unknown) => void;
+  private readonly active = new Set<string>();
+  private readonly cancelled = new Set<string>();
   private readonly loaded = new Set<string>();
+  // shortcut: queued text is lost on Host crash, persist drafts if crash recovery must preserve queues.
+  private readonly queues = new Map<string, QueuedPrompt[]>();
   private readonly records = new Map<string, HostThreadRecord>();
   private readonly writes = new Map<string, Promise<void>>();
 
@@ -167,6 +176,12 @@ export class HostThreads {
     return [...this.records.values()].map((record) => ({ ...record }));
   }
 
+  queueSnapshots(): unknown[] {
+    return [...this.queues]
+      .filter(([, queue]) => queue.length > 0)
+      .map(([threadId]) => this.queueSnapshot(threadId));
+  }
+
   async create(agentId: string, workspace: string): Promise<HostThreadRecord> {
     if (!isAgentId(agentId) || !path.isAbsolute(workspace)) {
       throw new TypeError("Invalid new Thread request");
@@ -215,49 +230,51 @@ export class HostThreads {
   async prompt(
     threadId: string,
     text: string
-  ): Promise<"cancelled" | "completed"> {
+  ): Promise<{ position: number; promptId: string }> {
     const record = this.require(threadId);
-    if (record.status === "running" || record.status === "waiting") {
-      throw new Error("Thread already has an active turn");
+    if (text.length === 0 || text.length > 1_000_000) {
+      throw new TypeError("Invalid Thread prompt text");
     }
-    let { sessionId } = record;
-    if (sessionId === undefined) {
-      try {
-        sessionId = await this.acp.create(record.agentId, record.workspace);
-        record.sessionId = sessionId;
-        this.loaded.add(record.id);
-      } catch (error) {
-        await this.update(
-          record,
-          "error",
-          error instanceof Error ? error.message : String(error)
-        );
-        throw error;
-      }
-    } else {
-      await this.ensureLoaded(record);
+    const prompt = { id: randomUUID(), text };
+    const queue = this.queues.get(threadId) ?? [];
+    queue.push(prompt);
+    this.queues.set(threadId, queue);
+    this.queueChanged(threadId);
+    if (!this.active.has(threadId)) {
+      this.runQueue(record).catch((error: unknown) => {
+        this.emit({
+          message: error instanceof Error ? error.message : String(error),
+          threadId,
+          type: "error",
+        });
+      });
     }
-    await this.update(record, "running");
-    try {
-      const result = await this.acp.prompt(record.agentId, sessionId, text);
-      await this.update(record, "idle");
-      return result;
-    } catch (error) {
-      await this.update(
-        record,
-        "error",
-        error instanceof Error ? error.message : String(error)
-      );
-      throw error;
-    }
+    return await Promise.resolve({
+      position: queue.length,
+      promptId: prompt.id,
+    });
   }
 
   async cancel(threadId: string): Promise<void> {
     const record = this.require(threadId);
-    if (record.sessionId === undefined) {
-      throw new Error("Thread has no Agent session");
+    const queue = this.queues.get(threadId) ?? [];
+    const queued = this.active.has(threadId)
+      ? queue.splice(1)
+      : queue.splice(0);
+    if (queued.length > 0) {
+      this.emit({
+        drafts: queued.map(({ text }) => text),
+        threadId,
+        type: "threadQueueCleared",
+      });
+      this.queueChanged(threadId);
     }
-    await this.acp.cancel(record.agentId, record.sessionId);
+    if (this.active.has(threadId)) {
+      this.cancelled.add(threadId);
+      if (record.sessionId !== undefined) {
+        await this.acp.cancel(record.agentId, record.sessionId);
+      }
+    }
   }
 
   event(event: HostAcpEvent): void {
@@ -312,6 +329,78 @@ export class HostThreads {
     this.loaded.add(record.id);
   }
 
+  private async runQueue(record: HostThreadRecord): Promise<void> {
+    if (this.active.has(record.id)) {
+      return;
+    }
+    this.active.add(record.id);
+    const queue = this.queues.get(record.id) ?? [];
+    try {
+      let prompt: QueuedPrompt | undefined;
+      [prompt] = queue;
+      while (prompt !== undefined) {
+        try {
+          let { sessionId } = record;
+          if (sessionId === undefined) {
+            sessionId = await this.acp.create(record.agentId, record.workspace);
+            record.sessionId = sessionId;
+            this.loaded.add(record.id);
+          } else {
+            await this.ensureLoaded(record);
+          }
+          await this.update(record, "running");
+          let stopReason: "cancelled" | "completed";
+          if (this.cancelled.delete(record.id)) {
+            stopReason = "cancelled";
+          } else {
+            stopReason = await this.acp.prompt(
+              record.agentId,
+              sessionId,
+              prompt.text
+            );
+            this.cancelled.delete(record.id);
+          }
+          this.emit({
+            promptId: prompt.id,
+            stopReason,
+            threadId: record.id,
+            type: "threadPromptComplete",
+          });
+          queue.shift();
+          this.queueChanged(record.id);
+        } catch (error) {
+          queue.shift();
+          const queued = queue.splice(0);
+          if (queued.length > 0) {
+            this.emit({
+              drafts: queued.map(({ text }) => text),
+              threadId: record.id,
+              type: "threadQueueCleared",
+            });
+          }
+          this.queueChanged(record.id);
+          const message =
+            error instanceof Error ? error.message : String(error);
+          await this.update(record, "error", message);
+          this.emit({
+            message,
+            promptId: prompt.id,
+            threadId: record.id,
+            type: "threadPromptError",
+          });
+          return;
+        }
+        [prompt] = queue;
+      }
+      await this.update(record, "idle");
+    } finally {
+      this.active.delete(record.id);
+      if (queue.length > 0) {
+        void this.runQueue(record);
+      }
+    }
+  }
+
   private async update(
     record: HostThreadRecord,
     status: HostThreadRecord["status"],
@@ -350,6 +439,21 @@ export class HostThreads {
         this.writes.delete(record.id);
       }
     }
+  }
+
+  private queueSnapshot(threadId: string): unknown {
+    return {
+      prompts: (this.queues.get(threadId) ?? []).map((prompt, index) => ({
+        ...prompt,
+        position: index + 1,
+      })),
+      threadId,
+      type: "threadQueue",
+    };
+  }
+
+  private queueChanged(threadId: string): void {
+    this.emit(this.queueSnapshot(threadId));
   }
 
   private changed(): void {

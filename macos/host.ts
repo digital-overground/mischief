@@ -216,7 +216,7 @@ const command = (
         ) {
           throw new TypeError("Invalid Thread prompt request");
         }
-        return { stopReason: await threads.prompt(threadId, text) };
+        return await threads.prompt(threadId, text);
       });
       break;
     }
@@ -429,6 +429,9 @@ const startDaemon = async (): Promise<void> => {
             client,
             `${JSON.stringify({ threads: threads.snapshot(), type: "threads" })}\n`
           );
+          for (const queue of threads.queueSnapshots()) {
+            writeClient(client, `${JSON.stringify(queue)}\n`);
+          }
           for (const interaction of acp.pendingEvents()) {
             writeClient(client, `${JSON.stringify(interaction)}\n`);
           }
