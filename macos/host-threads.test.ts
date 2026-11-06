@@ -33,6 +33,45 @@ describe("Host Threads", () => {
     );
   });
 
+  test("keeps a Thread durable when its first ACP session fails", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "mischief-host-threads-"));
+    roots.push(root);
+    let creates = 0;
+    const threads = await HostThreads.open(
+      root,
+      {
+        cancel: async () => {
+          await Promise.resolve();
+        },
+        create: async () => {
+          creates += 1;
+          if (creates === 1) {
+            throw new Error("Agent unavailable");
+          }
+          return await Promise.resolve("session-retry");
+        },
+        load: async () => {
+          await Promise.resolve();
+        },
+        prompt: async () => await Promise.resolve("completed" as const),
+      },
+      () => {}
+    );
+    const created = await threads.create("magpi-acp", "/workspace");
+    expect(created).toMatchObject({
+      error: "Agent unavailable",
+      status: "error",
+    });
+    expect(created.sessionId).toBeUndefined();
+    await expect(threads.prompt(created.id, "Retry")).resolves.toBe(
+      "completed"
+    );
+    expect(threads.snapshot()[0]).toMatchObject({
+      sessionId: "session-retry",
+      status: "idle",
+    });
+  });
+
   test("persists ownership and marks a crashed turn interrupted", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "mischief-host-threads-"));
     roots.push(root);

@@ -19,7 +19,7 @@ export interface HostThreadRecord {
   error?: string;
   id: string;
   name: string;
-  sessionId: string;
+  sessionId?: string;
   status: "idle" | "running" | "waiting" | "error";
   updatedAt: string;
   version: 1;
@@ -62,9 +62,8 @@ const parse = (source: string): HostThreadRecord => {
     !("workspace" in value) ||
     typeof value.workspace !== "string" ||
     !path.isAbsolute(value.workspace) ||
-    !("sessionId" in value) ||
-    typeof value.sessionId !== "string" ||
-    value.sessionId.length === 0 ||
+    ("sessionId" in value &&
+      (typeof value.sessionId !== "string" || value.sessionId.length === 0)) ||
     !("name" in value) ||
     typeof value.name !== "string" ||
     value.name.length === 0 ||
@@ -88,7 +87,6 @@ const parse = (source: string): HostThreadRecord => {
     createdAt: value.createdAt,
     id: value.id,
     name: value.name,
-    sessionId: value.sessionId,
     status: value.status,
     updatedAt: value.updatedAt,
     version: 1,
@@ -97,6 +95,9 @@ const parse = (source: string): HostThreadRecord => {
   };
   if ("error" in value && typeof value.error === "string") {
     record.error = value.error;
+  }
+  if ("sessionId" in value && typeof value.sessionId === "string") {
+    record.sessionId = value.sessionId;
   }
   return record;
 };
@@ -170,29 +171,40 @@ export class HostThreads {
     if (!isAgentId(agentId) || !path.isAbsolute(workspace)) {
       throw new TypeError("Invalid new Thread request");
     }
-    const sessionId = await this.acp.create(agentId, workspace);
     const now = new Date().toISOString();
     const record: HostThreadRecord = {
       agentId,
       createdAt: now,
       id: randomUUID(),
       name: "New Thread",
-      sessionId,
-      status: "idle",
+      status: "running",
       updatedAt: now,
       version: 1,
       workspace,
       writtenAt: Date.now(),
     };
-    this.loaded.add(record.id);
     this.records.set(record.id, record);
     await this.write(record);
     this.changed();
+    try {
+      record.sessionId = await this.acp.create(agentId, workspace);
+      this.loaded.add(record.id);
+      await this.update(record, "idle");
+    } catch (error) {
+      await this.update(
+        record,
+        "error",
+        error instanceof Error ? error.message : String(error)
+      );
+    }
     return { ...record };
   }
 
   async load(threadId: string): Promise<HostThreadRecord> {
     const record = this.require(threadId);
+    if (record.sessionId === undefined) {
+      throw new Error("Thread has no Agent session; retry its prompt instead");
+    }
     await this.ensureLoaded(record);
     if (record.status === "error") {
       await this.update(record, "idle");
@@ -208,14 +220,26 @@ export class HostThreads {
     if (record.status === "running" || record.status === "waiting") {
       throw new Error("Thread already has an active turn");
     }
-    await this.ensureLoaded(record);
+    let { sessionId } = record;
+    if (sessionId === undefined) {
+      try {
+        sessionId = await this.acp.create(record.agentId, record.workspace);
+        record.sessionId = sessionId;
+        this.loaded.add(record.id);
+      } catch (error) {
+        await this.update(
+          record,
+          "error",
+          error instanceof Error ? error.message : String(error)
+        );
+        throw error;
+      }
+    } else {
+      await this.ensureLoaded(record);
+    }
     await this.update(record, "running");
     try {
-      const result = await this.acp.prompt(
-        record.agentId,
-        record.sessionId,
-        text
-      );
+      const result = await this.acp.prompt(record.agentId, sessionId, text);
       await this.update(record, "idle");
       return result;
     } catch (error) {
@@ -230,6 +254,9 @@ export class HostThreads {
 
   async cancel(threadId: string): Promise<void> {
     const record = this.require(threadId);
+    if (record.sessionId === undefined) {
+      throw new Error("Thread has no Agent session");
+    }
     await this.acp.cancel(record.agentId, record.sessionId);
   }
 
@@ -246,7 +273,9 @@ export class HostThreads {
     }
     const record = [...this.records.values()].find(
       (candidate) =>
-        candidate.agentId === event.agentId && candidate.sessionId === sessionId
+        candidate.agentId === event.agentId &&
+        candidate.sessionId !== undefined &&
+        candidate.sessionId === sessionId
     );
     if (
       record &&
@@ -273,6 +302,9 @@ export class HostThreads {
   }
 
   private async ensureLoaded(record: HostThreadRecord): Promise<void> {
+    if (record.sessionId === undefined) {
+      throw new Error("Thread has no Agent session");
+    }
     if (this.loaded.has(record.id)) {
       return;
     }
