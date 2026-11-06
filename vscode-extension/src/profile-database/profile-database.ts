@@ -4,8 +4,15 @@ import type { FSWatcher } from "node:fs";
 import { mkdir, open, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { LEGACY_THREAD_AGENT, isAgentId } from "../agents/update";
-import type { AgentId } from "../agents/update";
+import {
+  isThreadData,
+  parseThreadRecord as parseSharedThreadRecord,
+} from "../../../shared/threads/record";
+import type {
+  ThreadData,
+  ThreadRecord as SharedThreadRecord,
+} from "../../../shared/threads/record";
+import { LEGACY_THREAD_AGENT } from "../agents/update";
 import { isNonEmpty, isRecord } from "../present";
 import type { PromptImage } from "../threads/model";
 
@@ -13,7 +20,6 @@ const MAX_RETRY_IMAGE_BYTES = 20_000_000;
 const MAX_RETRY_RECORD_BYTES = 21_000_000;
 const MAX_PATH_LENGTH = 32_768;
 const MAX_RECORD_BYTES = 8 * 1024 * 1024;
-const MAX_TEXT_LENGTH = 1_000_000;
 const POLL_INTERVAL_MS = 1000;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
@@ -27,23 +33,8 @@ export interface DatabaseWorkspace extends WorkspaceLocation {
   readonly status: "active" | "inactive";
 }
 
-export interface DatabaseThread {
-  readonly id: string;
-  // Old records without an Agent belong to MagPi.
-  readonly agentId?: AgentId;
-  readonly workspace: string;
-  readonly sessionId?: string;
-  readonly name: string;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-  readonly status: "idle" | "running" | "waiting" | "error";
-  readonly error?: string;
-  readonly retryText?: string;
-  readonly retryHasImages?: boolean;
-  readonly manualName?: boolean;
-  readonly unread?: boolean;
-  readonly usage?: { used: number; size: number };
-}
+// Old records without an Agent belong to MagPi.
+export type DatabaseThread = ThreadData;
 
 export interface DatabaseSelection {
   readonly workspace: string;
@@ -100,10 +91,7 @@ interface WorkspaceRecord extends DatabaseWorkspace {
   readonly writtenAt: number;
 }
 
-interface ThreadRecord extends DatabaseThread {
-  readonly version: 1;
-  readonly writtenAt: number;
-}
+type ThreadRecord = SharedThreadRecord;
 
 interface SelectionRecord extends DatabaseSelection {
   readonly version: 1;
@@ -125,16 +113,6 @@ const isAbsolutePath = (value: unknown): value is string =>
   value.length <= MAX_PATH_LENGTH &&
   !/\p{Cc}/u.test(value) &&
   path.isAbsolute(value);
-
-const isBoundedString = (
-  value: unknown,
-  maximum = MAX_TEXT_LENGTH
-): value is string => typeof value === "string" && value.length <= maximum;
-
-const isTimestamp = (value: unknown): value is string =>
-  isBoundedString(value, 100) &&
-  value.length > 0 &&
-  Number.isFinite(Date.parse(value));
 
 const isWorkspaceLocation = (value: unknown): value is WorkspaceLocation =>
   isRecord(value) &&
@@ -162,41 +140,6 @@ const isRetryImages = (value: unknown): value is PromptImage[] => {
     return size <= MAX_RETRY_IMAGE_BYTES;
   });
 };
-
-const isUsage = (
-  value: unknown
-): value is NonNullable<DatabaseThread["usage"]> =>
-  isRecord(value) &&
-  typeof value.used === "number" &&
-  Number.isFinite(value.used) &&
-  value.used >= 0 &&
-  typeof value.size === "number" &&
-  Number.isFinite(value.size) &&
-  value.size >= 0;
-
-// oxlint-disable-next-line complexity -- validates every durable Thread field
-const isDatabaseThread = (value: unknown): value is DatabaseThread =>
-  isRecord(value) &&
-  typeof value.id === "string" &&
-  UUID_PATTERN.test(value.id) &&
-  (value.agentId === undefined || isAgentId(value.agentId)) &&
-  isAbsolutePath(value.workspace) &&
-  (value.sessionId === undefined ||
-    (isBoundedString(value.sessionId, MAX_PATH_LENGTH) &&
-      value.sessionId.length > 0)) &&
-  isBoundedString(value.name, 200) &&
-  value.name.length > 0 &&
-  !/[\r\n]/u.test(value.name) &&
-  isTimestamp(value.createdAt) &&
-  isTimestamp(value.updatedAt) &&
-  ["idle", "running", "waiting", "error"].includes(String(value.status)) &&
-  (value.error === undefined || isBoundedString(value.error)) &&
-  (value.retryText === undefined || isBoundedString(value.retryText)) &&
-  (value.retryHasImages === undefined ||
-    typeof value.retryHasImages === "boolean") &&
-  (value.manualName === undefined || typeof value.manualName === "boolean") &&
-  (value.unread === undefined || typeof value.unread === "boolean") &&
-  (value.usage === undefined || isUsage(value.usage));
 
 const copyWorkspace = (workspace: DatabaseWorkspace): DatabaseWorkspace => ({
   path: workspace.path,
@@ -288,21 +231,12 @@ const parseWorkspaceRecord = (source: string): WorkspaceRecord | undefined => {
 };
 
 const parseThreadRecord = (source: string): ThreadRecord | undefined => {
-  const value = parseJson(source);
-  if (
-    !isRecord(value) ||
-    value.version !== 1 ||
-    !isDatabaseThread(value) ||
-    !Number.isSafeInteger(value.writtenAt) ||
-    Number(value.writtenAt) < 0
-  ) {
+  try {
+    const value = parseSharedThreadRecord(source);
+    return { ...copyThread(value), version: 1, writtenAt: value.writtenAt };
+  } catch {
     return undefined;
   }
-  return {
-    ...copyThread(value),
-    version: 1,
-    writtenAt: Number(value.writtenAt),
-  };
 };
 
 const parsePreviousThread = (value: unknown): DatabaseThread | undefined => {
@@ -317,7 +251,7 @@ const parsePreviousThread = (value: unknown): DatabaseThread | undefined => {
       ? "error"
       : "idle",
   };
-  return isDatabaseThread(candidate) ? copyThread(candidate) : undefined;
+  return isThreadData(candidate) ? copyThread(candidate) : undefined;
 };
 
 const parseSelectionRecord = (source: string): SelectionRecord | undefined => {
@@ -608,7 +542,7 @@ export class ProfileDatabase {
     }
 
     if (change.type === "putThread") {
-      if (!isDatabaseThread(change.thread)) {
+      if (!isThreadData(change.thread)) {
         throw new TypeError("Thread is invalid");
       }
       this.requireThreadOwner(change.thread.workspace);

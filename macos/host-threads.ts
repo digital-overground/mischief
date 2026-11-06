@@ -10,22 +10,11 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 
-import agentConfig from "../shared/agents/config.json";
+import { isAgentId, parseThreadRecord } from "../shared/threads/record.js";
+import type { AgentId, ThreadRecord } from "../shared/threads/record.js";
 import type { HostAcpEvent } from "./host-acp-manager.js";
 
-export interface HostThreadRecord {
-  agentId: keyof typeof agentConfig;
-  createdAt: string;
-  error?: string;
-  id: string;
-  name: string;
-  sessionId?: string;
-  status: "idle" | "running" | "waiting" | "error";
-  updatedAt: string;
-  version: 1;
-  workspace: string;
-  writtenAt: number;
-}
+export type HostThreadRecord = ThreadRecord & { agentId: AgentId };
 
 interface QueuedPrompt {
   id: string;
@@ -43,68 +32,12 @@ interface HostThreadAcp {
   ) => Promise<"cancelled" | "completed">;
 }
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
-const isAgentId = (value: unknown): value is keyof typeof agentConfig =>
-  typeof value === "string" && Object.hasOwn(agentConfig, value);
-const isStatus = (value: unknown): value is HostThreadRecord["status"] =>
-  value === "idle" ||
-  value === "running" ||
-  value === "waiting" ||
-  value === "error";
-// oxlint-disable-next-line complexity -- validates every durable Thread field.
 const parse = (source: string): HostThreadRecord => {
-  const value: unknown = JSON.parse(source);
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("version" in value) ||
-    value.version !== 1 ||
-    !("id" in value) ||
-    typeof value.id !== "string" ||
-    !UUID.test(value.id) ||
-    !("agentId" in value) ||
-    !isAgentId(value.agentId) ||
-    !("workspace" in value) ||
-    typeof value.workspace !== "string" ||
-    !path.isAbsolute(value.workspace) ||
-    ("sessionId" in value &&
-      (typeof value.sessionId !== "string" || value.sessionId.length === 0)) ||
-    !("name" in value) ||
-    typeof value.name !== "string" ||
-    value.name.length === 0 ||
-    value.name.length > 200 ||
-    !("createdAt" in value) ||
-    typeof value.createdAt !== "string" ||
-    !Number.isFinite(Date.parse(value.createdAt)) ||
-    !("updatedAt" in value) ||
-    typeof value.updatedAt !== "string" ||
-    !Number.isFinite(Date.parse(value.updatedAt)) ||
-    !("status" in value) ||
-    !isStatus(value.status) ||
-    !("writtenAt" in value) ||
-    !Number.isSafeInteger(value.writtenAt) ||
-    ("error" in value && typeof value.error !== "string")
-  ) {
-    throw new Error("Invalid Host Thread record");
+  const record = parseThreadRecord(source);
+  if (record.agentId === undefined) {
+    throw new Error("Host Thread record has no Agent");
   }
-  const record: HostThreadRecord = {
-    agentId: value.agentId,
-    createdAt: value.createdAt,
-    id: value.id,
-    name: value.name,
-    status: value.status,
-    updatedAt: value.updatedAt,
-    version: 1,
-    workspace: value.workspace,
-    writtenAt: Number(value.writtenAt),
-  };
-  if ("error" in value && typeof value.error === "string") {
-    record.error = value.error;
-  }
-  if ("sessionId" in value && typeof value.sessionId === "string") {
-    record.sessionId = value.sessionId;
-  }
-  return record;
+  return { ...record, agentId: record.agentId };
 };
 
 /** Owns durable Thread identity and maps it to the Host's ACP sessions. */

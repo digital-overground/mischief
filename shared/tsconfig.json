@@ -1,0 +1,7 @@
+{
+  "extends": "../vscode-extension/tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["threads/*.ts"]
+}
