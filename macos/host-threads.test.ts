@@ -7,7 +7,12 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { HostThreads } from "./host-threads";
 
 const roots: string[] = [];
-const acpSession = (sessionId: string): { sessionId: string } => ({
+const acpSession = (sessionId: string) => ({
+  operations: {
+    branchSummary: false,
+    forkMessage: false,
+    treeNavigation: false,
+  },
   sessionId,
 });
 const deferred = <T>(): {
@@ -87,7 +92,7 @@ describe("Host Threads", () => {
   test("cancels while a failed Thread is recreating its session", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "mischief-host-threads-"));
     roots.push(root);
-    const session = deferred<{ sessionId: string }>();
+    const session = deferred<ReturnType<typeof acpSession>>();
     let creates = 0;
     let prompts = 0;
     const threads = await HostThreads.open(

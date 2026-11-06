@@ -205,7 +205,16 @@ const command = (
         reply({ requestId, type: "result", value });
       })
       .catch((error: unknown) => {
-        reply({ error: errorMessage(error), requestId, type: "result" });
+        reply({
+          ...(typeof error === "object" &&
+          error !== null &&
+          "authentication" in error
+            ? { authentication: error.authentication }
+            : {}),
+          error: errorMessage(error),
+          requestId,
+          type: "result",
+        });
       });
   };
   const agentId = "agentId" in message ? message.agentId : undefined;
@@ -226,6 +235,36 @@ const command = (
           throw new TypeError("Invalid Agent install request");
         }
         return await installer.install(agentId);
+      });
+      break;
+    }
+    case "agentAuthenticate": {
+      const methodId = "methodId" in message ? message.methodId : undefined;
+      respond(async () => {
+        if (
+          !acp ||
+          typeof agentId !== "string" ||
+          typeof methodId !== "string" ||
+          methodId.length > 256
+        ) {
+          throw new TypeError("Invalid Agent authentication request");
+        }
+        await acp.authenticate(agentId, methodId);
+        return {};
+      });
+      break;
+    }
+    case "agentHistory": {
+      respond(async () => {
+        if (
+          !acp ||
+          typeof agentId !== "string" ||
+          typeof cwd !== "string" ||
+          cwd.length > 4096
+        ) {
+          throw new TypeError("Invalid Agent history request");
+        }
+        return await acp.history(agentId, cwd);
       });
       break;
     }

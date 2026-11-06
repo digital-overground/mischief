@@ -20,6 +20,7 @@ import type {
   AgentConnection,
   AgentConnectionFactory,
   AgentHandlers,
+  AgentHistoryEntry,
   AgentPromptResult,
   AgentSession,
   PromptImage,
@@ -39,6 +40,11 @@ interface HostThread {
   configOptions?: unknown[] | null;
   error?: string;
   id: string;
+  operations?: {
+    branchSummary: boolean;
+    forkMessage: boolean;
+    treeNavigation: boolean;
+  };
   sessionId?: string;
   workspace: string;
 }
@@ -50,6 +56,27 @@ interface PendingPrompt {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
+
+const hostOperations = (
+  value: unknown
+): HostThread["operations"] | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (
+    !isRecord(value) ||
+    typeof value.branchSummary !== "boolean" ||
+    typeof value.forkMessage !== "boolean" ||
+    typeof value.treeNavigation !== "boolean"
+  ) {
+    throw new Error("Mischief Host returned invalid Agent operations");
+  }
+  return {
+    branchSummary: value.branchSummary,
+    forkMessage: value.forkMessage,
+    treeNavigation: value.treeNavigation,
+  };
+};
 
 const hostThread = (value: unknown): HostThread => {
   if (
@@ -73,6 +100,9 @@ const hostThread = (value: unknown): HostThread => {
       : { configOptions: value.configOptions }),
     ...(value.error === undefined ? {} : { error: value.error }),
     id: value.id,
+    ...(value.operations === undefined
+      ? {}
+      : { operations: hostOperations(value.operations) }),
     ...(value.sessionId === undefined ? {} : { sessionId: value.sessionId }),
     workspace: value.workspace,
   };
@@ -101,7 +131,7 @@ const agentSession = (thread: HostThread): AgentSession => {
   >[0];
   return {
     configOptions: configOptions(rawOptions),
-    operations: {
+    operations: thread.operations ?? {
       branchSummary: false,
       forkMessage: false,
       treeNavigation: false,
@@ -493,6 +523,14 @@ class HostAgentConnection implements AgentConnection {
     return await this.coordinator.waitForPrompt(id);
   }
 
+  async authenticate(methodId: string): Promise<void> {
+    this.requireActive();
+    await this.coordinator.transport.request("agentAuthenticate", {
+      agentId: this.agentId,
+      methodId,
+    });
+  }
+
   async cancel(sessionId: string): Promise<void> {
     this.requireSession(sessionId);
     await this.coordinator.transport.request("threadCancel", {
@@ -500,9 +538,41 @@ class HostAgentConnection implements AgentConnection {
     });
   }
 
-  async history(): Promise<never> {
+  async history(cwd: string): Promise<AgentHistoryEntry[]> {
     this.requireActive();
-    return await unsupported("Agent history");
+    const value = await this.coordinator.transport.request("agentHistory", {
+      agentId: this.agentId,
+      cwd,
+    });
+    if (!Array.isArray(value)) {
+      throw new TypeError("Mischief Host returned invalid Agent history");
+    }
+    return value.map((candidate) => {
+      if (
+        !isRecord(candidate) ||
+        typeof candidate.sessionId !== "string" ||
+        typeof candidate.cwd !== "string" ||
+        (candidate.title !== undefined &&
+          typeof candidate.title !== "string") ||
+        (candidate.updatedAt !== undefined &&
+          typeof candidate.updatedAt !== "string")
+      ) {
+        throw new TypeError("Mischief Host returned invalid Agent history");
+      }
+      return {
+        cwd: candidate.cwd,
+        ...(isRecord(candidate.meta)
+          ? this.coordinator
+              .extension(this.agentId)
+              ?.sessionPreview?.(candidate.meta)
+          : {}),
+        sessionId: candidate.sessionId,
+        ...(candidate.title === undefined ? {} : { title: candidate.title }),
+        ...(candidate.updatedAt === undefined
+          ? {}
+          : { updatedAt: candidate.updatedAt }),
+      };
+    });
   }
 
   async forkMessage(): Promise<never> {

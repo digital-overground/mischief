@@ -46,6 +46,11 @@ class FakeHost {
         workspace: "/work",
       });
     }
+    if (action === "agentHistory") {
+      return await Promise.resolve([
+        { cwd: "/work", sessionId: "old-session", title: "Previous" },
+      ]);
+    }
     if (action === "threadLoad") {
       return await Promise.resolve({
         agentId: "codex-acp",
@@ -156,8 +161,15 @@ describe("Host Agent connection", () => {
           { data: "data", mimeType: "image/png" },
         ]),
         connection.setConfig("session-1", "model", "fast"),
+        connection.authenticate?.("login"),
+        connection.history("/work"),
       ])
-    ).resolves.toStrictEqual([{ stopReason: "completed" }, undefined]);
+    ).resolves.toStrictEqual([
+      { stopReason: "completed" },
+      undefined,
+      undefined,
+      [{ cwd: "/work", sessionId: "old-session", title: "Previous" }],
+    ]);
   });
 
   test("loads only Threads present in the Host snapshot", async () => {

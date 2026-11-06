@@ -15,6 +15,7 @@ import { HostAcpConnection } from "./host-acp.js";
 import type {
   HostAcpSession,
   HostAgentLaunch,
+  HostHistoryEntry,
   HostPromptImage,
 } from "./host-acp.js";
 
@@ -114,9 +115,19 @@ export class HostAcpManager {
     this.emit = emit;
   }
 
+  async authenticate(agentId: string, methodId: string): Promise<void> {
+    const connection = await this.connection(agentId);
+    await connection.authenticate(methodId);
+  }
+
   async create(agentId: string, cwd: string): Promise<HostAcpSession> {
     const connection = await this.connection(agentId);
     return await connection.create(cwd);
+  }
+
+  async history(agentId: string, cwd: string): Promise<HostHistoryEntry[]> {
+    const connection = await this.connection(agentId);
+    return await connection.history(cwd);
   }
 
   async load(

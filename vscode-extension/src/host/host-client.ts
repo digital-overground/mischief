@@ -27,6 +27,42 @@ interface PendingRequest {
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+const authentication = (
+  value: unknown
+): Record<string, unknown> | undefined => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("label" in value) ||
+    typeof value.label !== "string"
+  ) {
+    return undefined;
+  }
+  if ("methodId" in value && typeof value.methodId === "string") {
+    return { label: value.label, methodId: value.methodId };
+  }
+  const env = "env" in value ? value.env : undefined;
+  if (
+    !("command" in value) ||
+    typeof value.command !== "string" ||
+    !("args" in value) ||
+    !Array.isArray(value.args) ||
+    !value.args.every((argument) => typeof argument === "string") ||
+    (env !== undefined &&
+      (typeof env !== "object" ||
+        env === null ||
+        !Object.values(env).every((entry) => typeof entry === "string")))
+  ) {
+    return undefined;
+  }
+  return {
+    args: value.args,
+    command: value.command,
+    ...(env === undefined ? {} : { env }),
+    label: value.label,
+  };
+};
+
 const startLaunchdHost = async (): Promise<void> => {
   if (process.platform !== "darwin") {
     throw new Error("Mischief Host requires macOS");
@@ -194,6 +230,7 @@ export class HostClient {
     }
   }
 
+  // oxlint-disable-next-line complexity -- validates each versioned Host message variant.
   private message(message: unknown): void {
     if (
       typeof message !== "object" ||
@@ -227,7 +264,13 @@ export class HostClient {
       }
       this.requests.delete(message.requestId);
       if ("error" in message && typeof message.error === "string") {
-        pending.reject(new Error(message.error));
+        const error = new Error(message.error);
+        const auth = authentication(
+          "authentication" in message ? message.authentication : undefined
+        );
+        pending.reject(
+          auth ? Object.assign(error, { authentication: auth }) : error
+        );
       } else {
         pending.resolve("value" in message ? message.value : undefined);
       }

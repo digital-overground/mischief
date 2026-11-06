@@ -48,7 +48,7 @@ const serve = async (
         ) {
           if (message.action === "fail") {
             socket.write(
-              `${JSON.stringify({ error: "Expected failure", requestId: message.requestId, type: "result" })}\n`
+              `${JSON.stringify({ authentication: { label: "Log in", methodId: "login" }, error: "Expected failure", requestId: message.requestId, type: "result" })}\n`
             );
           } else if (message.action !== "wait") {
             socket.write(
@@ -107,7 +107,15 @@ describe("Host client", () => {
         starts: 1,
       });
       await expect(client.request("ping")).resolves.toStrictEqual({ ok: true });
-      await expect(client.request("fail")).rejects.toThrow("Expected failure");
+      const failure = await client
+        .request("fail")
+        .catch((error: unknown) =>
+          error instanceof Error ? error : new Error(String(error))
+        );
+      expect(failure).toMatchObject({
+        authentication: { label: "Log in", methodId: "login" },
+        message: "Expected failure",
+      });
     } finally {
       client.close();
     }

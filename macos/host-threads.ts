@@ -19,6 +19,10 @@ import type { AgentId, ThreadRecord } from "../shared/threads/record.js";
 import type { HostAcpEvent } from "./host-acp-manager.js";
 
 export type HostThreadRecord = ThreadRecord & { agentId: AgentId };
+type HostThreadSession = HostThreadRecord & {
+  configOptions?: unknown[] | null;
+  operations?: HostOperations;
+};
 
 interface PromptImage {
   data: string;
@@ -31,8 +35,15 @@ interface QueuedPrompt {
   text: string;
 }
 
+interface HostOperations {
+  branchSummary: boolean;
+  forkMessage: boolean;
+  treeNavigation: boolean;
+}
+
 interface HostAcpSession {
   configOptions?: unknown[] | null;
+  operations: HostOperations;
   sessionId: string;
 }
 
@@ -75,6 +86,7 @@ export class HostThreads {
   private readonly cancelled = new Set<string>();
   private readonly configOptions = new Map<string, unknown[] | null>();
   private readonly loaded = new Set<string>();
+  private readonly operations = new Map<string, HostOperations>();
   // shortcut: queued text is lost on Host crash, persist drafts if crash recovery must preserve queues.
   private readonly queues = new Map<string, QueuedPrompt[]>();
   private readonly records = new Map<string, HostThreadRecord>();
@@ -146,7 +158,7 @@ export class HostThreads {
     agentId: string,
     workspace: string,
     requestedId?: string
-  ): Promise<HostThreadRecord & { configOptions?: unknown[] | null }> {
+  ): Promise<HostThreadSession> {
     if (
       !isAgentId(agentId) ||
       !path.isAbsolute(workspace) ||
@@ -175,7 +187,7 @@ export class HostThreads {
     try {
       const session = await this.acp.create(agentId, workspace);
       record.sessionId = session.sessionId;
-      this.rememberConfig(record.id, session.configOptions);
+      this.rememberSession(record.id, session);
       this.loaded.add(record.id);
       await this.update(record, "idle");
     } catch (error) {
@@ -185,17 +197,10 @@ export class HostThreads {
         error instanceof Error ? error.message : String(error)
       );
     }
-    return {
-      ...record,
-      ...(this.configOptions.has(record.id)
-        ? { configOptions: this.configOptions.get(record.id) }
-        : {}),
-    };
+    return this.sessionRecord(record);
   }
 
-  async load(
-    threadId: string
-  ): Promise<HostThreadRecord & { configOptions?: unknown[] | null }> {
+  async load(threadId: string): Promise<HostThreadSession> {
     const record = this.require(threadId);
     if (record.sessionId === undefined) {
       throw new Error("Thread has no Agent session; retry its prompt instead");
@@ -204,12 +209,7 @@ export class HostThreads {
     if (record.status === "error") {
       await this.update(record, "idle");
     }
-    return {
-      ...record,
-      ...(this.configOptions.has(record.id)
-        ? { configOptions: this.configOptions.get(record.id) }
-        : {}),
-    };
+    return this.sessionRecord(record);
   }
 
   async prompt(
@@ -317,13 +317,23 @@ export class HostThreads {
     return record;
   }
 
-  private rememberConfig(
-    threadId: string,
-    options: unknown[] | null | undefined
-  ): void {
-    if (options !== undefined) {
-      this.configOptions.set(threadId, options);
+  private sessionRecord(record: HostThreadRecord): HostThreadSession {
+    return {
+      ...record,
+      ...(this.configOptions.has(record.id)
+        ? { configOptions: this.configOptions.get(record.id) }
+        : {}),
+      ...(this.operations.has(record.id)
+        ? { operations: this.operations.get(record.id) }
+        : {}),
+    };
+  }
+
+  private rememberSession(threadId: string, session: HostAcpSession): void {
+    if (session.configOptions !== undefined) {
+      this.configOptions.set(threadId, session.configOptions);
     }
+    this.operations.set(threadId, session.operations);
   }
 
   private async ensureLoaded(record: HostThreadRecord): Promise<void> {
@@ -338,7 +348,7 @@ export class HostThreads {
       record.sessionId,
       record.workspace
     );
-    this.rememberConfig(record.id, session.configOptions);
+    this.rememberSession(record.id, session);
     this.loaded.add(record.id);
   }
 
@@ -361,7 +371,7 @@ export class HostThreads {
             );
             ({ sessionId } = session);
             record.sessionId = sessionId;
-            this.rememberConfig(record.id, session.configOptions);
+            this.rememberSession(record.id, session);
             this.loaded.add(record.id);
           } else {
             await this.ensureLoaded(record);

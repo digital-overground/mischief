@@ -41,7 +41,11 @@ const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", 
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
-    send({ id: message.id, result: { agentCapabilities: { loadSession: true, promptCapabilities: { image: true } }, protocolVersion: 1 } });
+    send({ id: message.id, result: { agentCapabilities: { loadSession: true, promptCapabilities: { embeddedContext: true, image: true }, sessionCapabilities: { list: {} } }, authMethods: [{ id: "login", name: "Log in", type: "agent" }], protocolVersion: 1 } });
+  } else if (message.method === "authenticate") {
+    send({ id: message.id, result: {} });
+  } else if (message.method === "session/list") {
+    send({ id: message.id, result: { sessions: [{ cwd: message.params.cwd, sessionId: "old-session", title: "Previous" }] } });
   } else if (message.method === "session/new") {
     send({ id: message.id, result: { sessionId: "session-1" } });
   } else if (message.method === "session/load") {
@@ -49,8 +53,8 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   } else if (message.method === "session/set_config_option") {
     send({ id: message.id, result: {} });
   } else if (message.method === "session/prompt") {
-    if (message.params.prompt[0]?.text === "Hello image" && message.params.prompt[1]?.type !== "image") {
-      send({ id: message.id, error: { code: -32602, message: "Missing image" } });
+    if (message.params.prompt[0]?.text?.startsWith("Hello image") && (message.params.prompt[1]?.type !== "image" || message.params.prompt[2]?.type !== "resource")) {
+      send({ id: message.id, error: { code: -32602, message: "Missing image or context" } });
       return;
     }
     promptId = message.id;
@@ -79,6 +83,7 @@ describe("Host ACP connection", () => {
     roots.push(root);
     const script = path.join(root, "fake-agent.mjs");
     await writeFile(script, fakeAgent);
+    await writeFile(path.join(root, "context.txt"), "context");
     const updates: { sessionId: string; update: SessionUpdate }[] = [];
     const pendingPermission = deferred<RequestPermissionResponse>();
     const connection = new HostAcpConnection(
@@ -96,12 +101,19 @@ describe("Host ACP connection", () => {
     );
     try {
       const session = await connection.create(root);
-      expect(session.sessionId).toBe("session-1");
+      await connection.authenticate("login");
+      expect({
+        history: await connection.history(root),
+        sessionId: session.sessionId,
+      }).toStrictEqual({
+        history: [{ cwd: root, sessionId: "old-session", title: "Previous" }],
+        sessionId: "session-1",
+      });
       await connection.load(session.sessionId, root);
       await connection.setConfig(session.sessionId, "model", "fast");
       let finished = false;
       const prompt = connection
-        .prompt(session.sessionId, "Hello image", [
+        .prompt(session.sessionId, "Hello image @context.txt", [
           { data: "aGVsbG8=", mimeType: "image/png" },
         ])
         .then((result) => {
