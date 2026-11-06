@@ -57,9 +57,15 @@ describe("Host Threads", () => {
       },
       () => {}
     );
-    const created = await threads.create("magpi-acp", "/workspace");
+    const requestedId = "123e4567-e89b-4d3a-a456-426614174000";
+    const created = await threads.create(
+      "magpi-acp",
+      "/workspace",
+      requestedId
+    );
     expect(created).toMatchObject({
       error: "Agent unavailable",
+      id: requestedId,
       status: "error",
     });
     expect(created.sessionId).toBeUndefined();

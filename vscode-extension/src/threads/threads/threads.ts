@@ -1207,7 +1207,10 @@ export class Threads {
   ): Promise<void> {
     try {
       runtime.setup ??= (async () => {
-        const setup = await runtime.connection.create(record.workspace);
+        const setup = await runtime.connection.create(
+          record.workspace,
+          record.id
+        );
         runtime.configOptions = setup.configOptions ?? [];
         runtime.operations = setup.operations;
         this.emit();

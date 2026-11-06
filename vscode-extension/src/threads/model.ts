@@ -179,7 +179,7 @@ export interface AgentHandlers {
 export interface AgentConnection {
   authenticate?: (methodId: string) => Promise<void>;
   cancel: (sessionId: string) => Promise<void>;
-  create: (cwd: string) => Promise<AgentSession>;
+  create: (cwd: string, threadId?: string) => Promise<AgentSession>;
   dispose: () => void;
   forkMessage: (
     sessionId: string,

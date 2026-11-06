@@ -212,7 +212,11 @@ const command = (
         ) {
           throw new TypeError("Invalid Thread create request");
         }
-        return await threads.create(agentId, cwd);
+        return await threads.create(
+          agentId,
+          cwd,
+          typeof threadId === "string" ? threadId : undefined
+        );
       });
       break;
     }

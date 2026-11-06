@@ -179,7 +179,7 @@ const configOptions = (
     };
   });
 
-const permissionRequest = (
+export const permissionRequest = (
   request: RequestPermissionRequest
 ): AgentPermissionRequest => ({
   message: request.toolCall.title ?? "Permission required",
@@ -190,7 +190,7 @@ const permissionRequest = (
   })),
 });
 
-const permissionResponse = (
+export const permissionResponse = (
   response: AgentPermissionResponse
 ): RequestPermissionResponse =>
   "optionId" in response
@@ -467,7 +467,7 @@ const elicitationContent = (
   return content;
 };
 
-const elicitationResponse = (
+export const elicitationResponse = (
   request: Extract<CreateElicitationRequest, { mode: "form" }>,
   response: AgentElicitationResponse
 ): CreateElicitationResponse =>

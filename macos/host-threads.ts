@@ -10,7 +10,11 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 
-import { isAgentId, parseThreadRecord } from "../shared/threads/record.js";
+import {
+  isAgentId,
+  parseThreadRecord,
+  THREAD_UUID_PATTERN,
+} from "../shared/threads/record.js";
 import type { AgentId, ThreadRecord } from "../shared/threads/record.js";
 import type { HostAcpEvent } from "./host-acp-manager.js";
 
@@ -115,15 +119,23 @@ export class HostThreads {
       .map(([threadId]) => this.queueSnapshot(threadId));
   }
 
-  async create(agentId: string, workspace: string): Promise<HostThreadRecord> {
-    if (!isAgentId(agentId) || !path.isAbsolute(workspace)) {
+  async create(
+    agentId: string,
+    workspace: string,
+    requestedId?: string
+  ): Promise<HostThreadRecord> {
+    if (
+      !isAgentId(agentId) ||
+      !path.isAbsolute(workspace) ||
+      (requestedId !== undefined && !THREAD_UUID_PATTERN.test(requestedId))
+    ) {
       throw new TypeError("Invalid new Thread request");
     }
     const now = new Date().toISOString();
     const record: HostThreadRecord = {
       agentId,
       createdAt: now,
-      id: randomUUID(),
+      id: requestedId ?? randomUUID(),
       name: "New Thread",
       status: "running",
       updatedAt: now,
@@ -131,6 +143,9 @@ export class HostThreads {
       workspace,
       writtenAt: Date.now(),
     };
+    if (this.records.has(record.id)) {
+      throw new Error(`Thread already exists: ${record.id}`);
+    }
     this.records.set(record.id, record);
     await this.write(record);
     this.changed();
