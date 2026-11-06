@@ -17,6 +17,9 @@ importers:
 
   macos:
     dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: ^1.4.0
+        version: 1.4.0(zod@4.6.5)
       react:
         specifier: ^19.2.8
         version: 19.2.8

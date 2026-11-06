@@ -6,12 +6,13 @@
     "build": "bash build.sh",
     "test": "vitest run --maxWorkers=2",
     "typecheck": "tsc --noEmit",
-    "format": "oxfmt -c ../vscode-extension/oxfmt.config.ts host.ts host-ownership.ts host-output.ts host.test.ts library.ts library.test.ts page.tsx app.css index.html package.json README.md",
-    "format:check": "oxfmt --check -c ../vscode-extension/oxfmt.config.ts host.ts host-ownership.ts host-output.ts host.test.ts library.ts library.test.ts page.tsx app.css index.html package.json README.md",
-    "lint": "oxlint -c ../vscode-extension/oxlint.config.ts --deny-warnings host.ts host-ownership.ts host-output.ts host.test.ts library.ts library.test.ts page.tsx",
+    "format": "oxfmt -c ../vscode-extension/oxfmt.config.ts host.ts host-acp.ts host-acp-manager.ts host-acp.test.ts host-ownership.ts host-output.ts host.test.ts library.ts library.test.ts page.tsx app.css index.html package.json README.md",
+    "format:check": "oxfmt --check -c ../vscode-extension/oxfmt.config.ts host.ts host-acp.ts host-acp-manager.ts host-acp.test.ts host-ownership.ts host-output.ts host.test.ts library.ts library.test.ts page.tsx app.css index.html package.json README.md",
+    "lint": "oxlint -c ../vscode-extension/oxlint.config.ts --deny-warnings host.ts host-acp.ts host-acp-manager.ts host-acp.test.ts host-ownership.ts host-output.ts host.test.ts library.ts library.test.ts page.tsx",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm build && pnpm test"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^1.4.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
