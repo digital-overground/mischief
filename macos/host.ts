@@ -13,6 +13,7 @@ import type {
 } from "@agentclientprotocol/sdk";
 
 import { HostAcpManager } from "./host-acp-manager.js";
+import { HostAgentInstaller } from "./host-agent-installer.js";
 import { writeClient } from "./host-output.js";
 import {
   acquireHostOwnership,
@@ -150,6 +151,7 @@ const command = (
   message: unknown,
   acp?: HostAcpManager,
   threads?: HostThreads,
+  installer?: HostAgentInstaller,
   reply: (message: unknown) => void = send
 ): void => {
   if (
@@ -181,6 +183,24 @@ const command = (
   const agentId = "agentId" in message ? message.agentId : undefined;
   const cwd = "cwd" in message ? message.cwd : undefined;
   switch (message.action) {
+    case "agentStatus": {
+      respond(async () => {
+        if (!installer) {
+          throw new TypeError("Invalid Agent status request");
+        }
+        return await installer.status();
+      });
+      break;
+    }
+    case "agentInstall": {
+      respond(async () => {
+        if (!installer || typeof agentId !== "string") {
+          throw new TypeError("Invalid Agent install request");
+        }
+        return await installer.install(agentId);
+      });
+      break;
+    }
     case "threadCreate": {
       respond(async () => {
         if (
@@ -350,6 +370,7 @@ const startDaemon = async (): Promise<void> => {
   const profilePath =
     process.env.MISCHIEF_HOST_PROFILE ?? path.join(parent, "profile");
   const releaseProfile = await acquireProfileOwnership(profilePath);
+  const installer = new HostAgentInstaller(profilePath);
   let threads: HostThreads | undefined;
   const acp = new HostAcpManager(profilePath, (event) => {
     if (threads) {
@@ -392,7 +413,7 @@ const startDaemon = async (): Promise<void> => {
         }
         clientPending = clientPending.slice(end + 1);
         if (accepted) {
-          command(message, acp, threads, (response) => {
+          command(message, acp, threads, installer, (response) => {
             writeClient(client, `${JSON.stringify(response)}\n`);
           });
         } else {

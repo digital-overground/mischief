@@ -133,6 +133,13 @@ describe("signed macOS app", () => {
       ]);
       assert.equal(installedStats.mode % 0o1000, 0o700);
       assert.equal(parentStats.mode % 0o1000, 0o700);
+      const npm = path.join(installed, "npm/bin/npm-cli.js");
+      await assert.doesNotReject(stat(npm));
+      const npmVersion = spawn(path.join(installed, "node"), [
+        npm,
+        "--version",
+      ]);
+      assert.equal(await waitForExit(npmVersion), 0);
       const verify = spawn("/usr/bin/codesign", [
         "--verify",
         "--strict",

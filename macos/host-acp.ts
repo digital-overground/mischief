@@ -48,6 +48,10 @@ export class HostAcpConnection {
     this.handlers = handlers;
   }
 
+  async inspect(): Promise<void> {
+    await this.agent();
+  }
+
   async create(cwd: string): Promise<string> {
     const agent = await this.agent();
     const response = await agent.request(methods.agent.session.new, {

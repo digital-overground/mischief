@@ -14,6 +14,11 @@ expected="$(awk -v name="$archive" '$2 == name {print $1}' .cache/SHASUMS256.txt
 [[ -n "$expected" ]] && echo "$expected  .cache/$archive" | shasum -a 256 -c -
 [[ "$(uname -m)" == arm64 ]] || { echo 'arm64 Mac required' >&2; exit 1; }
 tar -xOf ".cache/$archive" "node-$version-darwin-arm64/bin/node" > "$resources/node"
+npm_stage="$(mktemp -d)"
+trap 'rm -rf "$npm_stage"' EXIT
+tar -xzf ".cache/$archive" -C "$npm_stage" "node-$version-darwin-arm64/lib/node_modules/npm"
+rm -rf "$resources/npm"
+mv "$npm_stage/node-$version-darwin-arm64/lib/node_modules/npm" "$resources/npm"
 chmod +x "$resources/node"
 codesign --force --sign "$identity" --options runtime --entitlements node.entitlements "$resources/node"
 PATH="$resources:$PATH" ./node_modules/.bin/esbuild page.tsx --bundle --minify --format=iife --outfile="$resources/page.js"

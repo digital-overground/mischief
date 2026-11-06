@@ -154,6 +154,7 @@ describe("Host ACP connection", () => {
       });
       client.write(
         '{"type":"hello","version":1}\n' +
+          '{"type":"command","action":"agentInstall","agentId":"unknown","requestId":"installUnknown"}\n' +
           '{"type":"command","action":"threadCreate","requestId":"invalid"}\n' +
           '{"type":"command","action":"threadCreate","agentId":"unknown","cwd":"/tmp","requestId":"unknown"}\n' +
           '{"type":"command","action":"threadCreate","agentId":"magpi-acp","cwd":"/tmp","requestId":"create"}\n'
@@ -161,6 +162,9 @@ describe("Host ACP connection", () => {
       await vi.waitFor(() => {
         expect(output).toContain('"requestId":"create"');
       });
+      expect(output).toContain(
+        '"error":"Unknown Agent: unknown","requestId":"installUnknown"'
+      );
       expect(output).toContain(
         '"error":"Invalid Thread create request","requestId":"invalid"'
       );
@@ -211,8 +215,12 @@ describe("Host ACP connection", () => {
             typeof message.interactionId === "string"
         );
       assert.ok(permission);
-      expect(output).toContain('"type":"acpUpdate"');
-      expect(output).toContain(`"threadId":"${created.value.id}"`);
+      expect(output).toMatch(
+        new RegExp(
+          `"type":"acpUpdate"[^\\n]*"threadId":"${created.value.id}"`,
+          "u"
+        )
+      );
       await vi.waitFor(() => {
         expect(output).toContain('"status":"waiting"');
       });
