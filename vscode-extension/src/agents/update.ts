@@ -1,4 +1,4 @@
-import config from "./config.json";
+import config from "../../../shared/agents/config.json";
 
 export const AGENTS = config;
 export type AgentId = keyof typeof AGENTS;

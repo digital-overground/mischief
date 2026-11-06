@@ -116,17 +116,16 @@ describe("Host ACP connection", () => {
     roots.push(root);
     const profilePath = path.join(root, "profile");
     const socketPath = path.join(root, "private", "host.sock");
-    const agentScript = path.join(root, "fake-agent.mjs");
-    await mkdir(profilePath, { mode: 0o700 });
+    const agentRoot = path.join(
+      profilePath,
+      "agents/magpi-acp/versions/1.0.0/node_modules/magpi-acp"
+    );
+    const agentScript = path.join(agentRoot, "dist/index.js");
+    await mkdir(path.dirname(agentScript), { mode: 0o700, recursive: true });
     await writeFile(agentScript, fakeAgent);
     await writeFile(
-      path.join(profilePath, "agents.json"),
-      JSON.stringify({
-        agents: {
-          fake: { args: [agentScript], command: process.execPath },
-        },
-        version: 1,
-      })
+      path.join(profilePath, "agents/magpi-acp/active.json"),
+      JSON.stringify({ version: "1.0.0" })
     );
     const resources = path.join(
       import.meta.dirname,
@@ -156,7 +155,8 @@ describe("Host ACP connection", () => {
       client.write(
         '{"type":"hello","version":1}\n' +
           '{"type":"command","action":"acpCreate","requestId":"invalid"}\n' +
-          '{"type":"command","action":"acpCreate","agentId":"fake","cwd":"/tmp","requestId":"create"}\n'
+          '{"type":"command","action":"acpCreate","agentId":"unknown","cwd":"/tmp","requestId":"unknown"}\n' +
+          '{"type":"command","action":"acpCreate","agentId":"magpi-acp","cwd":"/tmp","requestId":"create"}\n'
       );
       await vi.waitFor(() => {
         expect(output).toContain('"requestId":"create"');
@@ -164,9 +164,12 @@ describe("Host ACP connection", () => {
       expect(output).toContain(
         '"error":"Invalid ACP create request","requestId":"invalid"'
       );
+      expect(output).toContain(
+        '"error":"Unknown Agent: unknown","requestId":"unknown"'
+      );
       expect(output).toContain('"sessionId":"session-1"');
       client.write(
-        '{"type":"command","action":"acpPrompt","agentId":"fake","sessionId":"session-1","text":"Hello","requestId":"prompt"}\n'
+        '{"type":"command","action":"acpPrompt","agentId":"magpi-acp","sessionId":"session-1","text":"Hello","requestId":"prompt"}\n'
       );
       await vi.waitFor(() => {
         expect(output).toContain('"type":"acpPermission"');

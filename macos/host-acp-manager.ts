@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import type {
@@ -10,6 +10,7 @@ import type {
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
 
+import agentConfig from "../shared/agents/config.json";
 import { HostAcpConnection } from "./host-acp.js";
 import type { HostAgentLaunch } from "./host-acp.js";
 
@@ -34,36 +35,53 @@ export type HostAcpEvent =
     }
   | { agentId: string; message: string; type: "acpError" };
 
-const launchFrom = (value: unknown): HostAgentLaunch => {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("command" in value) ||
-    typeof value.command !== "string" ||
-    value.command.length === 0 ||
-    !("args" in value) ||
-    !Array.isArray(value.args) ||
-    !value.args.every((argument) => typeof argument === "string")
-  ) {
-    throw new TypeError("Invalid Host Agent registry entry");
+const VERSION = /^\d+\.\d+\.\d+(?:-[\dA-Za-z.-]+)?$/u;
+type AgentId = keyof typeof agentConfig;
+const isAgentId = (value: string): value is AgentId =>
+  Object.hasOwn(agentConfig, value);
+const launchFrom = async (
+  profilePath: string,
+  agentId: string
+): Promise<HostAgentLaunch> => {
+  if (!isAgentId(agentId)) {
+    throw new Error(`Unknown Agent: ${agentId}`);
   }
-  let env: Record<string, string> | undefined;
-  if ("env" in value) {
-    if (typeof value.env !== "object" || value.env === null) {
-      throw new TypeError("Invalid Host Agent registry environment");
-    }
-    env = {};
-    for (const [name, entry] of Object.entries(value.env)) {
-      if (typeof entry !== "string") {
-        throw new TypeError("Invalid Host Agent registry environment");
-      }
-      env[name] = entry;
-    }
+  const config = agentConfig[agentId];
+  const activePath = path.join(profilePath, "agents", agentId, "active.json");
+  const raw = await readFile(activePath, "utf-8");
+  if (raw.length > 1000) {
+    throw new Error(`Invalid active Agent record: ${agentId}`);
+  }
+  const active: unknown = JSON.parse(raw);
+  if (
+    typeof active !== "object" ||
+    active === null ||
+    !("version" in active) ||
+    typeof active.version !== "string" ||
+    !VERSION.test(active.version)
+  ) {
+    throw new Error(`Invalid active Agent record: ${agentId}`);
+  }
+  const executable = path.join(
+    profilePath,
+    "agents",
+    agentId,
+    "versions",
+    active.version,
+    "node_modules",
+    config.package,
+    config.bin
+  );
+  const executableStat = await stat(executable);
+  if (!executableStat.isFile()) {
+    throw new Error(`Agent installation is incomplete: ${agentId}`);
   }
   return {
-    args: value.args,
-    command: value.command,
-    ...(env ? { env } : {}),
+    args: [executable],
+    command: process.execPath,
+    ...(agentId === "magpi-acp"
+      ? { env: { MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT: "true" } }
+      : {}),
   };
 };
 
@@ -159,31 +177,8 @@ export class HostAcpManager {
     if (existing) {
       return existing;
     }
-    const raw = await readFile(path.join(this.profilePath, "agents.json"), {
-      encoding: "utf-8",
-    });
-    if (raw.length > 1_000_000) {
-      throw new Error("Host Agent registry is too large");
-    }
-    const registry: unknown = JSON.parse(raw);
-    if (
-      typeof registry !== "object" ||
-      registry === null ||
-      !("version" in registry) ||
-      registry.version !== 1 ||
-      !("agents" in registry) ||
-      typeof registry.agents !== "object" ||
-      registry.agents === null
-    ) {
-      throw new Error("Invalid Host Agent registry");
-    }
-    const entry: unknown = Object.entries(registry.agents).find(
-      ([id]) => id === agentId
-    )?.[1];
-    if (entry === undefined) {
-      throw new Error(`Agent is not installed in the Host: ${agentId}`);
-    }
-    const connection = new HostAcpConnection(launchFrom(entry), {
+    const launch = await launchFrom(this.profilePath, agentId);
+    const connection = new HostAcpConnection(launch, {
       elicitation: async (request) =>
         await this.waitForElicitation(agentId, request),
       error: (error) => {
