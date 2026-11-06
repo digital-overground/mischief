@@ -18,6 +18,7 @@ import {
   acquireHostOwnership,
   acquireProfileOwnership,
 } from "./host-ownership.js";
+import { HostThreads } from "./host-threads.js";
 import {
   activateWorkspace,
   deactivateWorkspace,
@@ -148,6 +149,7 @@ const errorMessage = (error: unknown): string =>
 const command = (
   message: unknown,
   acp?: HostAcpManager,
+  threads?: HostThreads,
   reply: (message: unknown) => void = send
 ): void => {
   if (
@@ -177,74 +179,53 @@ const command = (
       });
   };
   const agentId = "agentId" in message ? message.agentId : undefined;
-  const sessionId = "sessionId" in message ? message.sessionId : undefined;
   const cwd = "cwd" in message ? message.cwd : undefined;
   switch (message.action) {
-    case "acpCreate": {
+    case "threadCreate": {
       respond(async () => {
         if (
-          !acp ||
+          !threads ||
           typeof agentId !== "string" ||
           agentId.length > 128 ||
           typeof cwd !== "string" ||
           cwd.length > 4096
         ) {
-          throw new TypeError("Invalid ACP create request");
+          throw new TypeError("Invalid Thread create request");
         }
-        return { sessionId: await acp.create(agentId, cwd) };
+        return await threads.create(agentId, cwd);
       });
       break;
     }
-    case "acpLoad": {
+    case "threadLoad": {
       respond(async () => {
-        if (
-          !acp ||
-          typeof agentId !== "string" ||
-          agentId.length > 128 ||
-          typeof sessionId !== "string" ||
-          sessionId.length > 4096 ||
-          typeof cwd !== "string" ||
-          cwd.length > 4096
-        ) {
-          throw new TypeError("Invalid ACP load request");
+        if (!threads || typeof threadId !== "string") {
+          throw new TypeError("Invalid Thread load request");
         }
-        await acp.load(agentId, sessionId, cwd);
-        return {};
+        return await threads.load(threadId);
       });
       break;
     }
-    case "acpPrompt": {
+    case "threadPrompt": {
       const text = "text" in message ? message.text : undefined;
       respond(async () => {
         if (
-          !acp ||
-          typeof agentId !== "string" ||
-          agentId.length > 128 ||
-          typeof sessionId !== "string" ||
-          sessionId.length > 4096 ||
+          !threads ||
+          typeof threadId !== "string" ||
           typeof text !== "string" ||
           text.length > 1_000_000
         ) {
-          throw new TypeError("Invalid ACP prompt request");
+          throw new TypeError("Invalid Thread prompt request");
         }
-        return {
-          stopReason: await acp.prompt(agentId, sessionId, text),
-        };
+        return { stopReason: await threads.prompt(threadId, text) };
       });
       break;
     }
-    case "acpCancel": {
+    case "threadCancel": {
       respond(async () => {
-        if (
-          !acp ||
-          typeof agentId !== "string" ||
-          agentId.length > 128 ||
-          typeof sessionId !== "string" ||
-          sessionId.length > 4096
-        ) {
-          throw new TypeError("Invalid ACP cancel request");
+        if (!threads || typeof threadId !== "string") {
+          throw new TypeError("Invalid Thread cancel request");
         }
-        await acp.cancel(agentId, sessionId);
+        await threads.cancel(threadId);
         return {};
       });
       break;
@@ -369,7 +350,20 @@ const startDaemon = async (): Promise<void> => {
   const profilePath =
     process.env.MISCHIEF_HOST_PROFILE ?? path.join(parent, "profile");
   const releaseProfile = await acquireProfileOwnership(profilePath);
-  const acp = new HostAcpManager(profilePath, send);
+  let threads: HostThreads | undefined;
+  const acp = new HostAcpManager(profilePath, (event) => {
+    if (threads) {
+      threads.event(event);
+    } else {
+      send(event);
+    }
+  });
+  try {
+    threads = await HostThreads.open(profilePath, acp, send);
+  } catch (error) {
+    await releaseProfile();
+    throw error;
+  }
   let releaseOwnership: (() => Promise<void>) | undefined;
   try {
     releaseOwnership = await acquireHostOwnership(socketPath);
@@ -398,7 +392,7 @@ const startDaemon = async (): Promise<void> => {
         }
         clientPending = clientPending.slice(end + 1);
         if (accepted) {
-          command(message, acp, (response) => {
+          command(message, acp, threads, (response) => {
             writeClient(client, `${JSON.stringify(response)}\n`);
           });
         } else {
@@ -431,6 +425,10 @@ const startDaemon = async (): Promise<void> => {
               `${JSON.stringify({ attention: previous.attention, type: "library", workspaces: previous.workspaces })}\n`
             );
           }
+          writeClient(
+            client,
+            `${JSON.stringify({ threads: threads.snapshot(), type: "threads" })}\n`
+          );
           for (const interaction of acp.pendingEvents()) {
             writeClient(client, `${JSON.stringify(interaction)}\n`);
           }

@@ -154,22 +154,45 @@ describe("Host ACP connection", () => {
       });
       client.write(
         '{"type":"hello","version":1}\n' +
-          '{"type":"command","action":"acpCreate","requestId":"invalid"}\n' +
-          '{"type":"command","action":"acpCreate","agentId":"unknown","cwd":"/tmp","requestId":"unknown"}\n' +
-          '{"type":"command","action":"acpCreate","agentId":"magpi-acp","cwd":"/tmp","requestId":"create"}\n'
+          '{"type":"command","action":"threadCreate","requestId":"invalid"}\n' +
+          '{"type":"command","action":"threadCreate","agentId":"unknown","cwd":"/tmp","requestId":"unknown"}\n' +
+          '{"type":"command","action":"threadCreate","agentId":"magpi-acp","cwd":"/tmp","requestId":"create"}\n'
       );
       await vi.waitFor(() => {
         expect(output).toContain('"requestId":"create"');
       });
       expect(output).toContain(
-        '"error":"Invalid ACP create request","requestId":"invalid"'
+        '"error":"Invalid Thread create request","requestId":"invalid"'
       );
       expect(output).toContain(
-        '"error":"Unknown Agent: unknown","requestId":"unknown"'
+        '"error":"Invalid new Thread request","requestId":"unknown"'
       );
       expect(output).toContain('"sessionId":"session-1"');
+      const created = output
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as unknown)
+        .find(
+          (message): message is { requestId: string; value: { id: string } } =>
+            typeof message === "object" &&
+            message !== null &&
+            "requestId" in message &&
+            message.requestId === "create" &&
+            "value" in message &&
+            typeof message.value === "object" &&
+            message.value !== null &&
+            "id" in message.value &&
+            typeof message.value.id === "string"
+        );
+      assert.ok(created);
       client.write(
-        '{"type":"command","action":"acpPrompt","agentId":"magpi-acp","sessionId":"session-1","text":"Hello","requestId":"prompt"}\n'
+        `${JSON.stringify({
+          action: "threadPrompt",
+          requestId: "prompt",
+          text: "Hello",
+          threadId: created.value.id,
+          type: "command",
+        })}\n`
       );
       await vi.waitFor(() => {
         expect(output).toContain('"type":"acpPermission"');
@@ -189,6 +212,10 @@ describe("Host ACP connection", () => {
         );
       assert.ok(permission);
       expect(output).toContain('"type":"acpUpdate"');
+      expect(output).toContain(`"threadId":"${created.value.id}"`);
+      await vi.waitFor(() => {
+        expect(output).toContain('"status":"waiting"');
+      });
       client.destroy();
 
       const replacement = connect(socketPath);
