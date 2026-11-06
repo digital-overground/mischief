@@ -62,7 +62,6 @@ interface HostAuthentication {
 const MAX_CONTEXT_BYTES = 1_000_000;
 const MAX_CONTEXT_FILES = 20;
 const MAGPI_BRANCH_SUMMARY = "magpi-acp/branch-summary";
-const MAGPI_MESSAGE_ACTIONS = "magpi-acp/message-target-actions";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -102,7 +101,11 @@ export interface HostAcpHandlers {
   permission: (
     request: RequestPermissionRequest
   ) => Promise<RequestPermissionResponse>;
-  update: (sessionId: string, update: SessionUpdate) => void;
+  update: (
+    sessionId: string,
+    update: SessionUpdate,
+    meta?: Record<string, unknown> | null
+  ) => void;
 }
 
 /** One long-lived Agent process shared by every client of the Host. */
@@ -499,7 +502,7 @@ export class HostAcpConnection {
       )
       .onNotification(methods.client.session.update, async ({ params }) => {
         await Promise.resolve();
-        this.handlers.update(params.sessionId, params.update);
+        this.handlers.update(params.sessionId, params.update, params._meta);
       });
     const connection = app.connect(ndJsonStream(output, input));
     this.connection = connection;
@@ -531,14 +534,11 @@ export class HostAcpConnection {
       capabilities?.promptCapabilities?.embeddedContext === true;
     this.supportsHistory = isRecord(capabilities?.sessionCapabilities?.list);
     const meta = isRecord(capabilities?._meta) ? capabilities._meta : undefined;
-    const session = isRecord(capabilities?.sessionCapabilities)
-      ? capabilities.sessionCapabilities
-      : undefined;
     this.operations = {
       branchSummary: meta?.[MAGPI_BRANCH_SUMMARY] === true,
-      forkMessage:
-        isRecord(session?.fork) && meta?.[MAGPI_MESSAGE_ACTIONS] === true,
-      treeNavigation: meta?.[MAGPI_MESSAGE_ACTIONS] === true,
+      // shortcut: Host custom MagPi RPC routing is not implemented yet; keep these controls hidden.
+      forkMessage: false,
+      treeNavigation: false,
     };
   }
 }

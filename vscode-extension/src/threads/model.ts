@@ -43,6 +43,7 @@ export interface AgentPromptResult {
 }
 
 export interface AgentHistoryEntry {
+  owner?: "host";
   sessionId: string;
   cwd: string;
   title?: string;
@@ -205,7 +206,13 @@ export interface AgentConnection {
   ) => Promise<void>;
 }
 
+export interface AgentConnectionContext {
+  owner?: "host";
+  threadId?: string;
+}
+
 export type AgentConnectionFactory = (
   handlers: AgentHandlers,
-  agentId: AgentId
+  agentId: AgentId,
+  context?: AgentConnectionContext
 ) => AgentConnection;

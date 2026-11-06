@@ -18,6 +18,7 @@ import {
 import type { AcpExtension } from "../threads/acp/models";
 import type {
   AgentConnection,
+  AgentConnectionContext,
   AgentConnectionFactory,
   AgentHandlers,
   AgentHistoryEntry,
@@ -147,6 +148,7 @@ class HostAgentCoordinator {
   private readonly extensions?: (agentId: AgentId) => AcpExtension | undefined;
   private readonly interactions = new Set<string>();
   private readonly pending = new Map<string, PendingPrompt>();
+  private readonly surfacedErrors = new Set<string>();
   private readonly threads = new Map<string, HostThread>();
   readonly transport: HostTransport;
 
@@ -161,8 +163,17 @@ class HostAgentCoordinator {
     });
   }
 
-  connection(handlers: AgentHandlers, agentId: AgentId): AgentConnection {
-    const connection = new HostAgentConnection(this, handlers, agentId);
+  connection(
+    handlers: AgentHandlers,
+    agentId: AgentId,
+    context?: AgentConnectionContext
+  ): AgentConnection {
+    const connection = new HostAgentConnection(
+      this,
+      handlers,
+      agentId,
+      context?.threadId
+    );
     this.connections.add(connection);
     return connection;
   }
@@ -200,6 +211,18 @@ class HostAgentCoordinator {
 
   remember(thread: HostThread): void {
     this.threads.set(thread.id, thread);
+  }
+
+  hasThread(id: string): boolean {
+    return this.threads.has(id);
+  }
+
+  surfaceError(thread: HostThread): string | undefined {
+    if (thread.error === undefined || this.surfacedErrors.has(thread.id)) {
+      return undefined;
+    }
+    this.surfacedErrors.add(thread.id);
+    return thread.error;
   }
 
   extension(agentId: AgentId): AcpExtension | undefined {
@@ -472,23 +495,26 @@ class HostAgentConnection implements AgentConnection {
   constructor(
     coordinator: HostAgentCoordinator,
     handlers: AgentHandlers,
-    agentId: AgentId
+    agentId: AgentId,
+    threadId?: string
   ) {
     this.coordinator = coordinator;
     this.handlers = handlers;
     this.agentId = agentId;
+    this.threadId = threadId;
   }
 
   async create(cwd: string, threadId?: string): Promise<AgentSession> {
     this.requireActive();
+    const requestedId = threadId ?? this.threadId;
     const thread = hostThread(
       await this.coordinator.transport.request("threadCreate", {
         agentId: this.agentId,
         cwd,
-        ...(threadId === undefined ? {} : { threadId }),
+        ...(requestedId === undefined ? {} : { threadId: requestedId }),
       })
     );
-    if (threadId !== undefined && thread.id !== threadId) {
+    if (requestedId !== undefined && thread.id !== requestedId) {
       throw new Error("Mischief Host returned another Thread ID");
     }
     this.assign(thread);
@@ -497,13 +523,39 @@ class HostAgentConnection implements AgentConnection {
 
   async load(sessionId: string, cwd: string): Promise<AgentSession> {
     this.requireActive();
-    const known = this.coordinator.threadFor(this.agentId, sessionId, cwd);
+    let known: HostThread;
+    try {
+      known = this.coordinator.threadFor(this.agentId, sessionId, cwd);
+    } catch (error) {
+      if (
+        this.threadId === undefined ||
+        this.coordinator.hasThread(this.threadId)
+      ) {
+        throw error;
+      }
+      known = hostThread(
+        await this.coordinator.transport.request("threadAdopt", {
+          agentId: this.agentId,
+          cwd,
+          sessionId,
+          threadId: this.threadId,
+        })
+      );
+      this.coordinator.remember(known);
+    }
     const thread = hostThread(
       await this.coordinator.transport.request("threadLoad", {
         threadId: known.id,
       })
     );
+    if (thread.id !== known.id) {
+      throw new Error("Mischief Host loaded another Thread ID");
+    }
     this.assign(thread);
+    const hostError = this.coordinator.surfaceError(thread);
+    if (hostError !== undefined) {
+      throw new Error(hostError);
+    }
     return agentSession(thread);
   }
 
@@ -566,6 +618,7 @@ class HostAgentConnection implements AgentConnection {
               .extension(this.agentId)
               ?.sessionPreview?.(candidate.meta)
           : {}),
+        owner: "host",
         sessionId: candidate.sessionId,
         ...(candidate.title === undefined ? {} : { title: candidate.title }),
         ...(candidate.updatedAt === undefined
@@ -641,5 +694,6 @@ export const hostConnectionFactory = (
   extension?: (agentId: AgentId) => AcpExtension | undefined
 ): AgentConnectionFactory => {
   const coordinator = new HostAgentCoordinator(transport, extension);
-  return (handlers, agentId) => coordinator.connection(handlers, agentId);
+  return (handlers, agentId, context) =>
+    coordinator.connection(handlers, agentId, context);
 };

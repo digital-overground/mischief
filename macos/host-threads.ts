@@ -154,6 +154,52 @@ export class HostThreads {
       .map(([threadId]) => this.queueSnapshot(threadId));
   }
 
+  async adopt(
+    agentId: string,
+    workspace: string,
+    threadId: string,
+    sessionId: string
+  ): Promise<HostThreadRecord> {
+    if (
+      !isAgentId(agentId) ||
+      !path.isAbsolute(workspace) ||
+      !THREAD_UUID_PATTERN.test(threadId) ||
+      sessionId.length === 0 ||
+      sessionId.length > 32_768
+    ) {
+      throw new TypeError("Invalid adopted Thread request");
+    }
+    const existing = this.records.get(threadId);
+    if (existing) {
+      if (
+        existing.agentId !== agentId ||
+        existing.workspace !== workspace ||
+        existing.sessionId !== sessionId
+      ) {
+        throw new Error(`Thread already exists: ${threadId}`);
+      }
+      return { ...existing };
+    }
+    const now = new Date().toISOString();
+    const record: HostThreadRecord = {
+      agentId,
+      createdAt: now,
+      id: threadId,
+      name: "Imported Thread",
+      owner: "host",
+      sessionId,
+      status: "idle",
+      updatedAt: now,
+      version: 1,
+      workspace,
+      writtenAt: Date.now(),
+    };
+    this.records.set(threadId, record);
+    await this.write(record);
+    this.changed();
+    return { ...record };
+  }
+
   async create(
     agentId: string,
     workspace: string,
@@ -172,6 +218,7 @@ export class HostThreads {
       createdAt: now,
       id: requestedId ?? randomUUID(),
       name: "New Thread",
+      owner: "host",
       status: "running",
       updatedAt: now,
       version: 1,
@@ -206,9 +253,6 @@ export class HostThreads {
       throw new Error("Thread has no Agent session; retry its prompt instead");
     }
     await this.ensureLoaded(record);
-    if (record.status === "error") {
-      await this.update(record, "idle");
-    }
     return this.sessionRecord(record);
   }
 

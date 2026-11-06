@@ -67,7 +67,18 @@ export interface AgentStatus {
     | "missing";
 }
 
-export class AgentManager {
+export interface AgentService {
+  availableAgents: () => AgentId[];
+  check: (id: AgentId, force?: boolean) => Promise<void>;
+  dispose: () => void;
+  install: (id: AgentId) => Promise<void>;
+  onChange: (listener: (statuses: AgentStatus[]) => void) => () => void;
+  piCli: () => string | undefined;
+  snapshot: () => AgentStatus[];
+  startAutoUpdates: () => void;
+}
+
+export class AgentManager implements AgentService {
   private readonly root: string;
   private readonly extensionPath: string;
   private readonly magpiOverride?: string;

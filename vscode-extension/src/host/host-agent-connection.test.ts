@@ -51,11 +51,20 @@ class FakeHost {
         { cwd: "/work", sessionId: "old-session", title: "Previous" },
       ]);
     }
-    if (action === "threadLoad") {
+    if (action === "threadAdopt") {
       return await Promise.resolve({
         agentId: "codex-acp",
-        id: "thread-2",
-        sessionId: "session-2",
+        id: fields?.threadId,
+        sessionId: fields?.sessionId,
+        workspace: "/work",
+      });
+    }
+    if (action === "threadLoad") {
+      const id = fields?.threadId;
+      return await Promise.resolve({
+        agentId: "codex-acp",
+        id,
+        sessionId: id === THREAD_ID ? "adopted-session" : "session-2",
         workspace: "/work",
       });
     }
@@ -168,8 +177,36 @@ describe("Host Agent connection", () => {
       { stopReason: "completed" },
       undefined,
       undefined,
-      [{ cwd: "/work", sessionId: "old-session", title: "Previous" }],
+      [
+        {
+          cwd: "/work",
+          owner: "host",
+          sessionId: "old-session",
+          title: "Previous",
+        },
+      ],
     ]);
+  });
+
+  test("adopts Host history using the canonical VS Code Thread ID", async () => {
+    const host = new FakeHost();
+    const connection = hostConnectionFactory(host)(handlers(), "codex-acp", {
+      owner: "host",
+      threadId: THREAD_ID,
+    });
+
+    await expect(
+      connection.load("adopted-session", "/work")
+    ).resolves.toMatchObject({ sessionId: "adopted-session" });
+    expect(host.requests).toContainEqual({
+      action: "threadAdopt",
+      fields: {
+        agentId: "codex-acp",
+        cwd: "/work",
+        sessionId: "adopted-session",
+        threadId: THREAD_ID,
+      },
+    });
   });
 
   test("loads only Threads present in the Host snapshot", async () => {

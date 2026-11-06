@@ -3090,7 +3090,7 @@ describe("view provider", () => {
       threads: newThread.mock.calls,
     }).toStrictEqual({ installs: [["codex-acp"]], threads: [["codex-acp"]] });
     expect(vscode.showInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining("automatically update"),
+      expect.stringContaining("updates remain manual"),
       { modal: true },
       "Install"
     );

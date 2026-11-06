@@ -24,6 +24,7 @@ export type HostAcpEvent =
       agentId: string;
       sessionId: string;
       type: "acpUpdate";
+      meta?: Record<string, unknown> | null;
       update: SessionUpdate;
     }
   | {
@@ -231,8 +232,14 @@ export class HostAcpManager {
       },
       permission: async (request) =>
         await this.waitForPermission(agentId, request),
-      update: (sessionId, update) => {
-        this.emit({ agentId, sessionId, type: "acpUpdate", update });
+      update: (sessionId, update, meta) => {
+        this.emit({
+          agentId,
+          ...(meta === undefined ? {} : { meta }),
+          sessionId,
+          type: "acpUpdate",
+          update,
+        });
       },
     });
     this.connections.set(agentId, connection);

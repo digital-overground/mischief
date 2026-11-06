@@ -361,9 +361,10 @@ describe("threads module", () => {
 
   const createThreads = (
     factory: AgentConnectionFactory,
-    preferredAgent: AgentId = "magpi-acp"
+    preferredAgent: AgentId = "magpi-acp",
+    owner?: "host"
   ): Threads => {
-    const threads = new Threads(database, factory, preferredAgent);
+    const threads = new Threads(database, factory, preferredAgent, owner);
     instances.push(threads);
     return threads;
   };
@@ -729,6 +730,25 @@ describe("threads module", () => {
       configOptions: [{ currentValue: "high", id: "thinking" }],
       id: testValue<unknown>(expect.any(String)),
       status: "idle",
+    });
+  });
+
+  test("marks new Host Threads without changing legacy ownership", async () => {
+    const agent = new FakeAgent();
+    const contexts: unknown[] = [];
+    const factory: AgentConnectionFactory = (handlers, id, context) => {
+      contexts.push(context);
+      return agent.factory(handlers, id, context);
+    };
+    const threads = createThreads(factory, "magpi-acp", "host");
+    await threads.openWorkspace("/workspace");
+    await threads.newThread();
+
+    expect({ contexts, stored: database.snapshot().threads[0] }).toMatchObject({
+      contexts: [
+        { owner: "host", threadId: testValue<unknown>(expect.any(String)) },
+      ],
+      stored: { owner: "host" },
     });
   });
 

@@ -268,6 +268,22 @@ const command = (
       });
       break;
     }
+    case "threadAdopt": {
+      const sessionId = "sessionId" in message ? message.sessionId : undefined;
+      respond(async () => {
+        if (
+          !threads ||
+          typeof agentId !== "string" ||
+          typeof cwd !== "string" ||
+          typeof threadId !== "string" ||
+          typeof sessionId !== "string"
+        ) {
+          throw new TypeError("Invalid Thread adoption request");
+        }
+        return await threads.adopt(agentId, cwd, threadId, sessionId);
+      });
+      break;
+    }
     case "threadCreate": {
       respond(async () => {
         if (

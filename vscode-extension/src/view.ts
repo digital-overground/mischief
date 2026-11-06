@@ -22,7 +22,7 @@ import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import * as vscode from "vscode";
 
 import { requestAgentInstall } from "./agents/install";
-import type { AgentManager, AgentStatus } from "./agents/manager";
+import type { AgentService, AgentStatus } from "./agents/manager";
 import { AGENTS, AGENT_IDS, isAgentId } from "./agents/update";
 import type { AgentId } from "./agents/update";
 import { isDefined, isNonEmpty, isNonZero, isRecord } from "./present";
@@ -380,7 +380,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
   private readonly projects: Projects;
   private readonly storage: Pick<vscode.Memento, "get" | "update">;
   private readonly threads: Threads;
-  private readonly agentManager?: AgentManager;
+  private readonly agentManager?: AgentService;
 
   constructor(
     projects: Projects,
@@ -389,7 +389,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
     storage: Pick<vscode.Memento, "get" | "update">,
     database: ProfileDatabase,
     setup?: ThreadSetup,
-    agentManager?: AgentManager
+    agentManager?: AgentService
   ) {
     this.projects = projects;
     this.threads = threads;

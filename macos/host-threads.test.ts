@@ -41,6 +41,40 @@ describe("Host Threads", () => {
     );
   });
 
+  test("adopts an Agent history session under a canonical Thread ID", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "mischief-host-threads-"));
+    roots.push(root);
+    const loads: string[] = [];
+    const threads = await HostThreads.open(
+      root,
+      {
+        cancel: async () => {
+          await Promise.resolve();
+        },
+        create: async () => await Promise.resolve(acpSession("unused")),
+        load: async (_agentId, sessionId) => {
+          loads.push(sessionId);
+          return await Promise.resolve(acpSession(sessionId));
+        },
+        prompt: async () => await Promise.resolve("completed" as const),
+        setConfig: async () => {
+          await Promise.resolve();
+        },
+      },
+      () => {}
+    );
+    const id = "123e4567-e89b-4d3a-a456-426614174001";
+
+    await expect(
+      threads.adopt("codex-acp", "/workspace", id, "history-session")
+    ).resolves.toMatchObject({ id, owner: "host" });
+    await threads.load(id);
+    expect(loads).toStrictEqual(["history-session"]);
+    await expect(
+      threads.adopt("codex-acp", "/other", id, "history-session")
+    ).rejects.toThrow("already exists");
+  });
+
   test("keeps a Thread durable when its first ACP session fails", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "mischief-host-threads-"));
     roots.push(root);
@@ -242,7 +276,7 @@ describe("Host Threads", () => {
     ]);
     await restarted.load(created.id);
     expect(loads).toStrictEqual(["session-1"]);
-    expect(restarted.snapshot()[0]).toMatchObject({ status: "idle" });
+    expect(restarted.snapshot()[0]).toMatchObject({ status: "error" });
     turn.resolve("completed");
     await vi.waitFor(() => {
       expect(threads.snapshot()[0]).toMatchObject({ status: "idle" });

@@ -12,6 +12,7 @@ import type {
 
 export interface ThreadHistoryEntry {
   agentId: AgentId;
+  owner?: "host";
   sessionId: string;
   title: string;
   updatedAt?: string;

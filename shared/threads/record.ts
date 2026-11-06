@@ -4,6 +4,7 @@ import agentConfig from "../agents/config.json";
 
 export type AgentId = keyof typeof agentConfig;
 export type ThreadStatus = "idle" | "running" | "waiting" | "error";
+export type ThreadOwner = "host";
 
 export interface ThreadData {
   agentId?: AgentId;
@@ -12,6 +13,7 @@ export interface ThreadData {
   id: string;
   manualName?: boolean;
   name: string;
+  owner?: ThreadOwner;
   retryHasImages?: boolean;
   retryText?: string;
   sessionId?: string;
@@ -77,6 +79,7 @@ export const isThreadData = (value: unknown): value is ThreadData =>
   isTimestamp(value.createdAt) &&
   isTimestamp(value.updatedAt) &&
   isStatus(value.status) &&
+  (value.owner === undefined || value.owner === "host") &&
   (value.error === undefined || isBoundedString(value.error)) &&
   (value.retryText === undefined || isBoundedString(value.retryText)) &&
   (value.retryHasImages === undefined ||
@@ -92,6 +95,7 @@ export const copyThreadData = (value: ThreadData): ThreadData => ({
   id: value.id,
   ...(value.manualName === undefined ? {} : { manualName: value.manualName }),
   name: value.name,
+  ...(value.owner === undefined ? {} : { owner: value.owner }),
   ...(value.retryHasImages === undefined
     ? {}
     : { retryHasImages: value.retryHasImages }),

@@ -1,15 +1,15 @@
 import * as vscode from "vscode";
 
-import type { AgentManager } from "./manager";
+import type { AgentService } from "./manager";
 import { AGENTS } from "./update";
 import type { AgentId } from "./update";
 
 export const requestAgentInstall = async (
-  manager: AgentManager,
+  manager: AgentService,
   id: AgentId
 ): Promise<boolean> => {
   const approved = await vscode.window.showInformationMessage(
-    `Install ${AGENTS[id].name} (${AGENTS[id].package}) into Mischief-owned storage? After this first approval, Mischief will automatically update it for new connections. Running Threads keep their current Agent process.`,
+    `Install ${AGENTS[id].name} (${AGENTS[id].package}) into Mischief-owned storage? Agent updates remain manual while active-turn-safe staging is being completed.`,
     { modal: true },
     "Install"
   );

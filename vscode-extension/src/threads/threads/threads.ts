@@ -73,6 +73,7 @@ interface StoredThread {
   workspace: string;
   sessionId?: string;
   name: string;
+  owner?: "host";
   createdAt: string;
   updatedAt: string;
   status: ThreadStatus;
@@ -167,15 +168,18 @@ export class Threads {
   private draftAgentExplicit = false;
   private draftMessages: string[] = [];
   private preferredAgent?: AgentId;
+  private readonly newThreadOwner?: "host";
 
   constructor(
     database: ProfileDatabase,
     createConnection: AgentConnectionFactory,
-    preferredAgent?: AgentId
+    preferredAgent?: AgentId,
+    newThreadOwner?: "host"
   ) {
     this.createConnection = createConnection;
     this.database = database;
     this.preferredAgent = preferredAgent;
+    this.newThreadOwner = newThreadOwner;
     this.draftAgentId = preferredAgent;
     this.stored = database
       .snapshot()
@@ -282,6 +286,7 @@ export class Threads {
             ? { preview: entry.preview, previewRole: entry.previewRole }
             : {}),
           agentId,
+          ...(entry.owner === undefined ? {} : { owner: entry.owner }),
           sessionId: entry.sessionId,
           title:
             entry.title !== undefined && entry.title.trim().length > 0
@@ -326,6 +331,7 @@ export class Threads {
       createdAt: now,
       id: randomUUID(),
       name: entry.title,
+      ...(entry.owner === undefined ? {} : { owner: entry.owner }),
       sessionId: entry.sessionId,
       status: "idle",
       updatedAt: entry.updatedAt ?? now,
@@ -375,6 +381,9 @@ export class Threads {
       createdAt: now,
       id: randomUUID(),
       name: "New Thread",
+      ...(this.newThreadOwner === undefined
+        ? {}
+        : { owner: this.newThreadOwner }),
       status: "idle",
       updatedAt: now,
       workspace: this.workspace,
@@ -524,6 +533,9 @@ export class Threads {
         createdAt: now,
         id: randomUUID(),
         name: "New Thread",
+        ...(this.newThreadOwner === undefined
+          ? {}
+          : { owner: this.newThreadOwner }),
         retryText: message,
         status: "idle",
         updatedAt: now,
@@ -865,6 +877,7 @@ export class Threads {
         createdAt: now,
         id: randomUUID(),
         name: `${record.name} (fork)`,
+        ...(record.owner === undefined ? {} : { owner: record.owner }),
         sessionId: setup.sessionId,
         status: "idle",
         updatedAt: now,
@@ -1298,7 +1311,11 @@ export class Threads {
             this.handleUpdate(record, update);
           },
         },
-        record.agentId
+        record.agentId,
+        {
+          ...(record.owner === undefined ? {} : { owner: record.owner }),
+          threadId: record.id,
+        }
       ),
       drafts: [],
       items: [],

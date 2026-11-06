@@ -156,6 +156,7 @@ const copyThread = (thread: DatabaseThread): DatabaseThread => ({
   id: thread.id,
   ...(thread.manualName === undefined ? {} : { manualName: thread.manualName }),
   name: thread.name,
+  ...(thread.owner === undefined ? {} : { owner: thread.owner }),
   ...(thread.retryText === undefined ? {} : { retryText: thread.retryText }),
   ...(thread.retryHasImages === true ? { retryHasImages: true } : {}),
   ...(thread.sessionId === undefined ? {} : { sessionId: thread.sessionId }),

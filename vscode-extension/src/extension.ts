@@ -4,8 +4,12 @@ import * as vscode from "vscode";
 
 import { requestAgentInstall } from "./agents/install";
 import { AgentManager } from "./agents/manager";
+import type { AgentService } from "./agents/manager";
 import { AGENTS, AGENT_IDS, isAgentId } from "./agents/update";
 import type { AgentId } from "./agents/update";
+import { hostConnectionFactory } from "./host/host-agent-connection";
+import { HostAgentService } from "./host/host-agent-service";
+import { HostClient } from "./host/host-client";
 import { isNonEmpty } from "./present";
 import {
   ProfileDatabase,
@@ -16,7 +20,6 @@ import {
   addOnInstallCommand,
   commandExists,
   missingRecommendedAddons,
-  nextSoftwareRequirement,
 } from "./setup";
 import type { SoftwareRequirement } from "./setup";
 import {
@@ -47,7 +50,7 @@ const defaultAgentSetting = (): AgentId | undefined => {
 };
 
 const configuredAvailableAgent = (
-  manager: AgentManager
+  manager: AgentService
 ): AgentId | undefined => {
   const agentId = defaultAgentSetting();
   return agentId !== undefined && manager.availableAgents().includes(agentId)
@@ -56,14 +59,14 @@ const configuredAvailableAgent = (
 };
 
 const softwareSetup = (
-  manager: AgentManager,
+  manager: AgentService,
   storage: vscode.Memento
 ): ThreadSetup => {
   let installingAddons = false;
   let waitingFor: SoftwareRequirement | undefined;
   let selectedAgent = defaultAgentSetting();
   const nextRequirement = (): SoftwareRequirement | undefined =>
-    nextSoftwareRequirement(manager.availableAgents().length > 0);
+    manager.availableAgents().length > 0 ? undefined : "agents";
   const prompt = (agentId?: AgentId): SetupStep | undefined => {
     selectedAgent = agentId ?? selectedAgent;
     const requirement = nextRequirement();
@@ -90,7 +93,7 @@ const softwareSetup = (
       return {
         id: "agents",
         message:
-          "At least one Agent ACP is required. Press Enter to choose MagPi, Claude Agent, or Codex to install in Mischief-owned storage. Subsequent updates are automatic.",
+          "At least one Agent ACP is required. Press Enter to choose MagPi, Claude Agent, or Codex to install in Mischief-owned storage. Updates are currently manual.",
       };
     }
     waitingFor = undefined;
@@ -210,10 +213,28 @@ export const activate = async (
     { log }
   );
   agentManager = manager;
+  const hostClient = await HostClient.connect();
+  const hostAgents = new HostAgentService(hostClient);
+  await hostAgents.refresh();
+  context.subscriptions.push({
+    dispose: () => {
+      hostAgents.dispose();
+      hostClient.close();
+    },
+  });
+  const createHostConnection = hostConnectionFactory(hostClient, (agentId) =>
+    agentId === "magpi-acp" ? magpiAcpExtension : undefined
+  );
   const warnedCapabilities = new Set<string>();
   const threads = new Threads(
     database,
-    (handlers, agentId) => {
+    (handlers, agentId, connectionContext) => {
+      if (
+        connectionContext === undefined ||
+        connectionContext.owner === "host"
+      ) {
+        return createHostConnection(handlers, agentId, connectionContext);
+      }
       try {
         const launch = manager.launch(agentId);
         return acpConnectionFactory(
@@ -250,7 +271,8 @@ export const activate = async (
         )(handlers, agentId);
       }
     },
-    configuredAvailableAgent(manager)
+    configuredAvailableAgent(hostAgents),
+    "host"
   );
   activeThreads = threads;
   const view = new MischiefView(
@@ -259,11 +281,11 @@ export const activate = async (
     context.extensionUri,
     context.globalState,
     database,
-    softwareSetup(manager, context.globalState),
-    manager
+    softwareSetup(hostAgents, context.globalState),
+    hostAgents
   );
-  manager.onChange((statuses) => {
-    threads.setPreferredAgent(configuredAvailableAgent(manager));
+  hostAgents.onChange((statuses) => {
+    threads.setPreferredAgent(configuredAvailableAgent(hostAgents));
     view.forwardAgentStatuses(statuses);
   });
   context.subscriptions.push(output);
@@ -311,14 +333,14 @@ export const activate = async (
         view.configurationChanged();
       }
       if (event.affectsConfiguration("mischief.defaultAgent")) {
-        threads.setPreferredAgent(configuredAvailableAgent(manager));
+        threads.setPreferredAgent(configuredAvailableAgent(hostAgents));
       }
     })
   );
 
   try {
     await view.initialize(folder);
-    manager.startAutoUpdates();
+    hostAgents.startAutoUpdates();
     output.appendLine("Mischief activated");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
