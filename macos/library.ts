@@ -21,6 +21,7 @@ interface WorkspaceRecord {
 }
 interface ThreadRecord {
   id: string;
+  owner?: "host";
   workspace: string;
   name: string;
   status: "idle" | "running" | "waiting" | "error";
@@ -52,6 +53,7 @@ const validThread = (t: unknown, name: string): t is ThreadRecord =>
   typeof t.name === "string" &&
   t.name.length > 0 &&
   t.name.length <= 200 &&
+  (t.owner === undefined || t.owner === "host") &&
   typeof t.updatedAt === "string" &&
   Number.isFinite(Date.parse(t.updatedAt)) &&
   ["idle", "running", "waiting", "error"].includes(String(t.status)) &&
@@ -278,6 +280,8 @@ export const snapshot = async (root = directory) => {
         .map((t) => ({
           id: t.id,
           name: t.name,
+          owner: t.owner,
+
           status: t.status,
           unread: t.unread === true,
           updatedAt: t.updatedAt,

@@ -49,6 +49,7 @@ describe("Default profile database", () => {
         JSON.stringify({
           id,
           name: "Needs help",
+          owner: "host",
           status: "waiting",
           updatedAt: new Date().toISOString(),
           version: 1,
@@ -59,6 +60,7 @@ describe("Default profile database", () => {
       const result = await snapshot(root);
       assert.equal(result.attention, 1);
       assert.equal(result.workspaces[0].threads[0].name, "Needs help");
+      assert.equal(result.workspaces[0].threads[0].owner, "host");
       await selectThread(workspace, id, root);
       const selected: unknown = JSON.parse(
         await readFile(path.join(root, "selections", name), "utf-8")

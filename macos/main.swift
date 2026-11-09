@@ -129,6 +129,7 @@ private func startBackgroundHost(_ host: URL) throws {
 
 private struct LibraryThread: Decodable {
     let id: String
+    let owner: String?
     let name: String
     let status: String
     let unread: Bool
@@ -272,6 +273,10 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
         case "deactivateWorkspace":
             guard let path = body["path"], library?.workspaces?.contains(where: { $0.path == path }) == true else { return }
             send(["type": "command", "action": action, "path": path])
+        case "threadTranscript":
+            guard let threadId = body["threadId"], let requestId = body["requestId"],
+                  library?.workspaces?.contains(where: { $0.threads.contains(where: { $0.id == threadId && $0.owner == "host" }) }) == true else { return }
+            send(["type": "command", "action": action, "threadId": threadId, "requestId": requestId])
         case "openWorkspace", "openThread":
             guard let path = body["path"], library?.workspaces?.contains(where: { $0.path == path }) == true else { return }
             if action == "openThread" {
@@ -327,12 +332,13 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
             }
             pending.append(chunk)
             while let newline = pending.firstIndex(of: 10) {
-                let line = pending.prefix(upTo: newline)
+                let line = Data(pending.prefix(upTo: newline))
                 pending.removeSubrange(...newline)
                 guard let message = try? JSONDecoder().decode(HostMessage.self, from: line) else { continue }
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.host === readable else { return }
                     self.handle(message)
+                    self.forwardHostMessage(line)
                 }
             }
         }
@@ -400,6 +406,11 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
         }
     }
 
+    private func forwardHostMessage(_ data: Data) {
+        guard let webView, let json = String(data: data, encoding: .utf8) else { return }
+        webView.evaluateJavaScript("window.receiveDiagnostic?.(\(json))", completionHandler: nil)
+    }
+
     private func updatePage() {
         guard let webView else { return }
         let state: [String: Any] = ["type": "state", "host": pid == nil ? "stopped" : "running", "pid": pid as Any? ?? NSNull(), "badge": badge, "view": view, "permission": permission]
@@ -411,7 +422,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
         guard let webView, let library, let workspaces = library.workspaces, let attention = library.attention else { return }
         let entries: [[String: Any]] = workspaces.map { workspace in
             ["path": workspace.path, "projectRoot": workspace.projectRoot as Any? ?? NSNull(), "name": workspace.name,
-             "threads": workspace.threads.map { ["id": $0.id, "name": $0.name, "status": $0.status, "unread": $0.unread, "updatedAt": $0.updatedAt] }]
+             "threads": workspace.threads.map { ["id": $0.id, "owner": $0.owner as Any? ?? NSNull(), "name": $0.name, "status": $0.status, "unread": $0.unread, "updatedAt": $0.updatedAt] }]
         }
         let data: [String: Any] = ["type": "library", "workspaces": entries, "attention": attention]
         guard let jsonData = try? JSONSerialization.data(withJSONObject: data), let json = String(data: jsonData, encoding: .utf8) else { return }

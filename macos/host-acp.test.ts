@@ -265,9 +265,19 @@ describe("Host ACP connection", () => {
       replacement.on("data", (chunk: string) => {
         replacementOutput += chunk;
       });
-      replacement.write('{"type":"hello","version":1}\n');
+      replacement.write(
+        `{"type":"hello","version":1}\n${JSON.stringify({
+          action: "threadTranscript",
+          requestId: "transcript",
+          threadId: created.value.id,
+          type: "command",
+        })}\n`
+      );
       await vi.waitFor(() => {
         expect(replacementOutput).toContain(permission.interactionId);
+        expect(replacementOutput).toMatch(
+          /"requestId":"transcript"[^\n]*"text":"working"/u
+        );
       });
       replacement.write(
         `${JSON.stringify({

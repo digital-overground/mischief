@@ -70,6 +70,22 @@ describe("Host Threads", () => {
     ).resolves.toMatchObject({ id, owner: "host" });
     await threads.load(id);
     expect(loads).toStrictEqual(["history-session"]);
+    threads.event({
+      agentId: "codex-acp",
+      sessionId: "history-session",
+      type: "acpUpdate",
+      update: {
+        content: { text: "Restored", type: "text" },
+        sessionUpdate: "agent_message_chunk",
+      },
+    });
+    await expect(threads.transcript(id)).resolves.toMatchObject([
+      {
+        threadId: id,
+        type: "acpUpdate",
+        update: { sessionUpdate: "agent_message_chunk" },
+      },
+    ]);
     await expect(
       threads.adopt("codex-acp", "/other", id, "history-session")
     ).rejects.toThrow("already exists");

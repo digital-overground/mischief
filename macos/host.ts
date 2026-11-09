@@ -328,6 +328,15 @@ const command = (
       });
       break;
     }
+    case "threadTranscript": {
+      respond(async () => {
+        if (!threads || typeof threadId !== "string") {
+          throw new TypeError("Invalid Thread transcript request");
+        }
+        return await threads.transcript(threadId);
+      });
+      break;
+    }
     case "threadSetConfig": {
       const configId = "configId" in message ? message.configId : undefined;
       const value = "value" in message ? message.value : undefined;

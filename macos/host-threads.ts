@@ -90,6 +90,8 @@ export class HostThreads {
   // shortcut: queued text is lost on Host crash, persist drafts if crash recovery must preserve queues.
   private readonly queues = new Map<string, QueuedPrompt[]>();
   private readonly records = new Map<string, HostThreadRecord>();
+  // shortcut: transcript snapshots are in memory until durable transcript storage is introduced.
+  private readonly transcripts = new Map<string, HostAcpEvent[]>();
   private readonly writes = new Map<string, Promise<void>>();
 
   private constructor(
@@ -285,6 +287,12 @@ export class HostThreads {
     });
   }
 
+  async transcript(threadId: string): Promise<HostAcpEvent[]> {
+    const record = this.require(threadId);
+    await this.ensureLoaded(record);
+    return [...(this.transcripts.get(threadId) ?? [])];
+  }
+
   async setConfig(
     threadId: string,
     configId: string,
@@ -350,7 +358,16 @@ export class HostThreads {
         });
       });
     }
-    this.emit(record ? { ...event, threadId: record.id } : event);
+    const outgoing = record ? { ...event, threadId: record.id } : event;
+    if (record && event.type === "acpUpdate") {
+      const transcript = this.transcripts.get(record.id) ?? [];
+      transcript.push(outgoing);
+      if (transcript.length > 10_000) {
+        transcript.shift();
+      }
+      this.transcripts.set(record.id, transcript);
+    }
+    this.emit(outgoing);
   }
 
   private require(threadId: string): HostThreadRecord {

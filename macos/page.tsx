@@ -1,11 +1,14 @@
 /* oxlint-disable unicorn/require-post-message-target-origin -- WebKit's message handler accepts one payload, not window.postMessage's origin */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 import { SvgIcon } from "../shared/icons/icon";
+import { Transcript } from "../shared/webview/transcript/transcript";
+import type { RenderedTranscriptItem } from "../shared/webview/transcript/types";
 
 interface Thread {
   id: string;
+  owner: "host" | null;
   name: string;
   status: string;
   unread: boolean;
@@ -38,10 +41,12 @@ interface Command {
     | "refresh"
     | "openWorkspace"
     | "openThread"
+    | "threadTranscript"
     | "addWorkspace"
     | "deactivateWorkspace";
   path?: string;
   threadId?: string;
+  requestId?: string;
 }
 
 declare global {
@@ -64,6 +69,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isThread = (value: unknown): value is Thread =>
   isRecord(value) &&
   typeof value.id === "string" &&
+  (value.owner === null || value.owner === "host") &&
   typeof value.name === "string" &&
   typeof value.status === "string" &&
   typeof value.unread === "boolean" &&
@@ -92,15 +98,103 @@ const isState = (value: unknown): value is State =>
 const send = (
   action: Command["action"],
   path?: string,
-  threadId?: string
+  threadId?: string,
+  requestId?: string
 ): void => {
   window.webkit.messageHandlers.diagnostic.postMessage({
     action,
     path,
+    requestId,
     threadId,
     type: "command",
   });
 };
+
+const transcriptItem = (event: unknown): RenderedTranscriptItem | undefined => {
+  if (!isRecord(event) || !isRecord(event.update)) {
+    return undefined;
+  }
+  const { update } = event;
+  const { sessionUpdate } = update;
+  if (
+    (sessionUpdate === "user_message_chunk" ||
+      sessionUpdate === "agent_message_chunk" ||
+      sessionUpdate === "agent_thought_chunk") &&
+    isRecord(update.content) &&
+    update.content.type === "text" &&
+    typeof update.content.text === "string"
+  ) {
+    let kind: RenderedTranscriptItem["kind"] = "thought";
+    if (sessionUpdate === "user_message_chunk") {
+      kind = "user";
+    } else if (sessionUpdate === "agent_message_chunk") {
+      kind = "assistant";
+    }
+    const id =
+      typeof update.messageId === "string"
+        ? `${kind}:${update.messageId}`
+        : `${kind}:stream`;
+    return { id, kind, text: update.content.text };
+  }
+  if (
+    (sessionUpdate === "tool_call" || sessionUpdate === "tool_call_update") &&
+    typeof update.toolCallId === "string"
+  ) {
+    return {
+      id: `tool:${update.toolCallId}`,
+      kind: "tool",
+      ...(typeof update.title === "string" ? { title: update.title } : {}),
+      ...(typeof update.status === "string" ? { status: update.status } : {}),
+    };
+  }
+  if (sessionUpdate === "plan" && Array.isArray(update.entries)) {
+    const text = update.entries
+      .filter(
+        (entry): entry is Record<string, unknown> =>
+          isRecord(entry) && typeof entry.content === "string"
+      )
+      .map((entry) =>
+        entry.status === "completed"
+          ? `✓ ${String(entry.content)}`
+          : `• ${String(entry.content)}`
+      )
+      .join("\n");
+    return { id: "plan", kind: "plan", text };
+  }
+  return undefined;
+};
+
+const appendTranscript = (
+  items: RenderedTranscriptItem[],
+  event: unknown
+): RenderedTranscriptItem[] => {
+  const item = transcriptItem(event);
+  if (item === undefined) {
+    return items;
+  }
+  const index = items.findIndex((candidate) => candidate.id === item.id);
+  if (index === -1) {
+    return [...items, item];
+  }
+  const previous = items[index];
+  return items.with(index, {
+    ...previous,
+    ...item,
+    ...(item.kind === "tool"
+      ? {}
+      : { text: `${previous.text ?? ""}${item.text ?? ""}` }),
+  });
+};
+
+const transcriptItems = (events: unknown[]): RenderedTranscriptItem[] => {
+  let items: RenderedTranscriptItem[] = [];
+  for (const event of events) {
+    items = appendTranscript(items, event);
+  }
+  return items;
+};
+
+const ignoreTranscriptAction = (): void => undefined;
 
 interface WorkspaceRowProps {
   workspace: Workspace;
@@ -162,6 +256,9 @@ const App = () => {
   const [state, setState] = useState<State | null>(null);
   const [library, setLibrary] = useState<Library | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [transcript, setTranscript] = useState<RenderedTranscriptItem[]>([]);
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selected;
   useEffect(() => {
     window.selectThread = (_workspace, id) => {
       setSelected(id);
@@ -175,6 +272,19 @@ const App = () => {
         setLibrary(message);
       } else if (isState(message)) {
         setState(message);
+      } else if (
+        isRecord(message) &&
+        message.type === "acpUpdate" &&
+        message.threadId === selectedRef.current
+      ) {
+        setTranscript((current) => appendTranscript(current, message));
+      } else if (
+        isRecord(message) &&
+        message.type === "result" &&
+        message.requestId === `transcript:${selectedRef.current}` &&
+        Array.isArray(message.value)
+      ) {
+        setTranscript(transcriptItems(message.value));
       }
     };
     if (window.pendingLibrary !== undefined) {
@@ -193,6 +303,17 @@ const App = () => {
   const selectedThread = selectedWorkspace?.threads.find(
     (t) => t.id === selected
   );
+  useEffect(() => {
+    setTranscript([]);
+    if (selectedThread?.owner === "host") {
+      send(
+        "threadTranscript",
+        undefined,
+        selectedThread.id,
+        `transcript:${selectedThread.id}`
+      );
+    }
+  }, [selectedThread?.id, selectedThread?.owner]);
   const projects = new Map<string, Workspace[]>();
   for (const workspace of library?.workspaces ?? []) {
     if (workspace.projectRoot !== null) {
@@ -297,18 +418,39 @@ const App = () => {
                     : selectedThread.status}
                 </span>
               </p>
-              <p className="hint">
-                VS Code owns this Thread. Open it there to read, respond, or
-                continue working.
-              </p>
-              <button
-                className="action primary"
-                onClick={() => {
-                  send("openThread", selectedWorkspace.path, selectedThread.id);
-                }}
-              >
-                <SvgIcon kind="chat" /> Open in VS Code ↗
-              </button>
+              {selectedThread.owner === "host" ? (
+                <Transcript
+                  onAction={ignoreTranscriptAction}
+                  onCopied={ignoreTranscriptAction}
+                  onSetupOptionChange={ignoreTranscriptAction}
+                  selected={{
+                    id: selectedThread.id,
+                    items: transcript,
+                    status: selectedThread.status,
+                  }}
+                  selectedSetupOptions={[]}
+                  visibleCount={100}
+                />
+              ) : (
+                <>
+                  <p className="hint">
+                    VS Code owns this legacy Thread. Open it there to read or
+                    continue working.
+                  </p>
+                  <button
+                    className="action primary"
+                    onClick={() => {
+                      send(
+                        "openThread",
+                        selectedWorkspace.path,
+                        selectedThread.id
+                      );
+                    }}
+                  >
+                    <SvgIcon kind="chat" /> Open in VS Code ↗
+                  </button>
+                </>
+              )}
             </>
           ) : (
             <p className="hint">

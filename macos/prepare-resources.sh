@@ -35,6 +35,7 @@ codesign --force --sign "$identity" --options runtime --entitlements node.entitl
 PATH="$resources:$PATH" ./node_modules/.bin/esbuild page.tsx --bundle --minify --format=iife --outfile="$resources/page.js"
 PATH="$resources:$PATH" ./node_modules/.bin/esbuild host.ts --bundle --platform=node --format=esm --outfile="$resources/Host.mjs"
 cp index.html app.css "$resources/"
+cp ../shared/webview/webview.css "$resources/webview.css"
 cp ../shared/theme/tokens.css "$resources/theme.css"
 cp -R ../shared/theme/fonts "$resources/fonts"
 xcrun swift icon.swift ../vscode-extension/media/icon.png "$resources/Mischief.png"
