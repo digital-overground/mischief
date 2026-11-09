@@ -19,6 +19,17 @@ trap 'rm -rf "$npm_stage"' EXIT
 tar -xzf ".cache/$archive" -C "$npm_stage" "node-$version-darwin-arm64/lib/node_modules/npm"
 rm -rf "$resources/npm"
 mv "$npm_stage/node-$version-darwin-arm64/lib/node_modules/npm" "$resources/npm"
+rm -rf "$resources/bin"
+mkdir "$resources/bin"
+for command in npm npx; do
+  cli="$command-cli.js"
+  cat > "$resources/bin/$command" <<EOF
+#!/bin/sh
+root="\$(CDPATH= cd -- "\$(dirname -- "\$0")/.." && pwd)"
+exec "\$root/node" "\$root/npm/bin/$cli" "\$@"
+EOF
+  chmod +x "$resources/bin/$command"
+done
 chmod +x "$resources/node"
 codesign --force --sign "$identity" --options runtime --entitlements node.entitlements "$resources/node"
 PATH="$resources:$PATH" ./node_modules/.bin/esbuild page.tsx --bundle --minify --format=iife --outfile="$resources/page.js"

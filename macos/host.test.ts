@@ -140,6 +140,10 @@ describe("signed macOS app", () => {
         "--version",
       ]);
       assert.equal(await waitForExit(npmVersion), 0);
+      const npxVersion = spawn(path.join(installed, "bin/npx"), ["--version"], {
+        env: { HOME: root, PATH: "/usr/bin:/bin" },
+      });
+      assert.equal(await waitForExit(npxVersion), 0);
       const verify = spawn("/usr/bin/codesign", [
         "--verify",
         "--strict",

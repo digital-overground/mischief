@@ -36,7 +36,9 @@ private func installHost() throws -> URL {
         try files.copyItem(at: resources.appendingPathComponent(name), to: destination)
         try files.setAttributes([.posixPermissions: permissions], ofItemAtPath: destination.path)
     }
-    try files.copyItem(at: resources.appendingPathComponent("npm", isDirectory: true), to: staging.appendingPathComponent("npm", isDirectory: true))
+    for directory in ["bin", "npm"] {
+        try files.copyItem(at: resources.appendingPathComponent(directory, isDirectory: true), to: staging.appendingPathComponent(directory, isDirectory: true))
+    }
     if files.fileExists(atPath: root.path) {
         _ = try files.replaceItemAt(root, withItemAt: staging)
     } else {

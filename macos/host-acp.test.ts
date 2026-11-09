@@ -34,6 +34,7 @@ const deferred = <T>(): {
 };
 
 const fakeAgent = String.raw`
+import { spawnSync } from "node:child_process";
 import readline from "node:readline";
 let promptId;
 let promptSession;
@@ -41,6 +42,11 @@ const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", 
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
+    const npx = spawnSync("npx", ["--version"], { encoding: "utf8" });
+    if (npx.error || npx.status !== 0) {
+      send({ error: { code: -32603, message: "npx unavailable" }, id: message.id });
+      return;
+    }
     send({ id: message.id, result: { agentCapabilities: { loadSession: true, promptCapabilities: { embeddedContext: true, image: true }, sessionCapabilities: { list: {} } }, authMethods: [{ id: "login", name: "Log in", type: "agent" }], protocolVersion: 1 } });
   } else if (message.method === "authenticate") {
     send({ id: message.id, result: {} });
@@ -87,7 +93,11 @@ describe("Host ACP connection", () => {
     const updates: { sessionId: string; update: SessionUpdate }[] = [];
     const pendingPermission = deferred<RequestPermissionResponse>();
     const connection = new HostAcpConnection(
-      { args: [script], command: process.execPath },
+      {
+        args: [script],
+        command: process.execPath,
+        env: { PATH: "/usr/bin:/bin" },
+      },
       {
         elicitation: async () => await Promise.resolve({ action: "cancel" }),
         error: (error) => {

@@ -427,8 +427,21 @@ export class HostAcpConnection {
 
   private async start(): Promise<void> {
     this.disposed = false;
+    const hostDirectory = path.dirname(process.execPath);
+    const inheritedPath = this.launch.env?.PATH ?? process.env.PATH ?? "";
     const child = spawn(this.launch.command, this.launch.args, {
-      env: { ...process.env, ...this.launch.env },
+      env: {
+        ...process.env,
+        ...this.launch.env,
+        PATH: [
+          path.join(hostDirectory, "bin"),
+          path.join(hostDirectory, "npm/bin"),
+          hostDirectory,
+          inheritedPath,
+        ]
+          .filter((entry) => entry.length > 0)
+          .join(path.delimiter),
+      },
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.child = child;
