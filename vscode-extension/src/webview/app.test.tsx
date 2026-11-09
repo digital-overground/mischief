@@ -2952,6 +2952,43 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("keeps expanded running tool output scrolled to its tail", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (state.type !== "state" || !state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    state.threads.selected.items = [
+      {
+        id: "command-live",
+        kind: "tool",
+        output: "line 1",
+        status: "in_progress",
+        title: "pnpm test",
+        toolKind: "execute",
+      },
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    const details =
+      document.querySelector<HTMLDetailsElement>(".tool-operation");
+    const output = details?.querySelector<HTMLPreElement>(".live-tool-output");
+    if (!details || !output) {
+      throw new Error("Missing live tool output");
+    }
+    Object.defineProperty(output, "scrollHeight", {
+      configurable: true,
+      value: 480,
+    });
+    act(() => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle"));
+    });
+    expect(output.scrollTop).toBe(480);
+    await unmount();
+  });
+
   test("opens linked transcript files in the host", async () => {
     const unmount = await renderApp();
     const state = threadState("selected", []);

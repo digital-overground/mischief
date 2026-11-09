@@ -12,8 +12,12 @@ export type TranscriptAction =
 
 export type TranscriptActionHandler = (action: TranscriptAction) => void;
 
+const missingTranscriptActions = (): never => {
+  throw new Error("Transcript actions provider is missing");
+};
+
 export const TranscriptActions = createContext<TranscriptActionHandler>(
-  () => {}
+  missingTranscriptActions
 );
 export const useTranscriptAction = (): TranscriptActionHandler =>
   useContext(TranscriptActions);

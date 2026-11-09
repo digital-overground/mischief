@@ -1,7 +1,12 @@
 /* oxlint-disable unicorn/require-post-message-target-origin -- WebKit's message handler accepts one payload, not window.postMessage's origin */
+import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 
+import {
+  reduceTranscriptUpdate,
+  translateTranscriptUpdate,
+} from "../shared/acp/transcript";
 import { SvgIcon } from "../shared/icons/icon";
 import { Transcript } from "../shared/webview/transcript/transcript";
 import type { RenderedTranscriptItem } from "../shared/webview/transcript/types";
@@ -110,80 +115,22 @@ const send = (
   });
 };
 
-const transcriptItem = (event: unknown): RenderedTranscriptItem | undefined => {
-  if (!isRecord(event) || !isRecord(event.update)) {
-    return undefined;
-  }
-  const { update } = event;
-  const { sessionUpdate } = update;
-  if (
-    (sessionUpdate === "user_message_chunk" ||
-      sessionUpdate === "agent_message_chunk" ||
-      sessionUpdate === "agent_thought_chunk") &&
-    isRecord(update.content) &&
-    update.content.type === "text" &&
-    typeof update.content.text === "string"
-  ) {
-    let kind: RenderedTranscriptItem["kind"] = "thought";
-    if (sessionUpdate === "user_message_chunk") {
-      kind = "user";
-    } else if (sessionUpdate === "agent_message_chunk") {
-      kind = "assistant";
-    }
-    const id =
-      typeof update.messageId === "string"
-        ? `${kind}:${update.messageId}`
-        : `${kind}:stream`;
-    return { id, kind, text: update.content.text };
-  }
-  if (
-    (sessionUpdate === "tool_call" || sessionUpdate === "tool_call_update") &&
-    typeof update.toolCallId === "string"
-  ) {
-    return {
-      id: `tool:${update.toolCallId}`,
-      kind: "tool",
-      ...(typeof update.title === "string" ? { title: update.title } : {}),
-      ...(typeof update.status === "string" ? { status: update.status } : {}),
-    };
-  }
-  if (sessionUpdate === "plan" && Array.isArray(update.entries)) {
-    const text = update.entries
-      .filter(
-        (entry): entry is Record<string, unknown> =>
-          isRecord(entry) && typeof entry.content === "string"
-      )
-      .map((entry) =>
-        entry.status === "completed"
-          ? `✓ ${String(entry.content)}`
-          : `• ${String(entry.content)}`
-      )
-      .join("\n");
-    return { id: "plan", kind: "plan", text };
-  }
-  return undefined;
-};
-
 const appendTranscript = (
   items: RenderedTranscriptItem[],
   event: unknown
 ): RenderedTranscriptItem[] => {
-  const item = transcriptItem(event);
-  if (item === undefined) {
+  if (!isRecord(event) || !isRecord(event.update)) {
     return items;
   }
-  const index = items.findIndex((candidate) => candidate.id === item.id);
-  if (index === -1) {
-    return [...items, item];
+  // The Host forwards values already parsed by the ACP SDK.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the private protocol carries the SDK value unchanged.
+  const update = translateTranscriptUpdate(event.update as SessionUpdate);
+  if (update === undefined) {
+    return items;
   }
-  const previous = items[index];
-  return items.with(index, {
-    ...previous,
-    ...item,
-    ...(item.kind === "tool"
-      ? {}
-      : { text: `${previous.text ?? ""}${item.text ?? ""}` }),
-  });
+  const next = [...items];
+  reduceTranscriptUpdate(next, update);
+  return next;
 };
 
 const transcriptItems = (events: unknown[]): RenderedTranscriptItem[] => {

@@ -16,10 +16,22 @@ export interface RenderedTranscriptItem {
     | "branchSummary";
   text?: string;
   html?: string;
+  allCompleted?: boolean;
+  planEntries?: { content: string; status: string }[];
   images?: TranscriptImage[];
   title?: string;
   status?: string;
-  toolKind?: string;
+  toolKind?:
+    | "read"
+    | "edit"
+    | "delete"
+    | "move"
+    | "search"
+    | "execute"
+    | "think"
+    | "fetch"
+    | "switch_mode"
+    | "other";
   input?: string;
   output?: string;
   locations?: { path: string; line?: number }[];

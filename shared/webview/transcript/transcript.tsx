@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { Icon } from "../../icons/icon";
@@ -147,9 +147,35 @@ const ToolOperationStatus = ({
   return <Icon className={className} kind={icon} title={label} />;
 };
 
-const ToolBody = ({
+const ToolOutput = ({
+  expanded,
   item,
 }: {
+  expanded: boolean;
+  item: RenderedTranscriptItem;
+}): React.JSX.Element | null => {
+  const output = useRef<HTMLPreElement>(null);
+  const running = item.status === "pending" || item.status === "in_progress";
+  useLayoutEffect(() => {
+    if (expanded && running && output.current) {
+      output.current.scrollTop = output.current.scrollHeight;
+    }
+  }, [expanded, item.output, running]);
+  return isNonEmpty(item.output) ? (
+    <div>
+      <b>Output</b>
+      <pre className={running ? "live-tool-output" : undefined} ref={output}>
+        {item.output}
+      </pre>
+    </div>
+  ) : null;
+};
+
+const ToolBody = ({
+  expanded,
+  item,
+}: {
+  expanded: boolean;
   item: RenderedTranscriptItem;
 }): React.JSX.Element => {
   const dispatch = useTranscriptAction();
@@ -158,9 +184,7 @@ const ToolBody = ({
       {isNonEmpty(item.input) ? (
         <LabelledPre label="Input" text={item.input} />
       ) : null}
-      {isNonEmpty(item.output) ? (
-        <LabelledPre label="Output" text={item.output} />
-      ) : null}
+      <ToolOutput expanded={expanded} item={item} />
       {item.locations?.map((location) => (
         <button
           className="link"
@@ -198,18 +222,26 @@ const GenericToolItem = ({
   item,
 }: {
   item: RenderedTranscriptItem;
-}): React.JSX.Element => (
-  <details className="entry tool">
-    <summary>
-      <Icon className="entry-icon" kind="tool" title="Tool" />
-      <span>
-        {nonEmpty(item.title, "Tool call")}
-        {statusLabel(item.status)}
-      </span>
-    </summary>
-    <ToolBody item={item} />
-  </details>
-);
+}): React.JSX.Element => {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <details
+      className="entry tool"
+      onToggle={(event) => {
+        setExpanded(event.currentTarget.open);
+      }}
+    >
+      <summary>
+        <Icon className="entry-icon" kind="tool" title="Tool" />
+        <span>
+          {nonEmpty(item.title, "Tool call")}
+          {statusLabel(item.status)}
+        </span>
+      </summary>
+      <ToolBody expanded={expanded} item={item} />
+    </details>
+  );
+};
 
 const jsonField = (input: string | undefined, field: string): unknown => {
   if (!isNonEmpty(input)) {
@@ -446,8 +478,14 @@ const ToolOperationItem = ({
   item: RenderedTranscriptItem;
 }): React.JSX.Element | null => {
   const operation = toolOperation(item);
+  const [expanded, setExpanded] = useState(false);
   return operation ? (
-    <details className="tool-operation">
+    <details
+      className="tool-operation"
+      onToggle={(event) => {
+        setExpanded(event.currentTarget.open);
+      }}
+    >
       <summary>
         <Icon
           className="entry-icon"
@@ -476,7 +514,7 @@ const ToolOperationItem = ({
         </span>
         <ToolOperationStatus status={item.status} />
       </summary>
-      <ToolBody item={item} />
+      <ToolBody expanded={expanded} item={item} />
     </details>
   ) : null;
 };

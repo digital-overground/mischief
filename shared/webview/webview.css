@@ -1622,6 +1622,11 @@ details.tool-operation > summary::-webkit-details-marker {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.tool-body pre.live-tool-output {
+  min-height: 72px;
+  overscroll-behavior: contain;
+  scroll-behavior: auto;
+}
 .link {
   border: 0;
   padding: 2px 0;

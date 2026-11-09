@@ -28,6 +28,7 @@ import type {
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
 
+import { translateTranscriptUpdate } from "../../../../shared/acp/transcript";
 import { version } from "../../../package.json";
 import { isNonEmpty, isRecord } from "../../present";
 import type {
@@ -40,7 +41,6 @@ import type {
   AgentHandlers,
   AgentPermissionRequest,
   AgentPermissionResponse,
-  AgentToolUpdate,
   AgentUpdate,
   ElicitationField,
   PromptImage,
@@ -132,17 +132,6 @@ export const promptContent = async (
     ))
   );
   return blocks;
-};
-
-const stringify = (value: unknown): string => {
-  if (typeof value === "string") {
-    return value;
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
 };
 
 const configChoice = (option: {
@@ -478,138 +467,24 @@ export const elicitationResponse = (
       }
     : { action: "cancel" };
 
-const toolUpdate = (
-  update: Extract<
-    SessionUpdate,
-    { sessionUpdate: "tool_call" | "tool_call_update" }
-  >
-): AgentToolUpdate => {
-  const diffs = (update.content ?? [])
-    .filter((content) => content.type === "diff")
-    .map((content) => ({
-      path: content.path,
-      ...(content.oldText !== undefined && content.oldText !== null
-        ? { oldText: content.oldText }
-        : {}),
-      newText: content.newText,
-    }));
-  const text = (update.content ?? [])
-    .filter(
-      (content) => content.type === "content" && content.content.type === "text"
-    )
-    .map((content) =>
-      content.type === "content" && content.content.type === "text"
-        ? content.content.text
-        : ""
-    )
-    .join("");
-  const terminalOutput = (
-    update._meta as { terminal_output?: { data?: unknown } } | null | undefined
-  )?.terminal_output?.data;
-  return {
-    ...(update.kind !== undefined && update.kind !== null
-      ? { toolKind: update.kind }
-      : {}),
-    ...(update.title !== undefined && update.title !== null
-      ? { title: update.title }
-      : {}),
-    ...(update.status !== undefined && update.status !== null
-      ? { status: update.status }
-      : {}),
-    ...(update.rawInput === undefined
-      ? {}
-      : { input: stringify(update.rawInput) }),
-    ...(update.rawOutput === undefined
-      ? {}
-      : { output: stringify(update.rawOutput) }),
-    ...(update.locations
-      ? {
-          locations: update.locations.map((location) => ({
-            path: location.path,
-            ...(location.line !== undefined && location.line !== null
-              ? { line: location.line }
-              : {}),
-          })),
-        }
-      : {}),
-    ...(diffs.length ? { diffs } : {}),
-    ...(text ? { output: text } : {}),
-    ...(typeof terminalOutput === "string" ? { terminalOutput } : {}),
-    toolCallId: update.toolCallId,
-  };
-};
-
-const allPlanEntriesCompleted = (entries: { status: string }[]): boolean =>
-  entries.length > 0 && entries.every((entry) => entry.status === "completed");
-
 // oxlint-disable-next-line complexity -- ACP session updates are a protocol union
 export const translateSessionUpdate = (
   update: SessionUpdate,
   meta?: Record<string, unknown> | null,
   extension?: AcpExtension
 ): AgentUpdate | undefined => {
+  const transcript = translateTranscriptUpdate(update, meta, extension);
+  if (transcript !== undefined) {
+    return transcript;
+  }
   switch (update.sessionUpdate) {
-    case "user_message_chunk":
     case "agent_message_chunk":
-    case "agent_thought_chunk": {
-      if (update.content.type !== "text" && update.content.type !== "image") {
-        return undefined;
-      }
-      let kind: "user" | "assistant" | "thought" | "system" | "branchSummary" =
-        "thought";
-      if (update.sessionUpdate === "user_message_chunk") {
-        kind = "user";
-      } else if (
-        update.sessionUpdate === "agent_message_chunk" &&
-        extension?.messageKind?.(update, meta) === "branchSummary"
-      ) {
-        kind = "branchSummary";
-      } else if (update.sessionUpdate === "agent_message_chunk") {
-        kind = "assistant";
-      }
-      return {
-        ...(isNonEmpty(update.messageId)
-          ? { messageId: update.messageId }
-          : {}),
-        kind,
-        ...(update.content.type === "text"
-          ? {
-              text:
-                extension?.visibleMessageText?.(
-                  update.sessionUpdate,
-                  update.content.text
-                ) ?? update.content.text,
-            }
-          : {
-              images: [
-                {
-                  data: update.content.data,
-                  mimeType: update.content.mimeType,
-                },
-              ],
-            }),
-        type: "message",
-      };
-    }
+    case "agent_thought_chunk":
+    case "plan":
     case "tool_call":
-    case "tool_call_update": {
-      return { ...toolUpdate(update), type: "tool" };
-    }
-    case "plan": {
-      return {
-        allCompleted: allPlanEntriesCompleted(update.entries),
-        entries: update.entries.map(({ content, status }) => ({
-          content,
-          status,
-        })),
-        text: update.entries
-          .map(
-            (entry) =>
-              `${entry.status === "completed" ? "✓" : "•"} ${entry.content}`
-          )
-          .join("\n"),
-        type: "plan",
-      };
+    case "tool_call_update":
+    case "user_message_chunk": {
+      return undefined;
     }
     case "usage_update": {
       return { type: "usage", usage: { size: update.size, used: update.used } };

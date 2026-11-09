@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["threads/*.ts"]
+  "include": ["acp/*.ts", "threads/*.ts", "webview/**/*.ts", "webview/**/*.tsx"]
 }
