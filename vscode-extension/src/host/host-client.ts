@@ -18,6 +18,12 @@ export interface HostClientOptions {
 }
 
 export type HostEvent = Record<string, unknown> & { type: string };
+export type HostConnectionState = "connecting" | "connected" | "unreachable";
+
+export interface HostConnectionStatus {
+  message?: string;
+  state: HostConnectionState;
+}
 
 interface PendingRequest {
   reject: (error: Error) => void;
@@ -99,59 +105,51 @@ const openSocket = async (socketPath: string): Promise<Socket> =>
   });
 
 export class HostClient {
+  private automaticReconnect = false;
   private closed = false;
+  private readonly connectionListeners = new Set<
+    (status: HostConnectionStatus) => void
+  >();
+  private connectionStatus: HostConnectionStatus = { state: "connecting" };
   private readonly listeners = new Set<(event: HostEvent) => void>();
+  private readonly options: HostClientOptions;
   private pendingInput = "";
   private readonly queuedEvents: HostEvent[] = [];
+  private reconnecting?: Promise<void>;
   private readonly requests = new Map<string, PendingRequest>();
-  private readonly socket: Socket;
+  private socket?: Socket;
 
-  private constructor(socket: Socket) {
-    this.socket = socket;
-    socket.setEncoding("utf-8");
-    socket.on("data", (chunk: string) => {
-      this.receive(chunk);
-    });
-    socket.on("close", () => {
-      this.disconnected(new Error("Mischief Host disconnected"));
-    });
-    socket.on("error", (error) => {
-      this.disconnected(error);
-    });
+  private constructor(options: HostClientOptions) {
+    this.options = options;
   }
 
   static async connect(options: HostClientOptions = {}): Promise<HostClient> {
-    const socketPath =
-      options.socketPath ??
-      path.join(homedir(), "Library/Application Support/Mischief/host.sock");
-    const timeoutMs = options.timeoutMs ?? 5000;
-    const deadline = Date.now() + timeoutMs;
-    let lastError: unknown;
+    const client = new HostClient(options);
     try {
-      await (options.start ?? startLaunchdHost)();
+      await client.establish(options.timeoutMs ?? 5000);
+      client.automaticReconnect = true;
+      return client;
     } catch (error) {
-      lastError = error;
+      client.close();
+      throw error;
     }
-    while (Date.now() < deadline) {
-      try {
-        const socket = await openSocket(socketPath);
-        const client = new HostClient(socket);
-        try {
-          await client.handshake();
-          return client;
-        } catch (error) {
-          client.close();
-          throw error;
-        }
-      } catch (error) {
-        lastError = error;
-        await delay(50);
-      }
-    }
-    throw new Error(
-      `Could not connect to Mischief Host: ${errorMessage(lastError)}`,
-      { cause: lastError }
-    );
+  }
+
+  static watch(options: HostClientOptions = {}): HostClient {
+    const client = new HostClient(options);
+    client.automaticReconnect = true;
+    client.scheduleReconnect();
+    return client;
+  }
+
+  onConnectionChange(
+    listener: (status: HostConnectionStatus) => void
+  ): () => void {
+    this.connectionListeners.add(listener);
+    listener({ ...this.connectionStatus });
+    return () => {
+      this.connectionListeners.delete(listener);
+    };
   }
 
   onEvent(listener: (event: HostEvent) => void): () => void {
@@ -168,15 +166,16 @@ export class HostClient {
     action: string,
     fields: Record<string, unknown> = {}
   ): Promise<unknown> {
-    if (this.closed) {
-      throw new Error("Mischief Host is disconnected");
+    const { socket } = this;
+    if (this.closed || !socket || this.connectionStatus.state !== "connected") {
+      throw new Error("Mischief Host is unreachable");
     }
     const requestId = randomUUID();
     // oxlint-disable-next-line promise/avoid-new -- the Host result settles this request by ID.
     const result = new Promise<unknown>((resolve, reject) => {
       this.requests.set(requestId, { reject, resolve });
     });
-    this.socket.write(
+    socket.write(
       `${JSON.stringify({ ...fields, action, requestId, type: "command" })}\n`
     );
     return await result;
@@ -187,9 +186,66 @@ export class HostClient {
       return;
     }
     this.closed = true;
-    this.socket.destroy();
+    this.automaticReconnect = false;
+    this.socket?.destroy();
+    this.socket = undefined;
     this.rejectRequests(new Error("Mischief Host client closed"));
     this.listeners.clear();
+    this.connectionListeners.clear();
+  }
+
+  private async establish(timeoutMs: number): Promise<void> {
+    this.setConnectionStatus({ state: "connecting" });
+    const socketPath =
+      this.options.socketPath ??
+      path.join(homedir(), "Library/Application Support/Mischief/host.sock");
+    const deadline = Date.now() + timeoutMs;
+    let lastError: unknown;
+    try {
+      await (this.options.start ?? startLaunchdHost)();
+    } catch (error) {
+      lastError = error;
+    }
+    while (!this.closed && Date.now() < deadline) {
+      try {
+        const socket = await openSocket(socketPath);
+        this.attach(socket);
+        await this.handshake();
+        this.setConnectionStatus({ state: "connected" });
+        return;
+      } catch (error) {
+        lastError = error;
+        this.socket?.destroy();
+        this.socket = undefined;
+        await delay(50);
+      }
+    }
+    const failure = new Error(
+      `Could not connect to Mischief Host: ${errorMessage(lastError)}`,
+      { cause: lastError }
+    );
+    this.setConnectionStatus({
+      message: failure.message,
+      state: "unreachable",
+    });
+    throw failure;
+  }
+
+  private attach(socket: Socket): void {
+    this.socket = socket;
+    this.pendingInput = "";
+    socket.setEncoding("utf-8");
+    socket.on("data", (chunk: string) => {
+      if (this.socket === socket) {
+        this.receive(chunk);
+      }
+    });
+    socket.on("close", () => {
+      this.disconnected(socket, new Error("Mischief Host disconnected"));
+    });
+    socket.on("error", (error) => {
+      this.disconnected(socket, error);
+    });
   }
 
   private async handshake(): Promise<void> {
@@ -197,7 +253,7 @@ export class HostClient {
     const hello = new Promise<unknown>((resolve, reject) => {
       this.requests.set("__hello", { reject, resolve });
     });
-    this.socket.write(
+    this.socket?.write(
       `${JSON.stringify({ type: "hello", version: PROTOCOL_VERSION })}\n`
     );
     await Promise.race([
@@ -211,7 +267,7 @@ export class HostClient {
   private receive(chunk: string): void {
     this.pendingInput += chunk;
     if (this.pendingInput.length > MAX_PENDING_INPUT) {
-      this.socket.destroy(new Error("Mischief Host message exceeded 8 MiB"));
+      this.socket?.destroy(new Error("Mischief Host message exceeded 8 MiB"));
       return;
     }
     let end = this.pendingInput.indexOf("\n");
@@ -222,7 +278,7 @@ export class HostClient {
       try {
         message = JSON.parse(line) as unknown;
       } catch {
-        this.socket.destroy(new Error("Mischief Host sent invalid JSON"));
+        this.socket?.destroy(new Error("Mischief Host sent invalid JSON"));
         return;
       }
       this.message(message);
@@ -238,12 +294,12 @@ export class HostClient {
       !("type" in message) ||
       typeof message.type !== "string"
     ) {
-      this.socket.destroy(new Error("Mischief Host sent an invalid message"));
+      this.socket?.destroy(new Error("Mischief Host sent an invalid message"));
       return;
     }
     if (message.type === "hello") {
       if (!("version" in message) || message.version !== PROTOCOL_VERSION) {
-        this.socket.destroy(new Error("Incompatible Mischief Host protocol"));
+        this.socket?.destroy(new Error("Incompatible Mischief Host protocol"));
         return;
       }
       const handshake = this.requests.get("__hello");
@@ -279,7 +335,7 @@ export class HostClient {
     const event: HostEvent = { ...message, type: message.type };
     if (this.listeners.size === 0) {
       if (this.queuedEvents.length >= 1000) {
-        this.socket.destroy(
+        this.socket?.destroy(
           new Error("Mischief Host sent too many events before subscription")
         );
         return;
@@ -292,12 +348,44 @@ export class HostClient {
     }
   }
 
-  private disconnected(error: Error): void {
-    if (this.closed) {
+  private disconnected(socket: Socket, error: Error): void {
+    if (this.closed || this.socket !== socket) {
       return;
     }
-    this.closed = true;
+    this.socket = undefined;
     this.rejectRequests(error);
+    this.setConnectionStatus({ message: error.message, state: "unreachable" });
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
+    if (!this.automaticReconnect || this.closed || this.reconnecting) {
+      return;
+    }
+    this.reconnecting = (async () => {
+      while (!this.closed && this.connectionStatus.state !== "connected") {
+        try {
+          await this.establish(this.options.timeoutMs ?? 1000);
+        } catch {
+          await delay(1000);
+        }
+      }
+    })().finally(() => {
+      this.reconnecting = undefined;
+    });
+  }
+
+  private setConnectionStatus(status: HostConnectionStatus): void {
+    if (
+      this.connectionStatus.state === status.state &&
+      this.connectionStatus.message === status.message
+    ) {
+      return;
+    }
+    this.connectionStatus = status;
+    for (const listener of this.connectionListeners) {
+      listener({ ...status });
+    }
   }
 
   private rejectRequests(error: Error): void {

@@ -190,6 +190,34 @@ describe("React webview", () => {
     vi.useRealTimers();
   });
 
+  test("blocks the view while the Host is unreachable and clears after reconnect", async () => {
+    const unmount = await renderApp();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent<HostToWebviewMessage>("message", {
+          data: {
+            message: "Host socket unavailable",
+            state: "unreachable",
+            type: "hostConnection",
+          },
+        })
+      );
+    });
+    expect(
+      document.querySelector(".host-connection-overlay")?.textContent
+    ).toContain("Mischief Host is unavailable");
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent<HostToWebviewMessage>("message", {
+          data: { state: "connected", type: "hostConnection" },
+        })
+      );
+    });
+    expect(document.querySelector(".host-connection-overlay")).toBeNull();
+    await unmount();
+  });
+
   test("continues text-based setup when Enter is pressed", async () => {
     const unmount = await renderApp();
     act(() => {

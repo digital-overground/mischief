@@ -62,6 +62,11 @@ export type HostToWebviewMessage =
       operation: ThreadSessionOperation;
     }
   | { type: "contextItems"; items: string[] }
+  | {
+      type: "hostConnection";
+      state: "connecting" | "connected" | "unreachable";
+      message?: string;
+    }
   | { type: "setAllExpanded"; expanded: boolean }
   | { type: "toggleProjectsMenu" }
   | {

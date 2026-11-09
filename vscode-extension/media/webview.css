@@ -2567,3 +2567,36 @@ footer {
   color: var(--vscode-descriptionForeground);
   font-size: 10px;
 }
+.host-connection-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--hl-bg) 94%, transparent);
+  backdrop-filter: blur(4px);
+}
+.host-connection-message {
+  width: min(420px, 100%);
+  padding: 24px;
+  border: 1px solid var(--hl-border);
+  border-radius: 10px;
+  background: var(--hl-bg-alt);
+  box-shadow: 0 12px 40px var(--hl-shadow);
+  text-align: center;
+}
+.host-connection-message h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+.host-connection-message p {
+  margin: 0;
+  color: var(--hl-fg-dim);
+}
+.host-connection-message code {
+  display: block;
+  margin-top: 14px;
+  color: var(--hl-error);
+  overflow-wrap: anywhere;
+}

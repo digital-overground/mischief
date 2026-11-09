@@ -25,6 +25,7 @@ import { requestAgentInstall } from "./agents/install";
 import type { AgentService, AgentStatus } from "./agents/manager";
 import { AGENTS, AGENT_IDS, isAgentId } from "./agents/update";
 import type { AgentId } from "./agents/update";
+import type { HostConnectionStatus } from "./host/host-client";
 import { isDefined, isNonEmpty, isNonZero, isRecord } from "./present";
 import type { ProfileDatabase } from "./profile-database/profile-database";
 import {
@@ -372,6 +373,7 @@ export class MischiefView implements vscode.WebviewViewProvider {
   private readonly database: ProfileDatabase;
   private databaseWorkspaces: string;
   private profileRefresh = Promise.resolve();
+  private hostConnection?: HostConnectionStatus;
   private setupPrompt?: string;
   private setupStep?: SetupStep;
   private setupAgentId?: AgentId;
@@ -957,6 +959,15 @@ export class MischiefView implements vscode.WebviewViewProvider {
     void postMessage?.({
       agents: statuses,
       type: "agents",
+    } satisfies HostToWebviewMessage);
+  }
+
+  forwardHostConnection(status: HostConnectionStatus): void {
+    this.hostConnection = { ...status };
+    const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
+    void postMessage?.({
+      ...status,
+      type: "hostConnection",
     } satisfies HostToWebviewMessage);
   }
 
@@ -1869,6 +1880,12 @@ export class MischiefView implements vscode.WebviewViewProvider {
     }
     const { webview } = this.view;
     const postMessage = webview.postMessage.bind(webview);
+    if (this.hostConnection) {
+      void postMessage({
+        ...this.hostConnection,
+        type: "hostConnection",
+      } satisfies HostToWebviewMessage);
+    }
     return postMessage({
       agentIcons: Object.fromEntries(
         AGENT_IDS.map((id) => [

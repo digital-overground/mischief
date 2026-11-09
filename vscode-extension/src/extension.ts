@@ -213,9 +213,8 @@ export const activate = async (
     { log }
   );
   agentManager = manager;
-  const hostClient = await HostClient.connect();
+  const hostClient = HostClient.watch();
   const hostAgents = new HostAgentService(hostClient);
-  await hostAgents.refresh();
   context.subscriptions.push({
     dispose: () => {
       hostAgents.dispose();
@@ -287,6 +286,12 @@ export const activate = async (
   hostAgents.onChange((statuses) => {
     threads.setPreferredAgent(configuredAvailableAgent(hostAgents));
     view.forwardAgentStatuses(statuses);
+  });
+  hostClient.onConnectionChange((status) => {
+    view.forwardHostConnection(status);
+    if (status.state === "connected") {
+      void hostAgents.refresh();
+    }
   });
   context.subscriptions.push(output);
   registerMischiefView(context, view);

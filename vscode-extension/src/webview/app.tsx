@@ -18,6 +18,10 @@ const initialState: Extract<HostToWebviewMessage, { type: "state" }> = {
 export const App = (): React.JSX.Element => {
   const [snapshot, setSnapshot] = useState(initialState);
   const [contextItems, setContextItems] = useState<string[]>([]);
+  const [hostConnection, setHostConnection] = useState<{
+    message?: string;
+    state: "connecting" | "connected" | "unreachable";
+  }>({ state: "connected" });
   const [expandAllRequest, setExpandAllRequest] = useState(0);
   const [projectsMenuOpen, setProjectsMenuOpen] = useState(false);
   const [threadMaximized, setThreadMaximized] = useState(false);
@@ -31,7 +35,14 @@ export const App = (): React.JSX.Element => {
 
   useEffect(() => {
     const receive = (event: MessageEvent<HostToWebviewMessage>): void => {
-      if (event.data.type === "contextItems") {
+      if (event.data.type === "hostConnection") {
+        setHostConnection({
+          ...(event.data.message === undefined
+            ? {}
+            : { message: event.data.message }),
+          state: event.data.state,
+        });
+      } else if (event.data.type === "contextItems") {
         setContextItems(event.data.items);
       } else if (event.data.type === "toggleProjectsMenu") {
         setProjectsMenuOpen((open) => !open);
@@ -137,6 +148,31 @@ export const App = (): React.JSX.Element => {
       <SettingsDialog icons={snapshot.agentIcons} />
       <ProjectSetupDialog />
       <ButtonTooltip />
+      {hostConnection.state === "connected" ? null : (
+        <div
+          aria-live="assertive"
+          className="host-connection-overlay"
+          role="status"
+        >
+          <div className="host-connection-message">
+            <h2>
+              {hostConnection.state === "connecting"
+                ? "Connecting to Mischief Host…"
+                : "Mischief Host is unavailable"}
+            </h2>
+            <p>
+              {hostConnection.state === "connecting"
+                ? "Your Projects and Threads will return when the connection is ready."
+                : "Reconnecting automatically. Open the Mischief macOS app if the Host is not installed."}
+            </p>
+            {hostConnection.state === "unreachable" &&
+            hostConnection.message !== undefined &&
+            hostConnection.message.length > 0 ? (
+              <code>{hostConnection.message}</code>
+            ) : null}
+          </div>
+        </div>
+      )}
     </>
   );
 };

@@ -121,6 +121,37 @@ describe("Host client", () => {
     }
   });
 
+  test("reconnects and publishes connection state after the Host disconnects", async () => {
+    const { socketPath } = await serve();
+    const client = await HostClient.connect({
+      socketPath,
+      start: async () => {
+        await Promise.resolve();
+      },
+      timeoutMs: 100,
+    });
+    const states: string[] = [];
+    client.onConnectionChange(({ state }) => {
+      states.push(state);
+    });
+
+    sockets[0]?.destroy();
+    await vi.waitFor(() => {
+      expect({ sockets: sockets.length, state: states.at(-1) }).toStrictEqual({
+        sockets: 2,
+        state: "connected",
+      });
+    });
+    await expect(client.request("ping")).resolves.toStrictEqual({ ok: true });
+    expect(states).toStrictEqual([
+      "connected",
+      "unreachable",
+      "connecting",
+      "connected",
+    ]);
+    client.close();
+  });
+
   test("rejects pending requests when the Host disconnects", async () => {
     const { socketPath } = await serve();
     const client = await HostClient.connect({
