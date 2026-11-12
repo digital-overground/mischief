@@ -171,13 +171,17 @@ export class HostClient {
       throw new Error("Mischief Host is unreachable");
     }
     const requestId = randomUUID();
+    const message = `${JSON.stringify({ ...fields, action, requestId, type: "command" })}\n`;
+    if (Buffer.byteLength(message) > MAX_PENDING_INPUT) {
+      throw new Error(
+        "Message is too large to send (8 MB limit). Remove an image or send a smaller one."
+      );
+    }
     // oxlint-disable-next-line promise/avoid-new -- the Host result settles this request by ID.
     const result = new Promise<unknown>((resolve, reject) => {
       this.requests.set(requestId, { reject, resolve });
     });
-    socket.write(
-      `${JSON.stringify({ ...fields, action, requestId, type: "command" })}\n`
-    );
+    socket.write(message);
     return await result;
   }
 

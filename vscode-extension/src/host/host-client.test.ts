@@ -121,6 +121,28 @@ describe("Host client", () => {
     }
   });
 
+  test("rejects oversized messages without disconnecting", async () => {
+    const { socketPath } = await serve();
+    const client = await HostClient.connect({
+      socketPath,
+      start: async () => {
+        await Promise.resolve();
+      },
+    });
+    try {
+      await expect(
+        client.request("threadPrompt", {
+          images: [
+            { data: "a".repeat(8 * 1024 * 1024), mimeType: "image/png" },
+          ],
+        })
+      ).rejects.toThrow("Message is too large to send");
+      await expect(client.request("ping")).resolves.toStrictEqual({ ok: true });
+    } finally {
+      client.close();
+    }
+  });
+
   test("reconnects and publishes connection state after the Host disconnects", async () => {
     const { socketPath } = await serve();
     const client = await HostClient.connect({

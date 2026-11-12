@@ -52,9 +52,15 @@ export const App = (): React.JSX.Element => {
         }
         setThreadMaximized(!event.data.expanded);
       } else if (event.data.type === "state") {
-        selectedThreadId.current = event.data.threads.selected?.id ?? null;
+        const nextThreadId = event.data.threads.selected?.id ?? null;
+        if (
+          selectedThreadId.current !== nextThreadId ||
+          (event.data.threads.selected?.items.length ?? 0) > 0
+        ) {
+          setTranscript({ items: [], streaming: false });
+        }
+        selectedThreadId.current = nextThreadId;
         setSnapshot(event.data);
-        setTranscript({ items: [], streaming: false });
       } else if (event.data.type === "sessionOperation") {
         const { data: update } = event;
         setSnapshot((current) => {

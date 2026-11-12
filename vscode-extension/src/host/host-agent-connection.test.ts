@@ -68,6 +68,20 @@ class FakeHost {
         workspace: "/work",
       });
     }
+    if (action === "threadTranscript") {
+      return await Promise.resolve([
+        {
+          agentId: "codex-acp",
+          sessionId: "adopted-session",
+          threadId: fields?.threadId,
+          type: "acpUpdate",
+          update: {
+            content: { text: "Earlier answer", type: "text" },
+            sessionUpdate: "agent_message_chunk",
+          },
+        },
+      ]);
+    }
     if (action === "threadPrompt") {
       if (fields?.text === "image" && !Array.isArray(fields.images)) {
         throw new Error("Missing images");
@@ -188,6 +202,44 @@ describe("Host Agent connection", () => {
     ]);
   });
 
+  test("publishes Host rename and removal snapshots to its client", () => {
+    const host = new FakeHost();
+    const metadata = vi.fn<NonNullable<AgentHandlers["metadata"]>>();
+    const agentHandlers = { ...handlers(), metadata };
+    const connection = hostConnectionFactory(host)(agentHandlers, "codex-acp", {
+      owner: "host",
+      threadId: THREAD_ID,
+    });
+
+    host.emit({
+      threads: [
+        {
+          agentId: "codex-acp",
+          id: THREAD_ID,
+          name: "Renamed elsewhere",
+          workspace: "/work",
+        },
+      ],
+      type: "threads",
+    });
+    host.emit({ threads: [], type: "threads" });
+    void connection.rename?.("Renamed");
+    void connection.remove?.();
+
+    expect(metadata).toHaveBeenNthCalledWith(1, {
+      name: "Renamed elsewhere",
+    });
+    expect(metadata).toHaveBeenNthCalledWith(2, { removed: true });
+    expect(host.requests).toContainEqual({
+      action: "threadRename",
+      fields: { name: "Renamed", threadId: THREAD_ID },
+    });
+    expect(host.requests).toContainEqual({
+      action: "threadRemove",
+      fields: { threadId: THREAD_ID },
+    });
+  });
+
   test("adopts Host history using the canonical VS Code Thread ID", async () => {
     const host = new FakeHost();
     const connection = hostConnectionFactory(host)(handlers(), "codex-acp", {
@@ -206,6 +258,38 @@ describe("Host Agent connection", () => {
         sessionId: "adopted-session",
         threadId: THREAD_ID,
       },
+    });
+  });
+
+  test("replays the Host transcript when loading an already-owned Thread", async () => {
+    const host = new FakeHost();
+    const factory = hostConnectionFactory(host);
+    host.emit({
+      threads: [
+        {
+          agentId: "codex-acp",
+          id: THREAD_ID,
+          sessionId: "adopted-session",
+          workspace: "/work",
+        },
+      ],
+      type: "threads",
+    });
+    const agentHandlers = handlers();
+    const connection = factory(agentHandlers, "codex-acp", {
+      threadId: THREAD_ID,
+    });
+
+    await connection.load("adopted-session", "/work");
+
+    expect(host.requests).toContainEqual({
+      action: "threadTranscript",
+      fields: { threadId: THREAD_ID },
+    });
+    expect(agentHandlers.update).toHaveBeenCalledWith({
+      kind: "assistant",
+      text: "Earlier answer",
+      type: "message",
     });
   });
 

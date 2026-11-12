@@ -258,6 +258,55 @@ export class HostThreads {
     return this.sessionRecord(record);
   }
 
+  async rename(threadId: string, candidate: string): Promise<void> {
+    const name = candidate.trim();
+    if (name.length === 0 || name.length > 200 || /[\r\n]/u.test(name)) {
+      throw new TypeError("Invalid Thread name");
+    }
+    const record = this.require(threadId);
+    record.name = name;
+    record.manualName = true;
+    await this.update(record, record.status, record.error);
+  }
+
+  async remove(threadId: string): Promise<void> {
+    const record = this.require(threadId);
+    if (this.active.has(threadId) || record.status === "waiting") {
+      throw new Error("Stop the Thread before removing it");
+    }
+    this.records.delete(threadId);
+    this.loaded.delete(threadId);
+    this.configOptions.delete(threadId);
+    this.operations.delete(threadId);
+    this.queues.delete(threadId);
+    this.transcripts.delete(threadId);
+    await rm(path.join(this.directory, `${threadId}.json`), { force: true });
+    this.changed();
+  }
+
+  async retry(threadId: string): Promise<void> {
+    const record = this.require(threadId);
+    if (record.status !== "error") {
+      throw new Error("Thread is not ready to retry");
+    }
+    if (record.retryHasImages === true) {
+      throw new Error("Retry the image prompt from a client");
+    }
+    if (record.retryText !== undefined) {
+      await this.prompt(threadId, record.retryText);
+      return;
+    }
+    if (record.sessionId === undefined) {
+      const session = await this.acp.create(record.agentId, record.workspace);
+      record.sessionId = session.sessionId;
+      this.rememberSession(record.id, session);
+      this.loaded.add(record.id);
+    } else {
+      await this.ensureLoaded(record);
+    }
+    await this.update(record, "idle");
+  }
+
   async prompt(
     threadId: string,
     text: string,
@@ -456,6 +505,8 @@ export class HostThreads {
             threadId: record.id,
             type: "threadPromptComplete",
           });
+          delete record.retryText;
+          delete record.retryHasImages;
           queue.shift();
           this.queueChanged(record.id);
         } catch (error) {
@@ -471,6 +522,8 @@ export class HostThreads {
           this.queueChanged(record.id);
           const message =
             error instanceof Error ? error.message : String(error);
+          record.retryText = prompt.text;
+          record.retryHasImages = prompt.images.length > 0;
           await this.update(record, "error", message);
           this.emit({
             message,

@@ -168,6 +168,7 @@ export interface AgentError extends Error {
 
 export interface AgentHandlers {
   error: (error: AgentError) => void;
+  metadata?: (update: { name?: string; removed?: true }) => void;
   elicitation: (
     request: AgentElicitationRequest
   ) => Promise<AgentElicitationResponse>;
@@ -199,6 +200,8 @@ export interface AgentConnection {
     text: string,
     images: PromptImage[]
   ) => Promise<AgentPromptResult>;
+  remove?: () => Promise<void>;
+  rename?: (name: string) => Promise<void>;
   setConfig: (
     sessionId: string,
     configId: string,

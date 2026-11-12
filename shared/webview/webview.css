@@ -1547,6 +1547,20 @@ pre {
   background: var(--vscode-textCodeBlock-background);
   font-family: var(--mischief-mono-font);
 }
+.transcript-file {
+  color: var(--vscode-textLink-foreground, var(--accent));
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 0.14em;
+}
+.transcript-file.plain {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  padding: 0;
+}
 .markdown pre {
   overflow-x: hidden;
   padding: 8px;

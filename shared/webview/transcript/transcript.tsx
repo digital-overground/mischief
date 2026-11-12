@@ -17,6 +17,50 @@ import type {
 const nonEmpty = (value: string | undefined, fallback: string): string =>
   value !== undefined && value.length > 0 ? value : fallback;
 
+const fileReference =
+  /^(?:[A-Za-z0-9_@.+~-]+\/)*[A-Za-z0-9_@.+~-]+\.[A-Za-z0-9_+-]+(?::[1-9]\d*)?$/u;
+const linkFileReferences = (html: string): string =>
+  html.replaceAll(/<code>(?<path>[^<\s]+)<\/code>/gu, (source, path: string) =>
+    fileReference.test(path)
+      ? `<a class="transcript-file" href="${path.replace(":", "#L")}"><code>${path}</code></a>`
+      : source
+  );
+
+const PlainBody = ({
+  className,
+  item,
+}: {
+  className: string;
+  item: RenderedTranscriptItem;
+}): React.JSX.Element => {
+  const dispatch = useTranscriptAction();
+  const parts = (item.text ?? "").split(/(?<code>`[^`\n]+`)/u);
+  return (
+    <div className={className}>
+      {parts.map((part, index) => {
+        const candidate = part.startsWith("`") ? part.slice(1, -1) : "";
+        return fileReference.test(candidate) ? (
+          <button
+            className="transcript-file plain"
+            key={`${candidate}:${index}`}
+            onClick={() => {
+              dispatch({
+                href: candidate.replace(":", "#L"),
+                type: "openTranscriptLink",
+              });
+            }}
+            type="button"
+          >
+            <code>{candidate}</code>
+          </button>
+        ) : (
+          part
+        );
+      })}
+    </div>
+  );
+};
+
 const MarkdownBody = ({
   className = "body markdown",
   item,
@@ -28,7 +72,7 @@ const MarkdownBody = ({
   return isNonEmpty(item.html) ? (
     <div
       className={className}
-      dangerouslySetInnerHTML={{ __html: item.html }}
+      dangerouslySetInnerHTML={{ __html: linkFileReferences(item.html) }}
       onClick={(event) => {
         if (!(event.target instanceof Element)) {
           return;
@@ -48,7 +92,7 @@ const MarkdownBody = ({
       }}
     />
   ) : (
-    <div className={className}>{item.text ?? ""}</div>
+    <PlainBody className={className} item={item} />
   );
 };
 
@@ -155,19 +199,44 @@ const ToolOutput = ({
   item: RenderedTranscriptItem;
 }): React.JSX.Element | null => {
   const output = useRef<HTMLPreElement>(null);
+  const pinned = useRef(true);
+  const wasExpanded = useRef(false);
   const running = item.status === "pending" || item.status === "in_progress";
   useLayoutEffect(() => {
-    if (expanded && running && output.current) {
+    const opening = expanded && !wasExpanded.current;
+    wasExpanded.current = expanded;
+    if (opening) {
+      pinned.current = true;
+    }
+    if (
+      expanded &&
+      output.current &&
+      (opening || (running && pinned.current))
+    ) {
       output.current.scrollTop = output.current.scrollHeight;
     }
   }, [expanded, item.output, running]);
-  return isNonEmpty(item.output) ? (
-    <div>
-      <b>Output</b>
-      <pre className={running ? "live-tool-output" : undefined} ref={output}>
-        {item.output}
-      </pre>
-    </div>
+  if (isNonEmpty(item.output)) {
+    return (
+      <div>
+        <b>Output</b>
+        <pre
+          className={running ? "live-tool-output" : undefined}
+          ref={output}
+          onScroll={(event) => {
+            const element = event.currentTarget;
+            pinned.current =
+              element.scrollHeight - element.clientHeight - element.scrollTop <
+              16;
+          }}
+        >
+          {item.output}
+        </pre>
+      </div>
+    );
+  }
+  return expanded && running ? (
+    <div role="status">Waiting for output…</div>
   ) : null;
 };
 

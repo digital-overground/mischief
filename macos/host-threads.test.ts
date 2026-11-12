@@ -139,6 +139,53 @@ describe("Host Threads", () => {
     });
   });
 
+  test("renames, retries, and removes an idle Thread", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "mischief-host-threads-"));
+    roots.push(root);
+    let prompts = 0;
+    const threads = await HostThreads.open(
+      root,
+      {
+        cancel: async () => {
+          await Promise.resolve();
+        },
+        create: async () => await Promise.resolve(acpSession("session-1")),
+        load: async () => await Promise.resolve(acpSession("session-1")),
+        prompt: async () => {
+          prompts += 1;
+          if (prompts === 1) {
+            throw new Error("Turn failed");
+          }
+          return await Promise.resolve("completed" as const);
+        },
+        setConfig: async () => {
+          await Promise.resolve();
+        },
+      },
+      () => {}
+    );
+    const created = await threads.create("magpi-acp", "/workspace");
+    await threads.rename(created.id, "  Renamed Thread  ");
+    expect(threads.snapshot()[0]).toMatchObject({
+      manualName: true,
+      name: "Renamed Thread",
+    });
+    await threads.prompt(created.id, "Try again");
+    await vi.waitFor(() => {
+      expect(threads.snapshot()[0]).toMatchObject({
+        retryText: "Try again",
+        status: "error",
+      });
+    });
+    await threads.retry(created.id);
+    await vi.waitFor(() => {
+      expect(threads.snapshot()[0]).toMatchObject({ status: "idle" });
+    });
+    expect(prompts).toBe(2);
+    await threads.remove(created.id);
+    expect(threads.snapshot()).toStrictEqual([]);
+  });
+
   test("cancels while a failed Thread is recreating its session", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "mischief-host-threads-"));
     roots.push(root);

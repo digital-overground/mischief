@@ -144,6 +144,32 @@ describe("Host ACP connection", () => {
     }
   });
 
+  test("starts the Agent after the Host's working directory is replaced", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "mischief-host-cwd-"));
+    const script = path.join(tmpdir(), `mischief-agent-cwd-${process.pid}.mjs`);
+    await writeFile(script, `process.cwd();\n${fakeAgent}`);
+    const originalCwd = process.cwd();
+    const connection = new HostAcpConnection(
+      { args: [script], command: process.execPath },
+      {
+        elicitation: async () => await Promise.resolve({ action: "decline" }),
+        error: () => {},
+        permission: async () =>
+          await Promise.resolve({ outcome: { outcome: "cancelled" } }),
+        update: () => {},
+      }
+    );
+    try {
+      process.chdir(root);
+      await rm(root, { recursive: true });
+      await expect(connection.inspect()).resolves.toBeUndefined();
+    } finally {
+      process.chdir(originalCwd);
+      connection.dispose();
+      await rm(script);
+    }
+  });
+
   test("serves ACP turns through the packaged Host socket", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "mischief-host-acp-"));
     roots.push(root);

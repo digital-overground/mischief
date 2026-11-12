@@ -27,6 +27,7 @@ import {
   snapshot,
 } from "./library.js";
 
+const MAX_CLIENT_INPUT = 8 * 1024 * 1024;
 const clients = new Set<Socket>();
 const daemon = process.argv.includes("--daemon");
 const send = (message: unknown): void => {
@@ -169,7 +170,9 @@ const promptImages = (value: unknown): { data: string; mimeType: string }[] => {
     images.push({ data: image.data, mimeType: image.mimeType });
   }
   if (images.reduce((size, image) => size + image.data.length, 0) > 7_000_000) {
-    throw new TypeError("Thread prompt images are too large");
+    throw new TypeError(
+      "Images exceed the 7 MB limit. Remove an image or send a smaller one."
+    );
   }
   return images;
 };
@@ -334,6 +337,41 @@ const command = (
           throw new TypeError("Invalid Thread transcript request");
         }
         return await threads.transcript(threadId);
+      });
+      break;
+    }
+    case "threadRename": {
+      const name = "name" in message ? message.name : undefined;
+      respond(async () => {
+        if (
+          !threads ||
+          typeof threadId !== "string" ||
+          typeof name !== "string"
+        ) {
+          throw new TypeError("Invalid Thread rename request");
+        }
+        await threads.rename(threadId, name);
+        return {};
+      });
+      break;
+    }
+    case "threadRemove": {
+      respond(async () => {
+        if (!threads || typeof threadId !== "string") {
+          throw new TypeError("Invalid Thread remove request");
+        }
+        await threads.remove(threadId);
+        return {};
+      });
+      break;
+    }
+    case "threadRetry": {
+      respond(async () => {
+        if (!threads || typeof threadId !== "string") {
+          throw new TypeError("Invalid Thread retry request");
+        }
+        await threads.retry(threadId);
+        return {};
       });
       break;
     }
@@ -515,7 +553,7 @@ const startDaemon = async (): Promise<void> => {
     client.setEncoding("utf-8");
     client.on("data", (chunk: string) => {
       clientPending += chunk;
-      if (clientPending.length > 65_536) {
+      if (clientPending.length > MAX_CLIENT_INPUT) {
         client.destroy();
         return;
       }

@@ -2952,22 +2952,72 @@ describe("React webview", () => {
     await unmount();
   });
 
+  test("shows an expanded running command before it emits output", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    if (state.type !== "state" || !state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    const tool = {
+      id: "command-waiting",
+      kind: "tool" as const,
+      status: "in_progress",
+      title: "xcodebuild",
+      toolKind: "execute" as const,
+    };
+    state.threads.selected.items = [tool];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    const details =
+      document.querySelector<HTMLDetailsElement>(".tool-operation");
+    if (!details) {
+      throw new Error("Missing running command");
+    }
+    act(() => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle"));
+    });
+    expect(details.open).toBeTruthy();
+    expect(details.querySelector(".tool-body")?.textContent).toContain(
+      "Waiting for output"
+    );
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            item: { ...tool, output: "Build started" },
+            streaming: true,
+            threadId: "selected",
+            type: "transcript",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    expect(details.querySelector(".tool-body")?.textContent).toContain(
+      "Build started"
+    );
+    expect(details.querySelector(".tool-body")?.textContent).not.toContain(
+      "Waiting for output"
+    );
+    await unmount();
+  });
+
   test("keeps expanded running tool output scrolled to its tail", async () => {
     const unmount = await renderApp();
     const state = threadState("selected", []);
     if (state.type !== "state" || !state.threads.selected) {
       throw new Error("Missing selected Thread");
     }
-    state.threads.selected.items = [
-      {
-        id: "command-live",
-        kind: "tool",
-        output: "line 1",
-        status: "in_progress",
-        title: "pnpm test",
-        toolKind: "execute",
-      },
-    ];
+    const tool = {
+      id: "command-live",
+      kind: "tool" as const,
+      output: "line 1",
+      status: "in_progress",
+      title: "pnpm test",
+      toolKind: "execute" as const,
+    };
+    state.threads.selected.items = [tool];
     act(() => {
       window.dispatchEvent(new MessageEvent("message", { data: state }));
     });
@@ -2986,6 +3036,65 @@ describe("React webview", () => {
       details.dispatchEvent(new Event("toggle"));
     });
     expect(output.scrollTop).toBe(480);
+    Object.defineProperties(output, {
+      clientHeight: { configurable: true, value: 180 },
+      scrollHeight: { configurable: true, value: 600, writable: true },
+    });
+    act(() => {
+      output.scrollTop = 100;
+      output.dispatchEvent(new Event("scroll", { bubbles: true }));
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            item: { ...tool, output: "line 1\nline 2" },
+            streaming: true,
+            threadId: "selected",
+            type: "transcript",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    expect(output.scrollTop).toBe(100);
+    act(() => {
+      output.scrollTop = 420;
+      output.dispatchEvent(new Event("scroll", { bubbles: true }));
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            item: { ...tool, output: "line 1\nline 2\nline 3" },
+            streaming: true,
+            threadId: "selected",
+            type: "transcript",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+    });
+    expect(output.scrollTop).toBe(600);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: {
+            item: {
+              ...tool,
+              output: "line 1\nline 2\nline 3",
+              status: "completed",
+            },
+            streaming: true,
+            threadId: "selected",
+            type: "transcript",
+          } satisfies HostToWebviewMessage,
+        })
+      );
+      output.scrollTop = 100;
+      output.dispatchEvent(new Event("scroll", { bubbles: true }));
+      details.open = false;
+      details.dispatchEvent(new Event("toggle"));
+    });
+    act(() => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle"));
+    });
+    expect(output.scrollTop).toBe(600);
     await unmount();
   });
 
@@ -2997,7 +3106,7 @@ describe("React webview", () => {
     }
     state.threads.selected.items = [
       {
-        html: '<p><a href="src/view.ts#L3"><code>src/view.ts:3</code></a></p>',
+        html: "<p>Changed <code>src/view.ts:3</code></p>",
         id: "assistant",
         kind: "assistant",
       },
@@ -3487,6 +3596,26 @@ describe("React webview", () => {
       scrollHeight: scrollHeight.mock.calls.length,
       scrollTop: scrollTop.mock.calls.length,
     }).toStrictEqual({ clientHeight: 0, scrollHeight: 0, scrollTop: 0 });
+    await unmount();
+  });
+
+  test("keeps replayed messages visible across a same-Thread state refresh", async () => {
+    const unmount = await renderApp();
+    const state = threadState("selected", []);
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    sendTranscriptItem("selected", "Restored answer");
+    expect(document.querySelector("#transcript")?.textContent).toBe(
+      "Restored answer"
+    );
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    expect(document.querySelector("#transcript")?.textContent).toBe(
+      "Restored answer"
+    );
     await unmount();
   });
 

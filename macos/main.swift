@@ -248,7 +248,7 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let body = message.body as? [String: String], body["type"] == "command", let action = body["action"] else { return }
+        guard let body = message.body as? [String: Any], body["type"] as? String == "command", let action = body["action"] as? String else { return }
         switch action {
         case "restart":
             guard host == nil, let installedHost else { return }
@@ -271,16 +271,30 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
                 }
             }
         case "deactivateWorkspace":
-            guard let path = body["path"], library?.workspaces?.contains(where: { $0.path == path }) == true else { return }
+            guard let path = body["path"] as? String, library?.workspaces?.contains(where: { $0.path == path }) == true else { return }
             send(["type": "command", "action": action, "path": path])
-        case "threadTranscript":
-            guard let threadId = body["threadId"], let requestId = body["requestId"],
-                  library?.workspaces?.contains(where: { $0.threads.contains(where: { $0.id == threadId && $0.owner == "host" }) }) == true else { return }
-            send(["type": "command", "action": action, "threadId": threadId, "requestId": requestId])
+        case "threadCreate":
+            guard let workspace = body["cwd"] as? String,
+                  library?.workspaces?.contains(where: { $0.path == workspace }) == true,
+                  let agentId = body["agentId"] as? String,
+                  ["magpi-acp", "claude-agent-acp", "codex-acp"].contains(agentId) else { return }
+            send(body)
+        case "threadTranscript", "threadLoad", "threadPrompt", "threadCancel", "threadRetry", "threadRename", "threadRemove", "threadSetConfig", "acpRespondPermission", "acpRespondElicitation":
+            guard let threadId = body["threadId"] as? String,
+                  UUID(uuidString: threadId) != nil else { return }
+            send(body)
+        case "openFile":
+            guard let path = body["path"] as? String,
+                  let workspace = body["workspace"] as? String else { return }
+            openFile(path, in: workspace)
+        case "openTranscriptLink":
+            guard let href = body["href"] as? String,
+                  let workspace = body["workspace"] as? String else { return }
+            openFile(href.components(separatedBy: "#").first ?? href, in: workspace)
         case "openWorkspace", "openThread":
-            guard let path = body["path"], library?.workspaces?.contains(where: { $0.path == path }) == true else { return }
+            guard let path = body["path"] as? String, library?.workspaces?.contains(where: { $0.path == path }) == true else { return }
             if action == "openThread" {
-                guard let threadId = body["threadId"], library?.workspaces?.contains(where: { $0.path == path && $0.threads.contains(where: { $0.id == threadId }) }) == true else { return }
+                guard let threadId = body["threadId"] as? String, library?.workspaces?.contains(where: { $0.path == path && $0.threads.contains(where: { $0.id == threadId }) }) == true else { return }
                 send(["type": "command", "action": action, "path": path, "threadId": threadId])
             } else {
                 send(["type": "command", "action": action, "path": path])
@@ -397,13 +411,27 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
         }
     }
 
-    private func send(_ message: [String: String]) {
+    private func send(_ message: [String: Any]) {
         guard let host, let data = try? JSONSerialization.data(withJSONObject: message) else { return }
         do {
             try host.write(contentsOf: data + Data([10]))
         } catch {
             hostDisconnected(host)
         }
+    }
+
+    private func openFile(_ requestedPath: String, in workspace: String) {
+        guard library?.workspaces?.contains(where: { $0.path == workspace }) == true,
+              requestedPath.count <= 32_768,
+              let decoded = requestedPath.removingPercentEncoding else { return }
+        let root = URL(fileURLWithPath: workspace).resolvingSymlinksInPath().standardizedFileURL
+        let requested = decoded.hasPrefix("/")
+            ? URL(fileURLWithPath: decoded)
+            : root.appendingPathComponent(decoded)
+        let candidate = requested.resolvingSymlinksInPath().standardizedFileURL
+        guard candidate.path == root.path || candidate.path.hasPrefix(root.path + "/"),
+              FileManager.default.fileExists(atPath: candidate.path) else { return }
+        NSWorkspace.shared.open(candidate)
     }
 
     private func forwardHostMessage(_ data: Data) {

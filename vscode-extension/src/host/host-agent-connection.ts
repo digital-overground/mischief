@@ -41,6 +41,7 @@ interface HostThread {
   configOptions?: unknown[] | null;
   error?: string;
   id: string;
+  name?: string;
   operations?: {
     branchSummary: boolean;
     forkMessage: boolean;
@@ -90,7 +91,8 @@ const hostThread = (value: unknown): HostThread => {
     (value.configOptions !== undefined &&
       value.configOptions !== null &&
       !Array.isArray(value.configOptions)) ||
-    (value.error !== undefined && typeof value.error !== "string")
+    (value.error !== undefined && typeof value.error !== "string") ||
+    (value.name !== undefined && typeof value.name !== "string")
   ) {
     throw new Error("Mischief Host returned an invalid Thread");
   }
@@ -101,6 +103,7 @@ const hostThread = (value: unknown): HostThread => {
       : { configOptions: value.configOptions }),
     ...(value.error === undefined ? {} : { error: value.error }),
     id: value.id,
+    ...(value.name === undefined ? {} : { name: value.name }),
     ...(value.operations === undefined
       ? {}
       : { operations: hostOperations(value.operations) }),
@@ -213,6 +216,26 @@ class HostAgentCoordinator {
     this.threads.set(thread.id, thread);
   }
 
+  replay(threadId: string, events: unknown): void {
+    if (!Array.isArray(events)) {
+      throw new TypeError(
+        "Mischief Host returned an invalid Thread transcript"
+      );
+    }
+    for (const event of events) {
+      if (
+        !isRecord(event) ||
+        event.type !== "acpUpdate" ||
+        event.threadId !== threadId
+      ) {
+        throw new TypeError(
+          "Mischief Host returned an invalid Thread transcript"
+        );
+      }
+      this.update({ ...event, type: "acpUpdate" });
+    }
+  }
+
   hasThread(id: string): boolean {
     return this.threads.has(id);
   }
@@ -244,16 +267,30 @@ class HostAgentCoordinator {
     });
   }
 
+  // oxlint-disable-next-line complexity -- one protocol boundary dispatches the complete Host event union.
   private event(event: HostEvent): void {
     switch (event.type) {
       case "threads": {
         if (Array.isArray(event.threads)) {
+          const next = new Map<string, HostThread>();
           for (const candidate of event.threads) {
             try {
-              this.remember(hostThread(candidate));
+              const thread = hostThread(candidate);
+              next.set(thread.id, thread);
             } catch {
               // Ignore one malformed snapshot entry; command responses remain strictly validated.
             }
+          }
+          for (const connection of this.connections) {
+            connection.synchronize(
+              connection.threadId === undefined
+                ? undefined
+                : next.get(connection.threadId)
+            );
+          }
+          this.threads.clear();
+          for (const thread of next.values()) {
+            this.remember(thread);
           }
         }
         break;
@@ -490,6 +527,8 @@ class HostAgentConnection implements AgentConnection {
   readonly handlers: AgentHandlers;
   private readonly coordinator: HostAgentCoordinator;
   private disposed = false;
+  private removing = false;
+  private synchronizedName?: string;
   threadId?: string;
 
   constructor(
@@ -556,6 +595,11 @@ class HostAgentConnection implements AgentConnection {
     if (hostError !== undefined) {
       throw new Error(hostError);
     }
+    const transcript = await this.coordinator.transport.request(
+      "threadTranscript",
+      { threadId: thread.id }
+    );
+    this.coordinator.replay(thread.id, transcript);
     return agentSession(thread);
   }
 
@@ -636,6 +680,41 @@ class HostAgentConnection implements AgentConnection {
   async navigateTreeMessage(): Promise<never> {
     this.requireActive();
     return await unsupported("message tree navigation");
+  }
+
+  synchronize(thread?: HostThread): void {
+    if (this.removing) {
+      return;
+    }
+    if (thread === undefined) {
+      this.handlers.metadata?.({ removed: true });
+      return;
+    }
+    if (thread.name !== undefined && thread.name !== this.synchronizedName) {
+      this.synchronizedName = thread.name;
+      this.handlers.metadata?.({ name: thread.name });
+    }
+  }
+
+  async rename(name: string): Promise<void> {
+    this.requireActive();
+    await this.coordinator.transport.request("threadRename", {
+      name,
+      threadId: this.threadId,
+    });
+  }
+
+  async remove(): Promise<void> {
+    this.requireActive();
+    this.removing = true;
+    try {
+      await this.coordinator.transport.request("threadRemove", {
+        threadId: this.threadId,
+      });
+    } catch (error) {
+      this.removing = false;
+      throw error;
+    }
   }
 
   async setConfig(

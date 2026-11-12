@@ -289,6 +289,54 @@ describe("signed macOS app", () => {
       assert.match(await receive(1), /"type":"library"/u);
       assert.match(await receive(1, true), /"type":"notify"/u);
       assert.match(await receive(2), /Incompatible Host protocol/u);
+      const imageClient = connect(socketPath);
+      try {
+        imageClient.write('{"type":"hello","version":1}\n');
+        imageClient.write(
+          `${JSON.stringify({
+            action: "threadPrompt",
+            images: [{ data: "a".repeat(100_000), mimeType: "image/png" }],
+            requestId: "large-image",
+            text: "Describe this image",
+            threadId: "missing-thread",
+            type: "command",
+          })}\n`
+        );
+        let response = "";
+        for await (const chunk of imageClient) {
+          response += String(chunk);
+          if (response.includes('"requestId":"large-image"')) {
+            break;
+          }
+        }
+        assert.match(response, /"error":"Unknown Thread: missing-thread"/u);
+      } finally {
+        imageClient.destroy();
+      }
+      const oversizedClient = connect(socketPath);
+      try {
+        oversizedClient.write('{"type":"hello","version":1}\n');
+        oversizedClient.write(
+          `${JSON.stringify({
+            action: "threadPrompt",
+            images: [{ data: "a".repeat(7_000_001), mimeType: "image/png" }],
+            requestId: "oversized-image",
+            text: "Describe this image",
+            threadId: "missing-thread",
+            type: "command",
+          })}\n`
+        );
+        let response = "";
+        for await (const chunk of oversizedClient) {
+          response += String(chunk);
+          if (response.includes('"requestId":"oversized-image"')) {
+            break;
+          }
+        }
+        assert.match(response, /Images exceed the 7 MB limit/u);
+      } finally {
+        oversizedClient.destroy();
+      }
       const duplicate = spawn(binary, [script, "--daemon"], {
         env: {
           ...process.env,

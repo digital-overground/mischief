@@ -420,16 +420,24 @@ export class Threads {
     return record.workspace;
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string, removedFromHost = false): Promise<void> {
     const record = this.findRecord(id);
     if (!record || record.workspace !== this.workspace) {
       return;
     }
     if (this.selectedId === id) {
-      await this.cancel();
+      if (!removedFromHost) {
+        await this.cancel();
+      }
       this.viewedId = undefined;
     }
-    this.runtimes.get(id)?.connection.dispose();
+    const runtime =
+      this.runtimes.get(id) ??
+      (record.owner === "host" ? this.runtime(record) : undefined);
+    if (!removedFromHost) {
+      await runtime?.connection.remove?.();
+    }
+    runtime?.connection.dispose();
     this.runtimes.delete(id);
     this.stored = this.stored.filter((thread) => thread.id !== id);
     await this.apply({ id, type: "removeThread" });
@@ -458,6 +466,7 @@ export class Threads {
     if (title.length > 200 || /[\r\n]/u.test(title)) {
       throw new Error("Invalid Thread name");
     }
+    await this.runtime(record).connection.rename?.(title);
     record.name = title;
     record.manualName = true;
     await this.persist(record);
@@ -1304,6 +1313,18 @@ export class Threads {
             }
             void this.persist(record);
             this.emit();
+          },
+          metadata: (update) => {
+            if (update.removed === true) {
+              void this.remove(record.id, true);
+              return;
+            }
+            if (update.name !== undefined && update.name !== record.name) {
+              record.name = update.name;
+              record.manualName = true;
+              void this.persist(record);
+              this.emit();
+            }
           },
           permission: async (request) =>
             await this.handlePermission(record, request),

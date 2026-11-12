@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
 import { readFile, realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -430,6 +431,7 @@ export class HostAcpConnection {
     const hostDirectory = path.dirname(process.execPath);
     const inheritedPath = this.launch.env?.PATH ?? process.env.PATH ?? "";
     const child = spawn(this.launch.command, this.launch.args, {
+      cwd: homedir(),
       env: {
         ...process.env,
         ...this.launch.env,
