@@ -212,17 +212,11 @@ describe("Host Agent connection", () => {
     });
 
     host.emit({
-      threads: [
-        {
-          agentId: "codex-acp",
-          id: THREAD_ID,
-          name: "Renamed elsewhere",
-          workspace: "/work",
-        },
-      ],
-      type: "threads",
+      name: "Renamed elsewhere",
+      threadId: THREAD_ID,
+      type: "threadRenamed",
     });
-    host.emit({ threads: [], type: "threads" });
+    host.emit({ threadId: THREAD_ID, type: "threadRemoved" });
     void connection.rename?.("Renamed");
     void connection.remove?.();
 

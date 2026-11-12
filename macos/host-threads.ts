@@ -267,6 +267,7 @@ export class HostThreads {
     record.name = name;
     record.manualName = true;
     await this.update(record, record.status, record.error);
+    this.emit({ name, threadId, type: "threadRenamed" });
   }
 
   async remove(threadId: string): Promise<void> {
@@ -282,6 +283,7 @@ export class HostThreads {
     this.transcripts.delete(threadId);
     await rm(path.join(this.directory, `${threadId}.json`), { force: true });
     this.changed();
+    this.emit({ threadId, type: "threadRemoved" });
   }
 
   async retry(threadId: string): Promise<void> {

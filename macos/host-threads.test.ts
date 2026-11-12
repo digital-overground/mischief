@@ -143,6 +143,7 @@ describe("Host Threads", () => {
     const root = await mkdtemp(path.join(tmpdir(), "mischief-host-threads-"));
     roots.push(root);
     let prompts = 0;
+    const events: unknown[] = [];
     const threads = await HostThreads.open(
       root,
       {
@@ -162,7 +163,9 @@ describe("Host Threads", () => {
           await Promise.resolve();
         },
       },
-      () => {}
+      (event) => {
+        events.push(event);
+      }
     );
     const created = await threads.create("magpi-acp", "/workspace");
     await threads.rename(created.id, "  Renamed Thread  ");
@@ -183,7 +186,26 @@ describe("Host Threads", () => {
     });
     expect(prompts).toBe(2);
     await threads.remove(created.id);
-    expect(threads.snapshot()).toStrictEqual([]);
+    expect({
+      events: events.filter(
+        (event) =>
+          typeof event === "object" &&
+          event !== null &&
+          "type" in event &&
+          (event.type === "threadRenamed" || event.type === "threadRemoved")
+      ),
+      snapshot: threads.snapshot(),
+    }).toStrictEqual({
+      events: [
+        {
+          name: "Renamed Thread",
+          threadId: created.id,
+          type: "threadRenamed",
+        },
+        { threadId: created.id, type: "threadRemoved" },
+      ],
+      snapshot: [],
+    });
   });
 
   test("cancels while a failed Thread is recreating its session", async () => {

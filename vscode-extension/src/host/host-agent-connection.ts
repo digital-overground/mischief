@@ -272,26 +272,29 @@ class HostAgentCoordinator {
     switch (event.type) {
       case "threads": {
         if (Array.isArray(event.threads)) {
-          const next = new Map<string, HostThread>();
           for (const candidate of event.threads) {
             try {
-              const thread = hostThread(candidate);
-              next.set(thread.id, thread);
+              this.remember(hostThread(candidate));
             } catch {
               // Ignore one malformed snapshot entry; command responses remain strictly validated.
             }
           }
-          for (const connection of this.connections) {
-            connection.synchronize(
-              connection.threadId === undefined
-                ? undefined
-                : next.get(connection.threadId)
-            );
-          }
-          this.threads.clear();
-          for (const thread of next.values()) {
-            this.remember(thread);
-          }
+        }
+        break;
+      }
+      case "threadRenamed": {
+        if (
+          typeof event.threadId === "string" &&
+          typeof event.name === "string"
+        ) {
+          this.connectionFor(event)?.renamed(event.name);
+        }
+        break;
+      }
+      case "threadRemoved": {
+        if (typeof event.threadId === "string") {
+          this.connectionFor(event)?.removed();
+          this.threads.delete(event.threadId);
         }
         break;
       }
@@ -528,7 +531,6 @@ class HostAgentConnection implements AgentConnection {
   private readonly coordinator: HostAgentCoordinator;
   private disposed = false;
   private removing = false;
-  private synchronizedName?: string;
   threadId?: string;
 
   constructor(
@@ -682,17 +684,13 @@ class HostAgentConnection implements AgentConnection {
     return await unsupported("message tree navigation");
   }
 
-  synchronize(thread?: HostThread): void {
-    if (this.removing) {
-      return;
-    }
-    if (thread === undefined) {
+  renamed(name: string): void {
+    this.handlers.metadata?.({ name });
+  }
+
+  removed(): void {
+    if (!this.removing) {
       this.handlers.metadata?.({ removed: true });
-      return;
-    }
-    if (thread.name !== undefined && thread.name !== this.synchronizedName) {
-      this.synchronizedName = thread.name;
-      this.handlers.metadata?.({ name: thread.name });
     }
   }
 
