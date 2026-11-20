@@ -58,6 +58,7 @@ export interface PromptImage {
 }
 
 export interface AgentPermissionRequest {
+  id?: string;
   message: string;
   options: { id: string; name: string; kind: string }[];
 }
@@ -67,6 +68,7 @@ export type AgentPermissionResponse =
   | { cancelled: true };
 
 export interface AgentElicitationRequest {
+  id?: string;
   message: string;
   context?: string;
   fields: ElicitationField[];
@@ -167,8 +169,13 @@ export interface AgentError extends Error {
 }
 
 export interface AgentHandlers {
+  interactionResolved?: (id: string) => void;
   error: (error: AgentError) => void;
-  metadata?: (update: { name?: string; removed?: true }) => void;
+  metadata?: (update: {
+    manualName?: boolean;
+    name?: string;
+    removed?: true;
+  }) => void;
   elicitation: (
     request: AgentElicitationRequest
   ) => Promise<AgentElicitationResponse>;
@@ -179,6 +186,8 @@ export interface AgentHandlers {
 }
 
 export interface AgentConnection {
+  older?: () => Promise<{ hasOlder: boolean; updates: AgentUpdate[] }>;
+  hasOlder?: () => boolean;
   authenticate?: (methodId: string) => Promise<void>;
   cancel: (sessionId: string) => Promise<void>;
   create: (cwd: string, threadId?: string) => Promise<AgentSession>;
@@ -186,7 +195,8 @@ export interface AgentConnection {
   forkMessage: (
     sessionId: string,
     cwd: string,
-    messageId: string
+    messageId: string,
+    forkId?: string
   ) => Promise<AgentSession>;
   history: (cwd: string) => Promise<AgentHistoryEntry[]>;
   load: (sessionId: string, cwd: string) => Promise<AgentSession>;

@@ -248,11 +248,14 @@ const command = (
           !acp ||
           typeof agentId !== "string" ||
           typeof methodId !== "string" ||
-          methodId.length > 256
+          methodId.length > 256 ||
+          typeof cwd !== "string" ||
+          !path.isAbsolute(cwd) ||
+          cwd.length > 4096
         ) {
           throw new TypeError("Invalid Agent authentication request");
         }
-        await acp.authenticate(agentId, methodId);
+        await acp.authenticate(agentId, cwd, methodId);
         return {};
       });
       break;
@@ -332,11 +335,35 @@ const command = (
       break;
     }
     case "threadTranscript": {
+      const cursor = "cursor" in message ? message.cursor : undefined;
       respond(async () => {
-        if (!threads || typeof threadId !== "string") {
+        if (
+          !threads ||
+          typeof threadId !== "string" ||
+          (cursor !== undefined &&
+            (typeof cursor !== "number" ||
+              !Number.isSafeInteger(cursor) ||
+              cursor < 0))
+        ) {
           throw new TypeError("Invalid Thread transcript request");
         }
-        return await threads.transcript(threadId);
+        return await threads.transcript(threadId, cursor);
+      });
+      break;
+    }
+    case "threadFork": {
+      const forkId = "forkId" in message ? message.forkId : undefined;
+      const messageId = "messageId" in message ? message.messageId : undefined;
+      respond(async () => {
+        if (
+          !threads ||
+          typeof threadId !== "string" ||
+          typeof forkId !== "string" ||
+          typeof messageId !== "string"
+        ) {
+          throw new TypeError("Invalid Thread fork request");
+        }
+        return await threads.forkMessage(threadId, forkId, messageId);
       });
       break;
     }

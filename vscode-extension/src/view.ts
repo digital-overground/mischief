@@ -1381,6 +1381,10 @@ export class MischiefView implements vscode.WebviewViewProvider {
       void MischiefView.run(this.threads.retry());
       return true;
     }
+    if (data.type === "loadOlder") {
+      void MischiefView.run(this.threads.loadOlder());
+      return true;
+    }
     if (
       data.type === "setConfig" &&
       typeof data.id === "string" &&

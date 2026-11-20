@@ -26,6 +26,7 @@ import type {
 export interface HostAgentLaunch {
   command: string;
   args: string[];
+  cwd?: string;
   env?: Record<string, string>;
 }
 
@@ -63,6 +64,8 @@ interface HostAuthentication {
 const MAX_CONTEXT_BYTES = 1_000_000;
 const MAX_CONTEXT_FILES = 20;
 const MAGPI_BRANCH_SUMMARY = "magpi-acp/branch-summary";
+const MAGPI_MESSAGE_ACTIONS = "magpi-acp/message-target-actions";
+const MAGPI_FORK_MESSAGE_ID = "magpi-acp/fork-message-id";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -189,6 +192,31 @@ export class HostAcpConnection {
     });
   }
 
+  async forkMessage(
+    sessionId: string,
+    cwd: string,
+    messageId: string
+  ): Promise<HostAcpSession> {
+    return await this.call(async () => {
+      if (!this.operations.forkMessage) {
+        throw new Error("This Agent does not support Fork at a message");
+      }
+      const agent = await this.agent();
+      const response = await agent.request(methods.agent.session.fork, {
+        _meta: { [MAGPI_FORK_MESSAGE_ID]: messageId },
+        cwd,
+        mcpServers: [],
+        sessionId,
+      });
+      this.cwd.set(response.sessionId, cwd);
+      return {
+        configOptions: response.configOptions,
+        operations: this.operations,
+        sessionId: response.sessionId,
+      };
+    });
+  }
+
   async cancel(sessionId: string): Promise<void> {
     const agent = await this.agent();
     await agent.notify(methods.agent.session.cancel, { sessionId });
@@ -201,12 +229,18 @@ export class HostAcpConnection {
   ): Promise<void> {
     await this.call(async () => {
       const agent = await this.agent();
-      await agent.request(
+      const result = await agent.request(
         methods.agent.session.setConfigOption,
         typeof value === "boolean"
           ? { configId, sessionId, type: "boolean", value }
           : { configId, sessionId, value }
       );
+      if (result.configOptions !== undefined) {
+        this.handlers.update(sessionId, {
+          configOptions: result.configOptions,
+          sessionUpdate: "config_option_update",
+        });
+      }
     });
   }
 
@@ -431,7 +465,7 @@ export class HostAcpConnection {
     const hostDirectory = path.dirname(process.execPath);
     const inheritedPath = this.launch.env?.PATH ?? process.env.PATH ?? "";
     const child = spawn(this.launch.command, this.launch.args, {
-      cwd: homedir(),
+      cwd: this.launch.cwd ?? homedir(),
       env: {
         ...process.env,
         ...this.launch.env,
@@ -549,10 +583,12 @@ export class HostAcpConnection {
       capabilities?.promptCapabilities?.embeddedContext === true;
     this.supportsHistory = isRecord(capabilities?.sessionCapabilities?.list);
     const meta = isRecord(capabilities?._meta) ? capabilities._meta : undefined;
+    const messageActions = meta?.[MAGPI_MESSAGE_ACTIONS] === true;
     this.operations = {
       branchSummary: meta?.[MAGPI_BRANCH_SUMMARY] === true,
-      // shortcut: Host custom MagPi RPC routing is not implemented yet; keep these controls hidden.
-      forkMessage: false,
+      forkMessage:
+        messageActions && isRecord(capabilities?.sessionCapabilities?.fork),
+      // shortcut: tree navigation still needs cross-client transcript replacement; keep controls hidden until then.
       treeNavigation: false,
     };
   }

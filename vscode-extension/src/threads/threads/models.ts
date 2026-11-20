@@ -98,6 +98,7 @@ export interface ThreadDetail {
   streaming: boolean;
   usage?: ThreadUsage;
   items: TranscriptItem[];
+  hasOlder?: boolean;
   commands: ThreadCommand[];
   configOptions: ThreadConfigOption[];
   interaction?: ThreadInteraction;

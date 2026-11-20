@@ -57,6 +57,7 @@ export const ThreadView = ({
   const [visibleCount, setVisibleCount] = useState(100);
   const [visibleThread, setVisibleThread] = useState<string | null>(null);
   const prependHeight = useRef<number | null>(null);
+  const previousItemCount = useRef(0);
   const selected = setup ? undefined : snapshot.selected;
   if (visibleThread !== (selected?.id ?? null)) {
     setVisibleThread(selected?.id ?? null);
@@ -86,7 +87,18 @@ export const ThreadView = ({
     const container = chat.current;
     if (changed) {
       shouldStick.current = true;
+      prependHeight.current = null;
+      previousItemCount.current = historyItems.length;
     }
+    if (
+      prependHeight.current !== null &&
+      historyItems.length > previousItemCount.current
+    ) {
+      previousItemCount.current = historyItems.length;
+      setVisibleCount((count) => count + 100);
+      return;
+    }
+    previousItemCount.current = historyItems.length;
     if (container && prependHeight.current !== null) {
       container.scrollTop += container.scrollHeight - prependHeight.current;
       prependHeight.current = null;
@@ -222,14 +234,31 @@ export const ThreadView = ({
               48;
             if (
               container.scrollTop < 100 &&
-              visibleCount < historyItems.length
+              prependHeight.current === null &&
+              (selected?.hasOlder === true ||
+                visibleCount < historyItems.length)
             ) {
               prependHeight.current = container.scrollHeight;
-              setVisibleCount((count) => count + 100);
+              if (selected?.hasOlder === true) {
+                postMessage({ type: "loadOlder" });
+              } else {
+                setVisibleCount((count) => count + 100);
+              }
             }
           }}
         >
           <div id="chat-content" ref={chatContent}>
+            {selected?.hasOlder === true ? (
+              <button
+                type="button"
+                onClick={() => {
+                  prependHeight.current = chat.current?.scrollHeight ?? null;
+                  postMessage({ type: "loadOlder" });
+                }}
+              >
+                Load older messages
+              </button>
+            ) : null}
             <Transcript
               onCopied={() => {
                 setCopyNotice((notice) => notice + 1);

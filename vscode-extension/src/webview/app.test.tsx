@@ -190,6 +190,39 @@ describe("React webview", () => {
     vi.useRealTimers();
   });
 
+  test("requests older Host pages when the Thread is scrolled to the top", async () => {
+    const unmount = await renderApp();
+    const state = threadState("paged", []);
+    if (!state.threads.selected) {
+      throw new Error("Missing selected Thread");
+    }
+    state.threads.selected.hasOlder = true;
+    state.threads.selected.items = [
+      { id: "latest", kind: "assistant", text: "Latest" },
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    const chat = document.querySelector("#chat");
+    if (!(chat instanceof HTMLElement)) {
+      throw new Error("Missing transcript scroller");
+    }
+    act(() => {
+      chat.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    expect(postMessage).toHaveBeenCalledWith({ type: "loadOlder" });
+    state.threads.selected.hasOlder = false;
+    state.threads.selected.items = [
+      { id: "older", kind: "assistant", text: "Older" },
+      ...state.threads.selected.items,
+    ];
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: state }));
+    });
+    expect(document.querySelector("#chat")?.textContent).toContain("Older");
+    await unmount();
+  });
+
   test("blocks the view while the Host is unreachable and clears after reconnect", async () => {
     const unmount = await renderApp();
     act(() => {

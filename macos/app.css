@@ -12,6 +12,7 @@ body {
   background: var(--hl-bg);
   font-family: var(--mischief-ui-font);
   font-size: 13px;
+  color-scheme: dark;
 }
 ::selection {
   color: var(--hl-fg);
@@ -80,9 +81,10 @@ main {
   min-height: 0;
 }
 .navigator {
-  width: 42%;
-  min-width: 220px;
-  max-width: 440px;
+  width: 300px;
+  flex: none;
+  min-width: 260px;
+  max-width: 35%;
   overflow-y: auto;
   border-right: 1px solid var(--hl-border);
 }
@@ -112,14 +114,18 @@ main {
 }
 .workspace-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 5px;
   padding: 4px 8px 4px 14px;
 }
 .workspace-heading .workspace-link {
-  flex: 1;
+  flex: 0 0 100%;
   min-width: 0;
+  overflow: hidden;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .workspace-path {
   display: block;
@@ -199,7 +205,10 @@ main {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  padding: 28px;
+  padding: 16px 20px;
+}
+.detail:has(.mac-thread) {
+  padding: 0;
 }
 .mac-thread {
   display: flex;
@@ -228,13 +237,14 @@ main {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  padding: 16px 4px;
+  overflow-anchor: none;
 }
 .thread-notice {
   margin: 10px 0;
   color: var(--hl-error);
 }
 .mac-composer {
+  flex-shrink: 0;
   border: 1px solid var(--hl-border);
   border-radius: 7px;
   background: var(--hl-bg-alt);
@@ -266,11 +276,37 @@ main {
 .thread-configs {
   padding: 8px 0;
 }
-.thread-config {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
+.thread-configs .config-trigger {
+  color: var(--hl-fg);
+}
+.thread-configs .config-trigger:hover {
+  color: var(--hl-accent);
+}
+.thread-configs .config-icon {
   color: var(--hl-fg-dim);
+}
+.config-menu {
+  border-color: var(--hl-border);
+  background: var(--hl-bg-alt);
+  box-shadow: 0 4px 12px var(--hl-shadow);
+}
+.config-menu-title {
+  background: var(--hl-bg-alt);
+  color: var(--hl-fg-dim);
+}
+.config-menu-group-label span {
+  color: var(--hl-fg-dim);
+}
+.config-menu [role="option"] {
+  color: var(--hl-fg);
+}
+.config-menu [role="option"]:hover,
+.config-menu [role="option"]:focus-visible {
+  background: var(--hl-hover);
+}
+.config-menu [aria-selected="true"] {
+  background: var(--hl-accent-dim);
+  color: var(--hl-fg);
 }
 .new-thread-agent {
   width: 74px;
@@ -291,32 +327,6 @@ main {
   place-items: center;
   background: rgb(0 0 0 / 55%);
   padding: 28px;
-}
-.confirm-dialog {
-  width: min(420px, 90vw);
-  border: 1px solid var(--hl-border);
-  border-radius: 8px;
-  background: var(--hl-bg);
-  box-shadow: 0 20px 70px rgb(0 0 0 / 45%);
-  padding: 18px;
-}
-.confirm-dialog h2 {
-  margin-top: 0;
-}
-.confirm-dialog input {
-  width: 100%;
-  border: 1px solid var(--hl-border);
-  border-radius: 4px;
-  color: var(--hl-fg);
-  background: var(--hl-bg-alt);
-  padding: 7px;
-  font: inherit;
-}
-.confirm-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 16px;
 }
 .diff-dialog {
   display: flex;

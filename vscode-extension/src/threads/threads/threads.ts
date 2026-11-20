@@ -94,6 +94,8 @@ interface Runtime {
   usage?: ThreadUsage;
   streamingTimer?: ReturnType<typeof setTimeout>;
   items: TranscriptItem[];
+  updates?: AgentUpdate[];
+  loadingOlder?: boolean;
   commands: ThreadCommand[];
   configOptions: ThreadConfigOption[];
   drafts: string[];
@@ -712,6 +714,39 @@ export class Threads {
     }
   }
 
+  async loadOlder(): Promise<void> {
+    const record = isNonEmpty(this.selectedId)
+      ? this.findRecord(this.selectedId)
+      : undefined;
+    const runtime = record ? this.runtimes.get(record.id) : undefined;
+    if (
+      runtime?.connection.older === undefined ||
+      runtime.connection.hasOlder?.() !== true ||
+      runtime.loadingOlder === true
+    ) {
+      return;
+    }
+    runtime.loadingOlder = true;
+    try {
+      const { updates } = await runtime.connection.older();
+      const history = runtime.updates;
+      if (!history) {
+        return;
+      }
+      history.unshift(...updates);
+      const items: TranscriptItem[] = [];
+      for (const update of history) {
+        reduceTranscript(items, update);
+      }
+      const ids = new Set(items.map((item) => item.id));
+      items.push(...runtime.items.filter((item) => !ids.has(item.id)));
+      runtime.items = items;
+      this.emit();
+    } finally {
+      runtime.loadingOlder = false;
+    }
+  }
+
   async retry(): Promise<void> {
     const record = isNonEmpty(this.selectedId)
       ? this.findRecord(this.selectedId)
@@ -782,8 +817,10 @@ export class Threads {
       }
     }
     await runtime.connection.setConfig(record.sessionId, configId, value);
-    option.currentValue = value;
-    this.emit();
+    if (record.owner !== "host") {
+      option.currentValue = value;
+      this.emit();
+    }
   }
 
   respond(id: string, response: ThreadInteractionResponse): void {
@@ -875,16 +912,18 @@ export class Threads {
     runtime.sessionOperation = "fork";
     this.emit();
     try {
+      const forkId = randomUUID();
       const setup = await runtime.connection.forkMessage(
         record.sessionId,
         record.workspace,
-        id
+        id,
+        forkId
       );
       const now = new Date().toISOString();
       const fork: StoredThread = {
         agentId: record.agentId,
         createdAt: now,
-        id: randomUUID(),
+        id: forkId,
         name: `${record.name} (fork)`,
         ...(record.owner === undefined ? {} : { owner: record.owner }),
         sessionId: setup.sessionId,
@@ -1152,6 +1191,7 @@ export class Threads {
         : {}),
       ...(runtime?.interaction ? { interaction: runtime.interaction } : {}),
       items,
+      ...(runtime?.connection.hasOlder?.() === true ? { hasOlder: true } : {}),
       name: record.name,
       status: runtime?.status ?? record.status,
       steering:
@@ -1314,14 +1354,22 @@ export class Threads {
             void this.persist(record);
             this.emit();
           },
+          interactionResolved: (id) => {
+            this.respond(id, { action: "cancel" });
+          },
           metadata: (update) => {
             if (update.removed === true) {
               void this.remove(record.id, true);
               return;
             }
-            if (update.name !== undefined && update.name !== record.name) {
+            if (
+              update.name !== undefined &&
+              (update.name !== record.name ||
+                (update.manualName !== undefined &&
+                  update.manualName !== record.manualName))
+            ) {
               record.name = update.name;
-              record.manualName = true;
+              record.manualName = update.manualName ?? true;
               void this.persist(record);
               this.emit();
             }
@@ -1340,6 +1388,7 @@ export class Threads {
       ),
       drafts: [],
       items: [],
+      ...(record.owner === "host" ? { updates: [] } : {}),
       operations: {
         branchSummary: false,
         forkMessage: false,
@@ -1364,7 +1413,7 @@ export class Threads {
     stopStreaming(runtime);
     runtime.status = "waiting";
     runtime.interaction = {
-      id: randomUUID(),
+      id: request.id ?? randomUUID(),
       kind: "permission",
       message: request.message,
       options: request.options,
@@ -1390,7 +1439,7 @@ export class Threads {
     runtime.interaction = {
       ...(isNonEmpty(request.context) ? { context: request.context } : {}),
       fields: request.fields,
-      id: randomUUID(),
+      id: request.id ?? randomUUID(),
       kind: "elicitation",
       message: request.message,
     };
@@ -1431,6 +1480,7 @@ export class Threads {
     if (update.type === "message" && update.kind !== "user") {
       this.markStreaming(runtime, update.text ?? "");
     }
+    runtime.updates?.push(update);
     const item = reduceTranscript(runtime.items, update);
     const archivedPlan =
       update.type === "plan" &&

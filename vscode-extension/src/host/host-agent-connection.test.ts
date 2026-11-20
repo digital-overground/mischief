@@ -22,6 +22,7 @@ class FakeHost {
     this.listener?.(event);
   }
 
+  // oxlint-disable-next-line complexity -- fake protocol handles each command variant in one place.
   async request(
     action: string,
     fields?: Record<string, unknown>
@@ -43,6 +44,19 @@ class FakeHost {
         ],
         id: THREAD_ID,
         sessionId: "session-1",
+        workspace: "/work",
+      });
+    }
+    if (action === "threadFork") {
+      return await Promise.resolve({
+        agentId: "codex-acp",
+        id: fields?.forkId,
+        operations: {
+          branchSummary: false,
+          forkMessage: true,
+          treeNavigation: false,
+        },
+        sessionId: "fork-session",
         workspace: "/work",
       });
     }
@@ -69,18 +83,27 @@ class FakeHost {
       });
     }
     if (action === "threadTranscript") {
-      return await Promise.resolve([
-        {
-          agentId: "codex-acp",
-          sessionId: "adopted-session",
-          threadId: fields?.threadId,
-          type: "acpUpdate",
-          update: {
-            content: { text: "Earlier answer", type: "text" },
-            sessionUpdate: "agent_message_chunk",
+      return await Promise.resolve({
+        cursor: fields?.cursor === undefined ? 1 : null,
+        events: [
+          {
+            agentId: "codex-acp",
+            sessionId: "adopted-session",
+            threadId: fields?.threadId,
+            type: "acpUpdate",
+            update: {
+              content: {
+                text:
+                  fields?.cursor === undefined
+                    ? "Earlier answer"
+                    : "Older answer",
+                type: "text",
+              },
+              sessionUpdate: "agent_message_chunk",
+            },
           },
-        },
-      ]);
+        ],
+      });
     }
     if (action === "threadPrompt") {
       if (fields?.text === "image" && !Array.isArray(fields.images)) {
@@ -110,6 +133,174 @@ const handlers = (): AgentHandlers => ({
 });
 
 describe("Host Agent connection", () => {
+  test("dismisses an elicitation answered by another client without answering it again", async () => {
+    const host = new FakeHost();
+    const agentHandlers = handlers();
+    let answer: (() => void) | undefined;
+    vi.mocked(agentHandlers.elicitation).mockImplementation(
+      async () =>
+        // oxlint-disable-next-line promise/avoid-new -- hold the local UI until the remote completion arrives.
+        await new Promise<{ action: "cancel" }>((resolve) => {
+          answer = () => {
+            resolve({ action: "cancel" });
+          };
+        })
+    );
+    const resolved = vi.fn<(id: string) => void>(() => {
+      answer?.();
+    });
+    const connection = hostConnectionFactory(host)(
+      { ...agentHandlers, interactionResolved: resolved },
+      "codex-acp"
+    );
+    await connection.create("/work", THREAD_ID);
+    host.emit({
+      interactionId: "question-1",
+      request: {
+        message: "Choose",
+        mode: "form",
+        requestedSchema: { properties: {}, type: "object" },
+        sessionId: "session-1",
+      },
+      threadId: THREAD_ID,
+      type: "acpElicitation",
+    });
+    host.emit({
+      interactionId: "question-1",
+      threadId: THREAD_ID,
+      type: "acpInteractionResolved",
+    });
+    await vi.waitFor(() => {
+      expect(resolved).toHaveBeenCalledWith("question-1");
+    });
+    expect(
+      host.requests.filter(({ action }) => action === "acpRespondElicitation")
+    ).toStrictEqual([]);
+    expect(agentHandlers.error).not.toHaveBeenCalled();
+    connection.dispose();
+  });
+
+  test("does not restore an interaction completed before its Thread was attached", async () => {
+    const host = new FakeHost();
+    const factory = hostConnectionFactory(host);
+    host.emit({
+      interactionId: "old-question",
+      request: {
+        message: "Choose",
+        mode: "form",
+        requestedSchema: { properties: {}, type: "object" },
+        sessionId: "session-1",
+      },
+      threadId: THREAD_ID,
+      type: "acpElicitation",
+    });
+    host.emit({
+      interactionId: "old-question",
+      threadId: THREAD_ID,
+      type: "acpInteractionResolved",
+    });
+    const agentHandlers = handlers();
+    const connection = factory(agentHandlers, "codex-acp");
+    await connection.create("/work", THREAD_ID);
+    expect(agentHandlers.elicitation).not.toHaveBeenCalled();
+    connection.dispose();
+  });
+
+  test("dismisses a permission answered elsewhere without sending a cancellation", async () => {
+    const host = new FakeHost();
+    const agentHandlers = handlers();
+    let answer: (() => void) | undefined;
+    vi.mocked(agentHandlers.permission).mockImplementation(
+      async () =>
+        // oxlint-disable-next-line promise/avoid-new -- the UI stays pending until another client resolves it.
+        await new Promise<{ cancelled: true }>((resolve) => {
+          answer = () => {
+            resolve({ cancelled: true });
+          };
+        })
+    );
+    const resolved = vi.fn<(id: string) => void>(() => {
+      answer?.();
+    });
+    const connection = hostConnectionFactory(host)(
+      { ...agentHandlers, interactionResolved: resolved },
+      "codex-acp"
+    );
+    await connection.create("/work", THREAD_ID);
+    host.emit({
+      interactionId: "permission-1",
+      request: {
+        options: [{ kind: "allow_once", name: "Allow", optionId: "allow" }],
+        sessionId: "session-1",
+        toolCall: { title: "Test", toolCallId: "tool-1" },
+      },
+      threadId: THREAD_ID,
+      type: "acpPermission",
+    });
+    host.emit({
+      interactionId: "permission-1",
+      threadId: THREAD_ID,
+      type: "acpInteractionResolved",
+    });
+    await vi.waitFor(() => {
+      expect(resolved).toHaveBeenCalledWith("permission-1");
+    });
+    expect(
+      host.requests.filter(({ action }) => action === "acpRespondPermission")
+    ).toStrictEqual([]);
+    expect(agentHandlers.error).not.toHaveBeenCalled();
+    connection.dispose();
+  });
+
+  test("applies Host model and thinking snapshots to an attached Thread", async () => {
+    const host = new FakeHost();
+    const agentHandlers = handlers();
+    const connection = hostConnectionFactory(host)(agentHandlers, "codex-acp");
+    await connection.create("/work", THREAD_ID);
+    const options = [
+      {
+        currentValue: "deep",
+        id: "model",
+        name: "Model",
+        options: [{ name: "Deep", value: "deep" }],
+        type: "select",
+      },
+      {
+        currentValue: "high",
+        id: "thinking",
+        name: "Thinking",
+        options: [{ name: "High", value: "high" }],
+        type: "select",
+      },
+    ];
+    host.emit({
+      threads: [
+        {
+          agentId: "codex-acp",
+          configOptions: options,
+          id: THREAD_ID,
+          sessionId: "session-1",
+          workspace: "/work",
+        },
+      ],
+      type: "threads",
+    });
+    expect(agentHandlers.update).toHaveBeenCalledWith({
+      options,
+      type: "config",
+    });
+    await connection.setConfig("session-1", "thinking", "low");
+    expect(host.requests).toContainEqual({
+      action: "threadSetConfig",
+      fields: { configId: "thinking", threadId: THREAD_ID, value: "low" },
+    });
+    expect(agentHandlers.update).toHaveBeenLastCalledWith({
+      options,
+      type: "config",
+    });
+    connection.dispose();
+  });
+
   test("creates, prompts, translates updates, and answers permissions", async () => {
     const host = new FakeHost();
     const agentHandlers = handlers();
@@ -202,6 +393,26 @@ describe("Host Agent connection", () => {
     ]);
   });
 
+  test("forks a Host-owned Thread using the caller's canonical ID", async () => {
+    const host = new FakeHost();
+    const connection = hostConnectionFactory(host)(handlers(), "codex-acp", {
+      owner: "host",
+      threadId: THREAD_ID,
+    });
+    await connection.load("adopted-session", "/work");
+    const forkId = "123e4567-e89b-4d3a-a456-426614174001";
+    await expect(
+      connection.forkMessage("adopted-session", "/work", "message-1", forkId)
+    ).resolves.toMatchObject({
+      operations: { forkMessage: true },
+      sessionId: "fork-session",
+    });
+    expect(host.requests).toContainEqual({
+      action: "threadFork",
+      fields: { forkId, messageId: "message-1", threadId: THREAD_ID },
+    });
+  });
+
   test("publishes Host rename and removal snapshots to its client", () => {
     const host = new FakeHost();
     const metadata = vi.fn<NonNullable<AgentHandlers["metadata"]>>();
@@ -221,6 +432,7 @@ describe("Host Agent connection", () => {
     void connection.remove?.();
 
     expect(metadata).toHaveBeenNthCalledWith(1, {
+      manualName: true,
       name: "Renamed elsewhere",
     });
     expect(metadata).toHaveBeenNthCalledWith(2, { removed: true });
@@ -231,6 +443,31 @@ describe("Host Agent connection", () => {
     expect(host.requests).toContainEqual({
       action: "threadRemove",
       fields: { threadId: THREAD_ID },
+    });
+  });
+
+  test("syncs Agent titles and manual rename state from Host snapshots", () => {
+    const host = new FakeHost();
+    const metadata = vi.fn<NonNullable<AgentHandlers["metadata"]>>();
+    hostConnectionFactory(host)({ ...handlers(), metadata }, "magpi-acp", {
+      owner: "host",
+      threadId: THREAD_ID,
+    });
+    host.emit({
+      threads: [
+        {
+          agentId: "magpi-acp",
+          id: THREAD_ID,
+          manualName: false,
+          name: "Agent title",
+          workspace: "/work",
+        },
+      ],
+      type: "threads",
+    });
+    expect(metadata).toHaveBeenCalledWith({
+      manualName: false,
+      name: "Agent title",
     });
   });
 
@@ -284,6 +521,21 @@ describe("Host Agent connection", () => {
       kind: "assistant",
       text: "Earlier answer",
       type: "message",
+    });
+    expect(connection.hasOlder?.()).toBeTruthy();
+    await expect(connection.older?.()).resolves.toStrictEqual({
+      hasOlder: false,
+      updates: [{ kind: "assistant", text: "Older answer", type: "message" }],
+    });
+    expect({
+      hasOlder: connection.hasOlder?.(),
+      request: host.requests.at(-1),
+    }).toStrictEqual({
+      hasOlder: false,
+      request: {
+        action: "threadTranscript",
+        fields: { cursor: 1, threadId: THREAD_ID },
+      },
     });
   });
 

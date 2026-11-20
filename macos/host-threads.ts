@@ -10,6 +10,8 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 
+import type { SessionUpdate } from "@agentclientprotocol/sdk";
+
 import {
   isAgentId,
   parseThreadRecord,
@@ -50,6 +52,16 @@ interface HostAcpSession {
 interface HostThreadAcp {
   cancel: (agentId: string, sessionId: string) => Promise<void>;
   create: (agentId: string, cwd: string) => Promise<HostAcpSession>;
+  forkMessage?: (
+    agentId: string,
+    sessionId: string,
+    cwd: string,
+    messageId: string
+  ) => Promise<HostAcpSession>;
+  history?: (
+    agentId: string,
+    cwd: string
+  ) => Promise<{ sessionId: string; title?: string }[]>;
   load: (
     agentId: string,
     sessionId: string,
@@ -86,6 +98,7 @@ export class HostThreads {
   private readonly cancelled = new Set<string>();
   private readonly configOptions = new Map<string, unknown[] | null>();
   private readonly loaded = new Set<string>();
+  private readonly loading = new Map<string, Promise<void>>();
   private readonly operations = new Map<string, HostOperations>();
   // shortcut: queued text is lost on Host crash, persist drafts if crash recovery must preserve queues.
   private readonly queues = new Map<string, QueuedPrompt[]>();
@@ -146,8 +159,10 @@ export class HostThreads {
     return threads;
   }
 
-  snapshot(): HostThreadRecord[] {
-    return [...this.records.values()].map((record) => ({ ...record }));
+  snapshot(): HostThreadSession[] {
+    return [...this.records.values()].map((record) =>
+      this.sessionRecord(record)
+    );
   }
 
   queueSnapshots(): unknown[] {
@@ -255,6 +270,76 @@ export class HostThreads {
       throw new Error("Thread has no Agent session; retry its prompt instead");
     }
     await this.ensureLoaded(record);
+    void this.refreshTitle(record);
+    return this.sessionRecord(record);
+  }
+
+  async forkMessage(
+    threadId: string,
+    forkId: string,
+    messageId: string
+  ): Promise<HostThreadSession> {
+    if (
+      !THREAD_UUID_PATTERN.test(forkId) ||
+      !messageId ||
+      messageId.length > 32_768
+    ) {
+      throw new TypeError("Invalid Thread fork request");
+    }
+    const source = this.require(threadId);
+    if (this.records.has(forkId) || forkId === threadId) {
+      throw new Error(`Thread already exists: ${forkId}`);
+    }
+    if (
+      this.active.has(threadId) ||
+      source.status !== "idle" ||
+      source.sessionId === undefined ||
+      source.sessionId.length === 0
+    ) {
+      throw new Error("Stop the Thread before forking it");
+    }
+    await this.ensureLoaded(source);
+    if (
+      this.operations.get(threadId)?.forkMessage !== true ||
+      this.acp.forkMessage === undefined
+    ) {
+      throw new Error("This Agent does not support Fork at a message");
+    }
+    const session = await this.acp.forkMessage(
+      source.agentId,
+      source.sessionId,
+      source.workspace,
+      messageId
+    );
+    if (
+      [...this.records.values()].some(
+        (record) =>
+          record.agentId === source.agentId &&
+          record.sessionId === session.sessionId
+      )
+    ) {
+      throw new Error("Agent returned an existing Thread session");
+    }
+    const now = new Date().toISOString();
+    const record: HostThreadRecord = {
+      agentId: source.agentId,
+      createdAt: now,
+      id: forkId,
+      manualName: true,
+      name: `${source.name} (fork)`,
+      owner: "host",
+      sessionId: session.sessionId,
+      status: "idle",
+      updatedAt: now,
+      version: 1,
+      workspace: source.workspace,
+      writtenAt: Date.now(),
+    };
+    await this.write(record);
+    this.records.set(forkId, record);
+    this.rememberSession(forkId, session);
+    this.loaded.add(forkId);
+    this.changed();
     return this.sessionRecord(record);
   }
 
@@ -338,10 +423,31 @@ export class HostThreads {
     });
   }
 
-  async transcript(threadId: string): Promise<HostAcpEvent[]> {
+  async transcript(
+    threadId: string,
+    cursor?: number
+  ): Promise<{ cursor: number | null; events: HostAcpEvent[] }> {
     const record = this.require(threadId);
     await this.ensureLoaded(record);
-    return [...(this.transcripts.get(threadId) ?? [])];
+    const transcript = this.transcripts.get(threadId) ?? [];
+    const end = cursor ?? transcript.length;
+    if (!Number.isSafeInteger(end) || end < 0 || end > transcript.length) {
+      throw new TypeError("Invalid transcript cursor");
+    }
+    let start = end;
+    let bytes = 0;
+    while (start > 0 && end - start < 256) {
+      const size = Buffer.byteLength(JSON.stringify(transcript[start - 1]));
+      if (start < end && bytes + size > 1024 * 1024) {
+        break;
+      }
+      bytes += size;
+      start -= 1;
+    }
+    return {
+      cursor: start === 0 ? null : start,
+      events: transcript.slice(start, end),
+    };
   }
 
   async setConfig(
@@ -379,13 +485,14 @@ export class HostThreads {
     }
   }
 
+  // oxlint-disable-next-line complexity -- routes ACP updates, interactions, and load-time history.
   event(event: HostAcpEvent): void {
     if (event.type === "acpError") {
       this.emit(event);
       return;
     }
     let sessionId: string | undefined;
-    if (event.type === "acpUpdate") {
+    if (event.type === "acpUpdate" || event.type === "acpInteractionResolved") {
       ({ sessionId } = event);
     } else if ("sessionId" in event.request) {
       ({ sessionId } = event.request);
@@ -398,10 +505,15 @@ export class HostThreads {
     );
     if (
       record &&
-      (event.type === "acpPermission" || event.type === "acpElicitation") &&
-      record.status === "running"
+      (((event.type === "acpPermission" || event.type === "acpElicitation") &&
+        record.status === "running") ||
+        (event.type === "acpInteractionResolved" &&
+          record.status === "waiting"))
     ) {
-      this.update(record, "waiting").catch((error: unknown) => {
+      this.update(
+        record,
+        event.type === "acpInteractionResolved" ? "running" : "waiting"
+      ).catch((error: unknown) => {
         this.emit({
           message: String(error),
           threadId: record.id,
@@ -411,14 +523,46 @@ export class HostThreads {
     }
     const outgoing = record ? { ...event, threadId: record.id } : event;
     if (record && event.type === "acpUpdate") {
+      if (event.update.sessionUpdate === "config_option_update") {
+        this.configOptions.set(record.id, event.update.configOptions);
+        if (!this.loading.has(record.id)) {
+          this.changed();
+          this.emit(outgoing);
+        }
+        return;
+      }
+      this.applyAgentTitle(record, event.update);
       const transcript = this.transcripts.get(record.id) ?? [];
       transcript.push(outgoing);
-      if (transcript.length > 10_000) {
-        transcript.shift();
-      }
       this.transcripts.set(record.id, transcript);
     }
-    this.emit(outgoing);
+    if (!record || !this.loading.has(record.id) || event.type !== "acpUpdate") {
+      this.emit(outgoing);
+    }
+  }
+
+  private applyAgentTitle(
+    record: HostThreadRecord,
+    update: SessionUpdate
+  ): void {
+    if (update.sessionUpdate !== "session_info_update") {
+      return;
+    }
+    const title = update.title?.trim();
+    if (
+      record.manualName === true ||
+      title === undefined ||
+      title.length === 0 ||
+      title.length > 200 ||
+      /[\r\n]/u.test(title) ||
+      title === record.name
+    ) {
+      return;
+    }
+    record.name = title;
+    this.update(record, record.status, record.error).catch((error: unknown) => {
+      this.emit({ message: String(error), threadId: record.id, type: "error" });
+    });
   }
 
   private require(threadId: string): HostThreadRecord {
@@ -449,19 +593,35 @@ export class HostThreads {
   }
 
   private async ensureLoaded(record: HostThreadRecord): Promise<void> {
-    if (record.sessionId === undefined) {
+    const { sessionId } = record;
+    if (sessionId === undefined) {
       throw new Error("Thread has no Agent session");
     }
     if (this.loaded.has(record.id)) {
       return;
     }
-    const session = await this.acp.load(
-      record.agentId,
-      record.sessionId,
-      record.workspace
-    );
-    this.rememberSession(record.id, session);
-    this.loaded.add(record.id);
+    let loading = this.loading.get(record.id);
+    if (!loading) {
+      loading = (async () => {
+        await Promise.resolve();
+        const session = await this.acp.load(
+          record.agentId,
+          sessionId,
+          record.workspace
+        );
+        this.rememberSession(record.id, session);
+        this.loaded.add(record.id);
+        this.changed();
+      })();
+      this.loading.set(record.id, loading);
+    }
+    try {
+      await loading;
+    } finally {
+      if (this.loading.get(record.id) === loading) {
+        this.loading.delete(record.id);
+      }
+    }
   }
 
   private async runQueue(record: HostThreadRecord): Promise<void> {
@@ -538,11 +698,43 @@ export class HostThreads {
         [prompt] = queue;
       }
       await this.update(record, "idle");
+      void this.refreshTitle(record);
     } finally {
       this.active.delete(record.id);
       if (queue.length > 0) {
         void this.runQueue(record);
       }
+    }
+  }
+
+  private async refreshTitle(record: HostThreadRecord): Promise<void> {
+    if (
+      record.name !== "New Thread" ||
+      record.manualName === true ||
+      record.sessionId === undefined ||
+      this.acp.history === undefined
+    ) {
+      return;
+    }
+    try {
+      const history = await this.acp.history(record.agentId, record.workspace);
+      if (
+        this.records.get(record.id) !== record ||
+        record.name !== "New Thread"
+      ) {
+        return;
+      }
+      const title = history.find(
+        (entry) => entry.sessionId === record.sessionId
+      )?.title;
+      if (title !== undefined) {
+        this.applyAgentTitle(record, {
+          sessionUpdate: "session_info_update",
+          title,
+        });
+      }
+    } catch {
+      // Thread History is optional; naming must never turn a successful prompt into an error.
     }
   }
 

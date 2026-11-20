@@ -126,6 +126,7 @@ export type WebviewToHostMessage =
         | "clearPlan"
         | "clearSteering"
         | "retry"
+        | "loadOlder"
         | "draftsConsumed"
         | "authenticate";
     }

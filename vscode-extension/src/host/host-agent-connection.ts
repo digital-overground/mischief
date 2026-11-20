@@ -24,6 +24,7 @@ import type {
   AgentHistoryEntry,
   AgentPromptResult,
   AgentSession,
+  AgentUpdate,
   PromptImage,
 } from "../threads/model";
 import type { HostEvent } from "./host-client";
@@ -41,6 +42,7 @@ interface HostThread {
   configOptions?: unknown[] | null;
   error?: string;
   id: string;
+  manualName?: boolean;
   name?: string;
   operations?: {
     branchSummary: boolean;
@@ -80,6 +82,7 @@ const hostOperations = (
   };
 };
 
+// oxlint-disable-next-line complexity -- validates each field of the Host Thread protocol envelope.
 const hostThread = (value: unknown): HostThread => {
   if (
     !isRecord(value) ||
@@ -92,6 +95,7 @@ const hostThread = (value: unknown): HostThread => {
       value.configOptions !== null &&
       !Array.isArray(value.configOptions)) ||
     (value.error !== undefined && typeof value.error !== "string") ||
+    (value.manualName !== undefined && typeof value.manualName !== "boolean") ||
     (value.name !== undefined && typeof value.name !== "string")
   ) {
     throw new Error("Mischief Host returned an invalid Thread");
@@ -103,6 +107,7 @@ const hostThread = (value: unknown): HostThread => {
       : { configOptions: value.configOptions }),
     ...(value.error === undefined ? {} : { error: value.error }),
     id: value.id,
+    ...(value.manualName === undefined ? {} : { manualName: value.manualName }),
     ...(value.name === undefined ? {} : { name: value.name }),
     ...(value.operations === undefined
       ? {}
@@ -110,6 +115,22 @@ const hostThread = (value: unknown): HostThread => {
     ...(value.sessionId === undefined ? {} : { sessionId: value.sessionId }),
     workspace: value.workspace,
   };
+};
+
+const transcriptPage = (
+  value: unknown
+): { cursor: number | null; events: unknown[] } => {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.events) ||
+    (value.cursor !== null &&
+      (typeof value.cursor !== "number" ||
+        !Number.isSafeInteger(value.cursor) ||
+        value.cursor < 0))
+  ) {
+    throw new Error("Mischief Host returned an invalid transcript page");
+  }
+  return { cursor: value.cursor, events: value.events };
 };
 
 const promptId = (value: unknown): string => {
@@ -216,24 +237,46 @@ class HostAgentCoordinator {
     this.threads.set(thread.id, thread);
   }
 
-  replay(threadId: string, events: unknown): void {
-    if (!Array.isArray(events)) {
+  replay(threadId: string, events: unknown[]): void {
+    for (const event of events) {
+      this.transcriptUpdate(threadId, event);
+      if (isRecord(event)) {
+        this.update({ ...event, type: "acpUpdate" });
+      }
+    }
+  }
+
+  olderUpdates(threadId: string, events: unknown[]): AgentUpdate[] {
+    return events.flatMap((event) => {
+      const update = this.transcriptUpdate(threadId, event);
+      return update ? [update] : [];
+    });
+  }
+
+  private transcriptUpdate(
+    threadId: string,
+    event: unknown
+  ): AgentUpdate | undefined {
+    if (
+      !isRecord(event) ||
+      event.type !== "acpUpdate" ||
+      event.threadId !== threadId ||
+      !isRecord(event.update) ||
+      typeof event.update.sessionUpdate !== "string"
+    ) {
       throw new TypeError(
         "Mischief Host returned an invalid Thread transcript"
       );
     }
-    for (const event of events) {
-      if (
-        !isRecord(event) ||
-        event.type !== "acpUpdate" ||
-        event.threadId !== threadId
-      ) {
-        throw new TypeError(
-          "Mischief Host returned an invalid Thread transcript"
-        );
-      }
-      this.update({ ...event, type: "acpUpdate" });
-    }
+    const thread = this.threads.get(threadId);
+    // The signed Host forwards SDK-parsed session updates over the private protocol.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- validated protocol envelope above.
+    const update = event.update as SessionUpdate;
+    return translateSessionUpdate(
+      update,
+      isRecord(event.meta) ? event.meta : undefined,
+      thread ? this.extension(thread.agentId) : undefined
+    );
   }
 
   hasThread(id: string): boolean {
@@ -274,7 +317,23 @@ class HostAgentCoordinator {
         if (Array.isArray(event.threads)) {
           for (const candidate of event.threads) {
             try {
-              this.remember(hostThread(candidate));
+              const thread = hostThread(candidate);
+              this.remember(thread);
+              if (thread.configOptions !== undefined) {
+                this.connectionFor({
+                  threadId: thread.id,
+                  type: "threads",
+                })?.handlers.update({
+                  options: agentSession(thread).configOptions,
+                  type: "config",
+                });
+              }
+              if (thread.name !== undefined) {
+                this.connectionFor({
+                  threadId: thread.id,
+                  type: "threads",
+                })?.syncTitle(thread.name, thread.manualName === true);
+              }
             } catch {
               // Ignore one malformed snapshot entry; command responses remain strictly validated.
             }
@@ -326,6 +385,16 @@ class HostAgentCoordinator {
       }
       case "acpElicitation": {
         void this.elicitation(event);
+        break;
+      }
+      case "acpInteractionResolved": {
+        if (typeof event.interactionId === "string") {
+          this.deferredInteractions.delete(event.interactionId);
+          this.interactions.delete(event.interactionId);
+          this.connectionFor(event)?.handlers.interactionResolved?.(
+            event.interactionId
+          );
+        }
         break;
       }
       case "acpError": {
@@ -410,14 +479,21 @@ class HostAgentCoordinator {
       // The signed Host receives this request from the ACP SDK before forwarding it.
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- required request fields are checked above.
       const request = event.request as unknown as RequestPermissionRequest;
-      const response = await connection.handlers.permission(
-        permissionRequest(request)
-      );
+      const response = await connection.handlers.permission({
+        ...permissionRequest(request),
+        id: event.interactionId,
+      });
+      if (!this.interactions.has(event.interactionId)) {
+        return;
+      }
       await this.transport.request("acpRespondPermission", {
         interactionId: event.interactionId,
         response: permissionResponse(response),
       });
     } catch (error) {
+      if (!this.interactions.has(event.interactionId)) {
+        return;
+      }
       connection.handlers.error(
         error instanceof Error ? error : new Error(String(error))
       );
@@ -463,14 +539,21 @@ class HostAgentCoordinator {
         CreateElicitationRequest,
         { mode: "form" }
       >;
-      const response = await connection.handlers.elicitation(
-        elicitationRequest(request)
-      );
+      const response = await connection.handlers.elicitation({
+        ...elicitationRequest(request),
+        id: event.interactionId,
+      });
+      if (!this.interactions.has(event.interactionId)) {
+        return;
+      }
       await this.transport.request("acpRespondElicitation", {
         interactionId: event.interactionId,
         response: elicitationResponse(request, response),
       });
     } catch (error) {
+      if (!this.interactions.has(event.interactionId)) {
+        return;
+      }
       connection.handlers.error(
         error instanceof Error ? error : new Error(String(error))
       );
@@ -526,9 +609,11 @@ class HostAgentCoordinator {
 }
 
 class HostAgentConnection implements AgentConnection {
+  private cursor: number | null = null;
   readonly agentId: AgentId;
   readonly handlers: AgentHandlers;
   private readonly coordinator: HostAgentCoordinator;
+  private cwd?: string;
   private disposed = false;
   private removing = false;
   threadId?: string;
@@ -547,6 +632,7 @@ class HostAgentConnection implements AgentConnection {
 
   async create(cwd: string, threadId?: string): Promise<AgentSession> {
     this.requireActive();
+    this.cwd = cwd;
     const requestedId = threadId ?? this.threadId;
     const thread = hostThread(
       await this.coordinator.transport.request("threadCreate", {
@@ -564,6 +650,7 @@ class HostAgentConnection implements AgentConnection {
 
   async load(sessionId: string, cwd: string): Promise<AgentSession> {
     this.requireActive();
+    this.cwd = cwd;
     let known: HostThread;
     try {
       known = this.coordinator.threadFor(this.agentId, sessionId, cwd);
@@ -593,16 +680,47 @@ class HostAgentConnection implements AgentConnection {
       throw new Error("Mischief Host loaded another Thread ID");
     }
     this.assign(thread);
+    if (thread.name !== undefined) {
+      this.syncTitle(thread.name, thread.manualName === true);
+    }
     const hostError = this.coordinator.surfaceError(thread);
     if (hostError !== undefined) {
       throw new Error(hostError);
     }
-    const transcript = await this.coordinator.transport.request(
-      "threadTranscript",
-      { threadId: thread.id }
+    const page = transcriptPage(
+      await this.coordinator.transport.request("threadTranscript", {
+        threadId: thread.id,
+      })
     );
-    this.coordinator.replay(thread.id, transcript);
+    this.cursor = page.cursor;
+    this.coordinator.replay(thread.id, page.events);
     return agentSession(thread);
+  }
+
+  hasOlder(): boolean {
+    return this.cursor !== null;
+  }
+
+  async older(): Promise<{ hasOlder: boolean; updates: AgentUpdate[] }> {
+    this.requireActive();
+    const { cursor } = this;
+    if (cursor === null || this.threadId === undefined) {
+      return { hasOlder: false, updates: [] };
+    }
+    const page = transcriptPage(
+      await this.coordinator.transport.request("threadTranscript", {
+        cursor,
+        threadId: this.threadId,
+      })
+    );
+    if (page.cursor !== null && page.cursor >= cursor) {
+      throw new Error(
+        "Mischief Host returned a non-advancing transcript cursor"
+      );
+    }
+    const updates = this.coordinator.olderUpdates(this.threadId, page.events);
+    this.cursor = page.cursor;
+    return { hasOlder: this.hasOlder(), updates };
   }
 
   async prompt(
@@ -623,8 +741,12 @@ class HostAgentConnection implements AgentConnection {
 
   async authenticate(methodId: string): Promise<void> {
     this.requireActive();
+    if (this.cwd === undefined) {
+      throw new Error("Agent Workspace is not selected");
+    }
     await this.coordinator.transport.request("agentAuthenticate", {
       agentId: this.agentId,
+      cwd: this.cwd,
       methodId,
     });
   }
@@ -638,6 +760,7 @@ class HostAgentConnection implements AgentConnection {
 
   async history(cwd: string): Promise<AgentHistoryEntry[]> {
     this.requireActive();
+    this.cwd = cwd;
     const value = await this.coordinator.transport.request("agentHistory", {
       agentId: this.agentId,
       cwd,
@@ -674,9 +797,32 @@ class HostAgentConnection implements AgentConnection {
     });
   }
 
-  async forkMessage(): Promise<never> {
-    this.requireActive();
-    return await unsupported("message forking");
+  async forkMessage(
+    sessionId: string,
+    cwd: string,
+    messageId: string,
+    forkId?: string
+  ): Promise<AgentSession> {
+    this.requireSession(sessionId);
+    if (cwd !== this.cwd || forkId === undefined) {
+      throw new Error("Invalid Host Thread fork request");
+    }
+    const thread = hostThread(
+      await this.coordinator.transport.request("threadFork", {
+        forkId,
+        messageId,
+        threadId: this.threadId,
+      })
+    );
+    if (
+      thread.id !== forkId ||
+      thread.agentId !== this.agentId ||
+      thread.workspace !== cwd
+    ) {
+      throw new Error("Mischief Host returned another forked Thread");
+    }
+    this.coordinator.remember(thread);
+    return agentSession(thread);
   }
 
   async navigateTreeMessage(): Promise<never> {
@@ -685,7 +831,11 @@ class HostAgentConnection implements AgentConnection {
   }
 
   renamed(name: string): void {
-    this.handlers.metadata?.({ name });
+    this.handlers.metadata?.({ manualName: true, name });
+  }
+
+  syncTitle(name: string, manualName: boolean): void {
+    this.handlers.metadata?.({ manualName, name });
   }
 
   removed(): void {

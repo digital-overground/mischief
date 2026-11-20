@@ -89,6 +89,8 @@ class FakeAgent {
   navigationResult: { draft?: string } = { draft: "Try this again" };
   navigationError?: Error;
   navigationGate?: Deferred;
+  metadata?: AgentHandlers["metadata"];
+  interactionResolved?: AgentHandlers["interactionResolved"];
   update?: AgentHandlers["update"];
   private readonly permissionStartedDeferred = deferred();
   private readonly elicitationStartedDeferred = deferred();
@@ -123,6 +125,8 @@ class FakeAgent {
   }
 
   private connection(handlers: AgentHandlers): AgentConnection {
+    this.metadata = handlers.metadata;
+    this.interactionResolved = handlers.interactionResolved;
     this.update = handlers.update;
     return {
       authenticate: async (methodId) => {
@@ -564,6 +568,22 @@ describe("threads module", () => {
       selected: { name: "New Thread" },
       threads: [{ updatedAt }],
     });
+  });
+
+  test("uses the Host title and clears a stale client-only manual-name flag", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.newThread();
+    const id = threads.snapshot().selected?.id ?? "";
+    await threads.rename(id, "New Thread");
+    agent.metadata?.({ manualName: false, name: "Agent title" });
+    await vi.waitFor(() => {
+      expect(database.snapshot().threads).toMatchObject([
+        { manualName: false, name: "Agent title" },
+      ]);
+    });
+    expect(threads.snapshot().selected?.name).toBe("Agent title");
   });
 
   test("a user-renamed Thread ignores later automatic titles", async () => {
@@ -1230,6 +1250,22 @@ describe("threads module", () => {
       action: "accept",
       values: { choice: "a" },
     });
+  });
+
+  test("remote completion dismisses only the matching inline interaction", async () => {
+    const agent = new FakeAgent();
+    agent.askElicitation = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    const prompting = threads.prompt("Choose a path");
+    await agent.elicitationStarted;
+    const interaction = threads.snapshot().selected?.interaction;
+    agent.interactionResolved?.("different-request");
+    expect(threads.snapshot().selected?.interaction).toStrictEqual(interaction);
+    agent.interactionResolved?.(interaction?.id ?? "");
+    expect(threads.snapshot().selected).toMatchObject({ status: "running" });
+    expect(threads.snapshot().selected?.interaction).toBeUndefined();
+    await prompting;
   });
 
   test("stopping during an elicitation cancels the request and the turn", async () => {

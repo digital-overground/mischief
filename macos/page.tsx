@@ -5,7 +5,8 @@ import type {
   SessionConfigOption,
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
-import { useEffect, useMemo, useRef, useState } from "react";
+import MarkdownIt from "markdown-it";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 import {
@@ -18,6 +19,7 @@ import {
 } from "../shared/acp/transcript";
 import agentConfig from "../shared/agents/config.json";
 import { SvgIcon } from "../shared/icons/icon";
+import { ConfigControl } from "../shared/webview/config-control";
 import {
   Interaction,
   InteractionQuestion,
@@ -82,6 +84,10 @@ interface PendingRequest {
   reject: (error: Error) => void;
   resolve: (value: unknown) => void;
 }
+interface TranscriptPage {
+  cursor: number | null;
+  events: unknown[];
+}
 interface DiffPreview {
   newText: string;
   oldText?: string;
@@ -103,10 +109,24 @@ declare global {
   }
 }
 
+const markdown = new MarkdownIt({ breaks: true, html: false, linkify: true });
 const pending = new Map<string, PendingRequest>();
 let requestNumber = 0;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
+const transcriptPage = (value: unknown): TranscriptPage => {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.events) ||
+    (value.cursor !== null &&
+      (typeof value.cursor !== "number" ||
+        !Number.isSafeInteger(value.cursor) ||
+        value.cursor < 0))
+  ) {
+    throw new Error("Mischief Host returned an invalid transcript page");
+  }
+  return { cursor: value.cursor, events: value.events };
+};
 const send = (action: string, values: Record<string, unknown> = {}): void => {
   window.webkit.messageHandlers.diagnostic.postMessage({
     action,
@@ -124,7 +144,14 @@ const request = async <T,>(
   const result = new Promise<unknown>((resolve, reject) => {
     pending.set(requestId, { reject, resolve });
   });
-  send(action, { ...values, requestId });
+  try {
+    send(action, { ...values, requestId });
+  } catch (error) {
+    pending
+      .get(requestId)
+      ?.reject(error instanceof Error ? error : new Error(String(error)));
+    pending.delete(requestId);
+  }
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- callers provide the result type for their correlated Host command.
   return (await result) as T;
 };
@@ -165,7 +192,8 @@ const isHostThreads = (value: unknown): value is HostThreadsMessage =>
 
 const appendTranscript = (
   items: RenderedTranscriptItem[],
-  event: unknown
+  event: unknown,
+  copy = true
 ): RenderedTranscriptItem[] => {
   if (!isRecord(event) || !isRecord(event.update)) {
     return items;
@@ -176,14 +204,21 @@ const appendTranscript = (
   if (update === undefined) {
     return items;
   }
-  const next = [...items];
-  reduceTranscriptUpdate(next, update);
+  const next = copy ? items.map((item) => ({ ...item })) : items;
+  const changed = reduceTranscriptUpdate(next, update);
+  if (
+    changed?.text !== undefined &&
+    changed.kind !== "tool" &&
+    changed.kind !== "plan"
+  ) {
+    changed.html = markdown.render(changed.text);
+  }
   return next;
 };
 const transcriptItems = (events: unknown[]): RenderedTranscriptItem[] => {
   let items: RenderedTranscriptItem[] = [];
   for (const event of events) {
-    items = appendTranscript(items, event);
+    items = appendTranscript(items, event, false);
   }
   return items;
 };
@@ -195,59 +230,34 @@ const readImage = async (file: File): Promise<PromptImage> => {
   }
   return { data: btoa(binary), mimeType: file.type };
 };
-const optionValues = (option: SessionConfigOption) =>
-  option.type === "select"
-    ? option.options.flatMap((candidate) =>
-        "options" in candidate ? candidate.options : [candidate]
-      )
-    : [];
-
 const ThreadConfig = ({
+  agentId,
   options,
   threadId,
+  onError,
 }: {
+  agentId: AgentId;
   options: SessionConfigOption[];
   threadId: string;
+  onError: (message: string) => void;
 }): React.JSX.Element => (
   <div className="thread-configs">
-    {options.map((option) =>
-      option.type === "boolean" ? (
-        <label className="thread-config" key={option.id}>
-          <input
-            defaultChecked={option.currentValue}
-            onChange={(event) => {
-              void request("threadSetConfig", {
-                configId: option.id,
-                threadId,
-                value: event.currentTarget.checked,
-              });
-            }}
-            type="checkbox"
-          />
-          {option.name}
-        </label>
-      ) : (
-        <label className="thread-config" key={option.id}>
-          <span>{option.name}</span>
-          <select
-            defaultValue={option.currentValue}
-            onChange={(event) => {
-              void request("threadSetConfig", {
-                configId: option.id,
-                threadId,
-                value: event.currentTarget.value,
-              });
-            }}
-          >
-            {optionValues(option).map((choice) => (
-              <option key={choice.value} value={choice.value}>
-                {choice.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      )
-    )}
+    {options.map((option) => (
+      <ConfigControl
+        agentId={agentId}
+        config={option}
+        key={`${option.id}:${option.currentValue}`}
+        onChange={(value) => {
+          void request("threadSetConfig", {
+            configId: option.id,
+            threadId,
+            value,
+          }).catch((error: unknown) => {
+            onError(error instanceof Error ? error.message : String(error));
+          });
+        }}
+      />
+    ))}
   </div>
 );
 
@@ -406,33 +416,45 @@ const Composer = ({
     }
   }, [drafts, onDraftsConsumed]);
   const [images, setImages] = useState<PromptImage[]>([]);
-  const submit = (): void => {
-    if (interaction?.kind === "elicitation") {
-      const accepted = respondToElicitation(
-        interaction,
-        text,
-        (id, response) => {
-          void respondToInteraction(threadId, id, interaction.kind, response);
-        }
-      );
-      if (accepted) {
+  const [sending, setSending] = useState(false);
+  const submitting = useRef(false);
+  const sendRequest = (operation: Promise<unknown>): void => {
+    submitting.current = true;
+    setSending(true);
+    onError("");
+    void operation
+      .then(() => {
         setText("");
-      }
-      return;
-    }
-    if (text.trim().length === 0 && images.length === 0) {
-      return;
-    }
-    void request("threadPrompt", { images, text, threadId }).catch(
-      (error: unknown) => {
+        setImages([]);
+      })
+      .catch((error: unknown) => {
         onError(error instanceof Error ? error.message : String(error));
-      }
-    );
-    setText("");
-    setImages([]);
+      })
+      .finally(() => {
+        submitting.current = false;
+        setSending(false);
+      });
+  };
+  const submit = (): void => {
+    if (submitting.current) {
+      return;
+    }
+    if (interaction?.kind === "elicitation") {
+      respondToElicitation(interaction, text, (id, response) => {
+        sendRequest(
+          respondToInteraction(threadId, id, interaction.kind, response)
+        );
+      });
+    } else if (text.trim().length > 0 || images.length > 0) {
+      sendRequest(request("threadPrompt", { images, text, threadId }));
+    }
   };
   const keyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.nativeEvent.isComposing
+    ) {
       event.preventDefault();
       submit();
     }
@@ -444,6 +466,7 @@ const Composer = ({
       ) : null}
       <textarea
         aria-label="Prompt"
+        disabled={sending}
         onChange={(event) => {
           setText(event.currentTarget.value);
         }}
@@ -463,6 +486,7 @@ const Composer = ({
           <SvgIcon kind="plus" /> Image
           <input
             accept="image/*"
+            disabled={sending}
             multiple
             onChange={(event) => {
               const files = [...(event.currentTarget.files ?? [])];
@@ -485,8 +509,13 @@ const Composer = ({
             <SvgIcon kind="stop" /> Stop
           </button>
         ) : null}
-        <button className="action primary" onClick={submit} type="button">
-          <SvgIcon kind="send" /> Send
+        <button
+          className="action primary"
+          disabled={sending}
+          onClick={submit}
+          type="button"
+        >
+          <SvgIcon kind="send" /> {sending ? "Sending…" : "Send"}
         </button>
       </div>
     </div>
@@ -500,14 +529,33 @@ const App = (): React.JSX.Element => {
   const [hostThreads, setHostThreads] = useState<Thread[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<RenderedTranscriptItem[]>([]);
+  const [visibleCount, setVisibleCount] = useState(100);
+  const scroll = useRef<HTMLDivElement>(null);
+  const stickToBottom = useRef(true);
+  const prepend = useRef<{ height: number; top: number } | null>(null);
+  const loadingThread = useRef<string | null>(null);
+  const loadedEvents = useRef<unknown[]>([]);
+  const olderCursor = useRef<number | null>(null);
+  const loadingOlder = useRef(false);
+  useLayoutEffect(() => {
+    const container = scroll.current;
+    if (!container) {
+      return;
+    }
+    if (prepend.current) {
+      container.scrollTop =
+        prepend.current.top + container.scrollHeight - prepend.current.height;
+      prepend.current = null;
+    } else if (stickToBottom.current) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }, [transcript, visibleCount]);
   const [interactions, setInteractions] = useState<
     Record<string, ThreadInteraction>
   >({});
   const [drafts, setDrafts] = useState<Record<string, string[]>>({});
   const [notice, setNotice] = useState("");
   const [diff, setDiff] = useState<DiffPreview | null>(null);
-  const [rename, setRename] = useState<string | null>(null);
-  const [confirmRemove, setConfirmRemove] = useState(false);
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selected;
   useEffect(() => {
@@ -546,8 +594,10 @@ const App = (): React.JSX.Element => {
       } else if (
         isRecord(message) &&
         message.type === "acpUpdate" &&
-        message.threadId === selectedRef.current
+        message.threadId === selectedRef.current &&
+        loadingThread.current !== message.threadId
       ) {
+        loadedEvents.current.push(message);
         setTranscript((current) => appendTranscript(current, message));
       } else if (
         isRecord(message) &&
@@ -581,6 +631,18 @@ const App = (): React.JSX.Element => {
         } catch (error) {
           setNotice(error instanceof Error ? error.message : String(error));
         }
+      } else if (
+        isRecord(message) &&
+        message.type === "acpInteractionResolved" &&
+        typeof message.interactionId === "string"
+      ) {
+        setInteractions((current) =>
+          Object.fromEntries(
+            Object.entries(current).filter(
+              ([, interaction]) => interaction.id !== message.interactionId
+            )
+          )
+        );
       } else if (
         isRecord(message) &&
         (message.type === "threadPromptComplete" ||
@@ -623,7 +685,7 @@ const App = (): React.JSX.Element => {
       window.receiveDiagnostic(window.pendingLibrary);
       delete window.pendingLibrary;
     }
-    send("restart");
+    send("ready");
     return () => {
       for (const waiting of pending.values()) {
         waiting.reject(new Error("macOS app closed"));
@@ -655,28 +717,69 @@ const App = (): React.JSX.Element => {
     (thread) => thread.id === selected
   );
   useEffect(() => {
+    let cancelled = false;
     setTranscript([]);
+    loadedEvents.current = [];
+    olderCursor.current = null;
+    loadingOlder.current = false;
+    setVisibleCount(100);
+    stickToBottom.current = true;
+    prepend.current = null;
     setNotice("");
-    if (selectedThread?.owner === "host") {
-      void Promise.all([
-        request<unknown[]>("threadTranscript", {
-          threadId: selectedThread.id,
-        }),
-        request<Thread>("threadLoad", { threadId: selectedThread.id }),
-      ])
-        .then(([events, loaded]) => {
-          setTranscript(transcriptItems(events));
-          setHostThreads((current) =>
-            current.map((thread) =>
-              thread.id === loaded.id ? { ...thread, ...loaded } : thread
-            )
+    const threadId =
+      selectedThread?.owner === "host" ? selectedThread.id : null;
+    loadingThread.current = threadId;
+    if (threadId !== null) {
+      void request<Thread>("threadLoad", { threadId })
+        .then(async () => {
+          const page = transcriptPage(
+            await request<unknown>("threadTranscript", { threadId })
           );
+          if (cancelled) {
+            return;
+          }
+          loadingThread.current = null;
+          loadedEvents.current = page.events;
+          olderCursor.current = page.cursor;
+          setTranscript(transcriptItems(page.events));
         })
         .catch((error: unknown) => {
+          if (cancelled) {
+            return;
+          }
+          loadingThread.current = null;
           setNotice(error instanceof Error ? error.message : String(error));
         });
     }
+    return () => {
+      cancelled = true;
+    };
   }, [selectedThread?.id, selectedThread?.owner]);
+
+  const loadOlder = async (): Promise<void> => {
+    const threadId = selectedRef.current;
+    const cursor = olderCursor.current;
+    if (threadId === null || cursor === null || loadingOlder.current) {
+      return;
+    }
+    loadingOlder.current = true;
+    try {
+      const page = transcriptPage(
+        await request<unknown>("threadTranscript", { cursor, threadId })
+      );
+      if (selectedRef.current !== threadId) {
+        return;
+      }
+      olderCursor.current = page.cursor;
+      loadedEvents.current = [...page.events, ...loadedEvents.current];
+      setTranscript(transcriptItems(loadedEvents.current));
+      setVisibleCount((count) => count + 100);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      loadingOlder.current = false;
+    }
+  };
 
   const createThread = (workspace: string, agentId: AgentId): void => {
     setNotice("");
@@ -828,28 +931,54 @@ const App = (): React.JSX.Element => {
                         : "Agent"}
                     </span>
                   </div>
-                  <button
-                    aria-label={`Rename Thread: ${selectedThread.name}`}
-                    className="action"
-                    onClick={() => {
-                      setRename(selectedThread.name);
-                    }}
-                    type="button"
-                  >
-                    <SvgIcon kind="pencil" /> Rename
-                  </button>
-                  <button
-                    aria-label="Remove Thread"
-                    className="action danger"
-                    onClick={() => {
-                      setConfirmRemove(true);
-                    }}
-                    type="button"
-                  >
-                    <SvgIcon kind="x" /> Remove
-                  </button>
                 </header>
-                <div className="mac-transcript">
+                <div
+                  className="mac-transcript"
+                  ref={scroll}
+                  onScroll={(event) => {
+                    const container = event.currentTarget;
+                    stickToBottom.current =
+                      container.scrollHeight -
+                        container.scrollTop -
+                        container.clientHeight <
+                      80;
+                    if (
+                      container.scrollTop < 100 &&
+                      prepend.current === null &&
+                      (olderCursor.current !== null ||
+                        visibleCount < transcript.length)
+                    ) {
+                      prepend.current = {
+                        height: container.scrollHeight,
+                        top: container.scrollTop,
+                      };
+                      stickToBottom.current = false;
+                      if (olderCursor.current !== null) {
+                        void loadOlder();
+                      } else {
+                        setVisibleCount((count) => count + 100);
+                      }
+                    }
+                  }}
+                >
+                  {olderCursor.current !== null ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const container = scroll.current;
+                        if (container) {
+                          prepend.current = {
+                            height: container.scrollHeight,
+                            top: container.scrollTop,
+                          };
+                          stickToBottom.current = false;
+                        }
+                        void loadOlder();
+                      }}
+                    >
+                      Load older messages
+                    </button>
+                  ) : null}
                   <Transcript
                     onAction={transcriptAction}
                     onCopied={() => {
@@ -864,7 +993,7 @@ const App = (): React.JSX.Element => {
                       status: selectedThread.status,
                     }}
                     selectedSetupOptions={[]}
-                    visibleCount={100}
+                    visibleCount={visibleCount}
                   />
                   {interaction?.kind === "elicitation" ? (
                     <InteractionQuestion interaction={interaction} />
@@ -894,10 +1023,14 @@ const App = (): React.JSX.Element => {
                     </button>
                   ) : null}
                 </div>
-                <ThreadConfig
-                  options={selectedThread.configOptions ?? []}
-                  threadId={selectedThread.id}
-                />
+                {selectedThread.agentId ? (
+                  <ThreadConfig
+                    agentId={selectedThread.agentId}
+                    options={selectedThread.configOptions ?? []}
+                    threadId={selectedThread.id}
+                    onError={setNotice}
+                  />
+                ) : null}
                 {interaction?.kind === "elicitation" ? (
                   <Interaction
                     interaction={interaction}
@@ -912,11 +1045,16 @@ const App = (): React.JSX.Element => {
                         id,
                         interaction.kind,
                         response
-                      );
+                      ).catch((error: unknown) => {
+                        setNotice(
+                          error instanceof Error ? error.message : String(error)
+                        );
+                      });
                     }}
                   />
                 ) : null}
                 <Composer
+                  key={selectedThread.id}
                   drafts={drafts[selectedThread.id] ?? []}
                   interaction={interaction}
                   onDraftsConsumed={() => {
@@ -938,7 +1076,11 @@ const App = (): React.JSX.Element => {
                         interaction.id,
                         interaction.kind,
                         { action: "cancel" }
-                      );
+                      ).catch((error: unknown) => {
+                        setNotice(
+                          error instanceof Error ? error.message : String(error)
+                        );
+                      });
                     }}
                     onRespond={(id, response) => {
                       void respondToInteraction(
@@ -946,7 +1088,11 @@ const App = (): React.JSX.Element => {
                         id,
                         interaction.kind,
                         response
-                      );
+                      ).catch((error: unknown) => {
+                        setNotice(
+                          error instanceof Error ? error.message : String(error)
+                        );
+                      });
                     }}
                   />
                 ) : null}
@@ -987,95 +1133,6 @@ const App = (): React.JSX.Element => {
           {state?.permission ?? "checking"}
         </p>
       </details>
-      {rename !== null && selectedThread ? (
-        <div className="diff-overlay" role="presentation">
-          <form
-            className="confirm-dialog"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void request("threadRename", {
-                name: rename,
-                threadId: selectedThread.id,
-              })
-                .then(() => {
-                  setRename(null);
-                })
-                .catch((error: unknown) => {
-                  setNotice(
-                    error instanceof Error ? error.message : String(error)
-                  );
-                });
-            }}
-          >
-            <h2>Rename Thread</h2>
-            <input
-              aria-label="Thread name"
-              autoFocus
-              onChange={(event) => {
-                setRename(event.currentTarget.value);
-              }}
-              value={rename}
-            />
-            <div className="confirm-actions">
-              <button
-                className="action"
-                onClick={() => {
-                  setRename(null);
-                }}
-                type="button"
-              >
-                Cancel
-              </button>
-              <button className="action primary" type="submit">
-                <SvgIcon kind="pencil" /> Rename
-              </button>
-            </div>
-          </form>
-        </div>
-      ) : null}
-      {confirmRemove && selectedThread ? (
-        <div className="diff-overlay" role="presentation">
-          <section
-            aria-labelledby="remove-title"
-            className="confirm-dialog"
-            role="dialog"
-          >
-            <h2 id="remove-title">Remove {selectedThread.name}?</h2>
-            <p>Agent history is kept.</p>
-            <div className="confirm-actions">
-              <button
-                className="action"
-                onClick={() => {
-                  setConfirmRemove(false);
-                }}
-                type="button"
-              >
-                Cancel
-              </button>
-              <button
-                className="action danger"
-                onClick={() => {
-                  void request("threadRemove", {
-                    threadId: selectedThread.id,
-                  })
-                    .then(() => {
-                      setConfirmRemove(false);
-                      setSelected(null);
-                    })
-                    .catch((error: unknown) => {
-                      setNotice(
-                        error instanceof Error ? error.message : String(error)
-                      );
-                    });
-                }}
-                type="button"
-              >
-                <SvgIcon kind="x" /> Remove
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
       {diff ? (
         <div className="diff-overlay" role="presentation">
           <section

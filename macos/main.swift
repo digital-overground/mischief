@@ -188,11 +188,31 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
             let installed = try installHost()
             try startBackgroundHost(installed)
             installedHost = installed
-            startHost()
         } catch {
             permission = "Background Host failed: \(error.localizedDescription)"
         }
         openWindow()
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--smoke-library") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.verifyLibraryLoaded() }
+        }
+        if arguments.contains("--smoke-install-host") || arguments.contains("--smoke-launch-host") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { NSApp.terminate(nil) }
+        }
+        if arguments.contains("--smoke-close") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                guard let window = self.window else { fatalError("Diagnostic window did not open") }
+                window.performClose(nil)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                precondition(!NSApp.windows.contains(where: \.isVisible), "Window remained visible after close")
+                _ = self.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                precondition(NSApp.windows.contains(where: \.isVisible), "Window did not reopen")
+                NSApp.terminate(nil)
+            }
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
@@ -226,8 +246,9 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
             config.userContentController.add(self, name: "diagnostic")
             let web = WKWebView(frame: .zero, configuration: config)
             web.navigationDelegate = self
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 380), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-            window.title = "Mischief diagnostic"
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            window.title = "Mischief"
+            window.minSize = NSSize(width: 900, height: 600)
             window.isReleasedWhenClosed = false
             window.center()
             window.contentView = web
@@ -245,11 +266,32 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
         updatePage()
         updateLibrary()
         updateSelection()
+        if ProcessInfo.processInfo.arguments.contains("--smoke-thread"),
+           let scriptPath = ProcessInfo.processInfo.environment["MISCHIEF_THREAD_SMOKE_SCRIPT"] {
+            do {
+                let script = try String(contentsOfFile: scriptPath, encoding: .utf8)
+                webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page, completionHandler: { result in
+                    switch result {
+                    case .success: NSApp.terminate(nil)
+                    case .failure(let error):
+                        fputs("Thread UI smoke failed: \(error)\n", stderr)
+                        exit(1)
+                    }
+                })
+            } catch {
+                fputs("Thread UI smoke script failed: \(error)\n", stderr)
+                exit(1)
+            }
+        }
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any], body["type"] as? String == "command", let action = body["action"] as? String else { return }
         switch action {
+        case "ready":
+            // Reconnect only the client so snapshots and pending interactions reach the mounted page.
+            if let host { hostDisconnected(host) }
+            if installedHost != nil { startHost() }
         case "restart":
             guard host == nil, let installedHost else { return }
             do {
@@ -412,7 +454,14 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
     }
 
     private func send(_ message: [String: Any]) {
-        guard let host, let data = try? JSONSerialization.data(withJSONObject: message) else { return }
+        guard let host else {
+            if let requestId = message["requestId"] as? String,
+               let data = try? JSONSerialization.data(withJSONObject: ["type": "result", "requestId": requestId, "error": "Mischief Host disconnected; draft kept. Reconnect before retrying."]) {
+                forwardHostMessage(data)
+            }
+            return
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
         do {
             try host.write(contentsOf: data + Data([10]))
         } catch {
@@ -539,24 +588,4 @@ final class App: NSObject, NSApplicationDelegate, NSWindowDelegate, WKScriptMess
 let app = NSApplication.shared
 let delegate = App()
 app.delegate = delegate
-if ProcessInfo.processInfo.arguments.contains("--smoke-library") {
-    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { delegate.verifyLibraryLoaded() }
-}
-if ProcessInfo.processInfo.arguments.contains("--smoke-install-host") || ProcessInfo.processInfo.arguments.contains("--smoke-launch-host") {
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { app.terminate(nil) }
-}
-if ProcessInfo.processInfo.arguments.contains("--smoke-close") {
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-        guard let window = NSApp.windows.first else { fatalError("Diagnostic window did not open") }
-        window.performClose(nil)
-    }
-    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-        precondition(!NSApp.windows.contains(where: \.isVisible), "Window remained visible after close")
-        _ = delegate.applicationShouldHandleReopen(app, hasVisibleWindows: false)
-    }
-    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-        precondition(NSApp.windows.contains(where: \.isVisible), "Window did not reopen")
-        app.terminate(nil)
-    }
-}
 app.run()
