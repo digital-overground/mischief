@@ -955,6 +955,14 @@ export class MischiefView implements vscode.WebviewViewProvider {
   }
 
   forwardAgentStatuses(statuses: AgentStatus[]): void {
+    if (
+      this.setupStep?.id === "agents" &&
+      this.setupPrompt === undefined &&
+      (this.agentManager?.availableAgents().length ?? 0) > 0
+    ) {
+      this.setupStep = this.setup?.prompt();
+      this.render();
+    }
     const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
     void postMessage?.({
       agents: statuses,

@@ -3124,6 +3124,61 @@ describe("view provider", () => {
     expect(newThread.mock.calls).toStrictEqual([["codex-acp"]]);
   });
 
+  test("clears Agent setup when the Host reports an installed Agent after activation", async () => {
+    const postMessage = vi.fn<(message: unknown) => void>();
+    let installed = false;
+    const manager = {
+      availableAgents: () => (installed ? ["magpi-acp"] : []),
+    };
+    const provider = new MischiefView(
+      testValue<never>({
+        refresh: async () =>
+          await Promise.resolve(
+            projectsFixture({ projects: [], ungrouped: [] })
+          ),
+      }),
+      testValue<never>({
+        onChange: vi.fn<() => void>(),
+        snapshot: () => ({ selected: { id: null, items: [] }, threads: [] }),
+      }),
+      testValue<never>({ fsPath: process.cwd() }),
+      testValue<never>({ get: (_key: string, fallback: unknown) => fallback }),
+      testValue<never>(profileDatabase()),
+      testValue<never>({
+        prompt: () =>
+          installed ? undefined : { id: "agents", message: "Install an Agent" },
+      }),
+      testValue<never>(manager)
+    );
+    await provider.initialize();
+    await provider.resolveWebviewView(
+      testValue<never>({
+        onDidDispose: vi.fn<() => void>(),
+        webview: {
+          asWebviewUri: (uri: { fsPath: string }) => ({
+            toString: () => `webview:${uri.fsPath}`,
+          }),
+          cspSource: "webview-csp",
+          html: "",
+          onDidReceiveMessage: vi.fn<() => void>(),
+          options: {},
+          postMessage,
+        },
+      })
+    );
+    const states = () =>
+      postMessage.mock.calls.flatMap(([message]) => {
+        const value = testValue<{ type: string; setup?: unknown }>(message);
+        return value.type === "state" ? [value] : [];
+      });
+    expect(states().at(-1)?.setup).toMatchObject({ id: "agents" });
+    installed = true;
+    provider.forwardAgentStatuses([
+      { id: "magpi-acp", name: "MagPi", state: "current" },
+    ]);
+    expect(states().at(-1)?.setup).toBeUndefined();
+  });
+
   test("forwards one full Agent snapshot and reads the latest snapshot for Settings", async () => {
     const postMessage = vi.fn<(message: unknown) => void>();
     const magpi: AgentStatus = {
