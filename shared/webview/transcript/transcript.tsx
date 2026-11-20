@@ -1,0 +1,1101 @@
+import { memo, useLayoutEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
+
+import { Icon } from "../../icons/icon";
+import type { IconKind } from "../../icons/icon";
+import { TranscriptActions, useTranscriptAction } from "./actions";
+import type { TranscriptActionHandler } from "./actions";
+import { ImagePreview } from "./image-preview";
+import { MessageActions } from "./message-actions";
+import { isDefined, isNonEmpty, isNonZero, isRecord } from "./present";
+import type {
+  RenderedSetupStep,
+  RenderedThreadDetail,
+  RenderedTranscriptItem,
+} from "./types";
+
+const nonEmpty = (value: string | undefined, fallback: string): string =>
+  value !== undefined && value.length > 0 ? value : fallback;
+
+const fileReference =
+  /^(?:[A-Za-z0-9_@.+~-]+\/)*[A-Za-z0-9_@.+~-]+\.[A-Za-z0-9_+-]+(?::[1-9]\d*)?$/u;
+const linkFileReferences = (html: string): string =>
+  html.replaceAll(/<code>(?<path>[^<\s]+)<\/code>/gu, (source, path: string) =>
+    fileReference.test(path)
+      ? `<a class="transcript-file" href="${path.replace(":", "#L")}"><code>${path}</code></a>`
+      : source
+  );
+
+const PlainBody = ({
+  className,
+  item,
+}: {
+  className: string;
+  item: RenderedTranscriptItem;
+}): React.JSX.Element => {
+  const dispatch = useTranscriptAction();
+  const parts = (item.text ?? "").split(/(?<code>`[^`\n]+`)/u);
+  return (
+    <div className={className}>
+      {parts.map((part, index) => {
+        const candidate = part.startsWith("`") ? part.slice(1, -1) : "";
+        return fileReference.test(candidate) ? (
+          <button
+            className="transcript-file plain"
+            key={`${candidate}:${index}`}
+            onClick={() => {
+              dispatch({
+                href: candidate.replace(":", "#L"),
+                type: "openTranscriptLink",
+              });
+            }}
+            type="button"
+          >
+            <code>{candidate}</code>
+          </button>
+        ) : (
+          part
+        );
+      })}
+    </div>
+  );
+};
+
+const MarkdownBody = ({
+  className = "body markdown",
+  item,
+}: {
+  className?: string;
+  item: RenderedTranscriptItem;
+}): React.JSX.Element => {
+  const dispatch = useTranscriptAction();
+  return isNonEmpty(item.html) ? (
+    <div
+      className={className}
+      dangerouslySetInnerHTML={{ __html: linkFileReferences(item.html) }}
+      onClick={(event) => {
+        if (!(event.target instanceof Element)) {
+          return;
+        }
+        const href = event.target.closest("a")?.getAttribute("href");
+        if (
+          href === null ||
+          href === undefined ||
+          href.length === 0 ||
+          href.startsWith("#") ||
+          (/^[a-z][a-z\d+.-]*:/iu.test(href) && !/^file:/iu.test(href))
+        ) {
+          return;
+        }
+        event.preventDefault();
+        dispatch({ href, type: "openTranscriptLink" });
+      }}
+    />
+  ) : (
+    <PlainBody className={className} item={item} />
+  );
+};
+
+const ImageGallery = ({
+  images,
+}: {
+  images: NonNullable<RenderedTranscriptItem["images"]>;
+}): React.JSX.Element => (
+  <div className="transcript-images">
+    {images.map((image, index) => (
+      <ImagePreview
+        image={image}
+        key={`${image.mimeType}:${index}`}
+        thumbnailAlt="Attached image preview"
+      />
+    ))}
+  </div>
+);
+
+const LabelledPre = ({
+  label,
+  text,
+}: {
+  label: string;
+  text: string;
+}): React.JSX.Element => (
+  <div>
+    <b>{label}</b>
+    <pre>{text}</pre>
+  </div>
+);
+
+const ThinkingGroup = ({
+  items,
+}: {
+  items: RenderedTranscriptItem[];
+}): React.JSX.Element => (
+  <section className="entry thought thinking-group">
+    <div className="thinking-heading">
+      <Icon className="entry-icon" kind="brain" title="Thinking" />
+      Thinking
+    </div>
+    <div className="thinking-content">
+      {items.map((item) => (
+        <MarkdownBody
+          className="thinking-item markdown"
+          item={item}
+          key={item.id}
+        />
+      ))}
+    </div>
+  </section>
+);
+
+const BranchSummary = ({
+  item,
+}: {
+  item: RenderedTranscriptItem;
+}): React.JSX.Element => (
+  <details className="entry branch-summary">
+    <summary className="branch-summary-heading">
+      <Icon className="entry-icon" kind="gitBranch" title="Branch summary" />
+      Branch summary
+    </summary>
+    <div className="branch-summary-content">
+      <MarkdownBody item={item} />
+    </div>
+  </details>
+);
+
+const statusLabel = (status?: string): string =>
+  isNonEmpty(status) ? ` · ${status.replaceAll("_", " ")}` : "";
+
+const ToolOperationStatus = ({
+  status,
+}: {
+  status?: string;
+}): React.JSX.Element | null => {
+  if (!isNonEmpty(status)) {
+    return null;
+  }
+  const text = status.replaceAll("_", " ");
+  const label = `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+  const className = `tool-operation-status ${status}`;
+  if (status === "pending" || status === "in_progress") {
+    return (
+      <span className={className} title={label} role="img" aria-label={label} />
+    );
+  }
+  let icon: "circle" | "circleCheck" | "circleSlash" = "circle";
+  if (status === "completed") {
+    icon = "circleCheck";
+  } else if (status === "failed") {
+    icon = "circleSlash";
+  }
+  return <Icon className={className} kind={icon} title={label} />;
+};
+
+const ToolOutput = ({
+  expanded,
+  item,
+}: {
+  expanded: boolean;
+  item: RenderedTranscriptItem;
+}): React.JSX.Element | null => {
+  const output = useRef<HTMLPreElement>(null);
+  const pinned = useRef(true);
+  const wasExpanded = useRef(false);
+  const running = item.status === "pending" || item.status === "in_progress";
+  useLayoutEffect(() => {
+    const opening = expanded && !wasExpanded.current;
+    wasExpanded.current = expanded;
+    if (opening) {
+      pinned.current = true;
+    }
+    if (
+      expanded &&
+      output.current &&
+      (opening || (running && pinned.current))
+    ) {
+      output.current.scrollTop = output.current.scrollHeight;
+    }
+  }, [expanded, item.output, running]);
+  if (isNonEmpty(item.output)) {
+    return (
+      <div>
+        <b>Output</b>
+        <pre
+          className={running ? "live-tool-output" : undefined}
+          ref={output}
+          onScroll={(event) => {
+            const element = event.currentTarget;
+            pinned.current =
+              element.scrollHeight - element.clientHeight - element.scrollTop <
+              16;
+          }}
+        >
+          {item.output}
+        </pre>
+      </div>
+    );
+  }
+  return expanded && running ? (
+    <div role="status">Waiting for output…</div>
+  ) : null;
+};
+
+const ToolBody = ({
+  expanded,
+  item,
+}: {
+  expanded: boolean;
+  item: RenderedTranscriptItem;
+}): React.JSX.Element => {
+  const dispatch = useTranscriptAction();
+  return (
+    <div className="tool-body">
+      {isNonEmpty(item.input) ? (
+        <LabelledPre label="Input" text={item.input} />
+      ) : null}
+      <ToolOutput expanded={expanded} item={item} />
+      {item.locations?.map((location) => (
+        <button
+          className="link"
+          title="Open file"
+          key={`${location.path}:${location.line ?? ""}`}
+          onClick={() => {
+            dispatch({
+              ...(isNonZero(location.line) ? { line: location.line } : {}),
+              path: location.path,
+              type: "openLocation",
+            });
+          }}
+        >
+          {location.path}
+          {isNonZero(location.line) ? `:${location.line}` : ""}
+        </button>
+      ))}
+      {item.diffs?.map((diff) => (
+        <button
+          className="link"
+          title="Open diff"
+          key={diff.path}
+          onClick={() => {
+            dispatch({ path: diff.path, type: "openDiff" });
+          }}
+        >
+          Open diff · {diff.path}
+        </button>
+      ))}
+    </div>
+  );
+};
+
+const GenericToolItem = ({
+  item,
+}: {
+  item: RenderedTranscriptItem;
+}): React.JSX.Element => {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <details
+      className="entry tool"
+      onToggle={(event) => {
+        setExpanded(event.currentTarget.open);
+      }}
+    >
+      <summary>
+        <Icon className="entry-icon" kind="tool" title="Tool" />
+        <span>
+          {nonEmpty(item.title, "Tool call")}
+          {statusLabel(item.status)}
+        </span>
+      </summary>
+      <ToolBody expanded={expanded} item={item} />
+    </details>
+  );
+};
+
+const jsonField = (input: string | undefined, field: string): unknown => {
+  if (!isNonEmpty(input)) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(input);
+  } catch {
+    return undefined;
+  }
+  return isRecord(parsed) ? parsed[field] : undefined;
+};
+
+const jsonStringField = (
+  input: string | undefined,
+  field: string
+): string | undefined => {
+  const value = jsonField(input, field);
+  return typeof value === "string" ? value : undefined;
+};
+
+const fetchUrl = (input?: string): string | undefined => {
+  const urls = jsonField(input, "urls");
+  if (typeof urls === "string") {
+    return urls;
+  }
+  return Array.isArray(urls)
+    ? urls.find((url): url is string => typeof url === "string")
+    : undefined;
+};
+
+const askUserQuestion = (input?: string): string | undefined =>
+  jsonStringField(input, "question");
+
+const AskUserItem = ({
+  item,
+}: {
+  item: RenderedTranscriptItem;
+}): React.JSX.Element => {
+  const question = askUserQuestion(item.input);
+  const answerPrefix = "User answered: ";
+  const cancelled =
+    item.cancelled === true ||
+    item.output?.trim() === "User cancelled the question";
+  if (
+    !isNonEmpty(question) ||
+    (!cancelled && item.output?.startsWith(answerPrefix) !== true)
+  ) {
+    return (
+      <GenericToolItem
+        item={cancelled ? { ...item, status: "cancelled" } : item}
+      />
+    );
+  }
+  const answer = cancelled
+    ? "Cancelled"
+    : item.output?.slice(answerPrefix.length);
+  return (
+    <section className="entry ask-user-result">
+      <div className="ask-user-title">
+        <Icon className="entry-icon" kind="question" title="Question" />
+        {cancelled ? "Question cancelled" : "Question"}
+      </div>
+      <div className="ask-user-content">
+        <div className="body ask-user-question">{question}</div>
+        <div className="body ask-user-answer">{answer}</div>
+      </div>
+    </section>
+  );
+};
+
+type FileOperation = "read" | "edit" | "write";
+type ToolGroupKind = "terminal" | "files" | "web" | "tools";
+
+const webTools = new Set(["web_fetch", "web_search"]);
+
+const toolGroups = {
+  files: {
+    className: "file-operations-group",
+    icon: "file",
+    label: "File operations",
+  },
+  terminal: {
+    className: "terminal-group",
+    icon: "terminal",
+    label: "Terminal",
+  },
+  tools: { className: "tools-group", icon: "tool", label: "Tools" },
+  web: { className: "web-group", icon: "globe", label: "Web" },
+} as const;
+
+const genericToolOperation = (item: RenderedTranscriptItem) => {
+  const title = nonEmpty(item.title, "Tool call");
+  const group: ToolGroupKind = webTools.has(title) ? "web" : "tools";
+  if (title === "web_fetch") {
+    const target = fetchUrl(item.input) ?? title;
+    return {
+      group,
+      icon: "download" as const,
+      iconTitle: "Fetch",
+      label: undefined,
+      target,
+      targetTitle: target,
+    };
+  }
+  if (title === "web_search" || title === "session_search") {
+    const target = jsonStringField(item.input, "query") ?? title;
+    return {
+      group,
+      icon: "search" as const,
+      iconTitle: "Search",
+      label: undefined,
+      target,
+      targetTitle: target,
+    };
+  }
+  const metadata = toolGroups[group];
+  return {
+    group,
+    icon: metadata.icon,
+    iconTitle: "Tool",
+    label: undefined,
+    target: title,
+    targetTitle: title,
+  };
+};
+
+interface ToolOperation {
+  group: ToolGroupKind;
+  icon: React.ComponentProps<typeof Icon>["kind"];
+  iconTitle: string;
+  label: string | undefined;
+  target: string | undefined;
+  targetTitle: string | undefined;
+}
+
+const fileOperations = {
+  edit: { icon: "pencil", label: "Edit" },
+  read: { icon: "eye", label: "Read" },
+  write: { icon: "save", label: "Write" },
+} as const;
+
+enum ToolOperationIcon {
+  Git = "git",
+  GitHub = "github",
+  PackageManager = "package-manager",
+  Terminal = "terminal",
+}
+
+const toolOperationIcons = {
+  [ToolOperationIcon.Git]: { icon: "gitBranch", title: "Git command" },
+  [ToolOperationIcon.GitHub]: { icon: "github", title: "GitHub CLI" },
+  [ToolOperationIcon.PackageManager]: {
+    icon: "package",
+    title: "Package manager",
+  },
+  [ToolOperationIcon.Terminal]: { icon: "terminal", title: "Command" },
+} as const;
+
+const packageManagers = new Set(["bun", "npm", "npx", "pnpm", "yarn"]);
+
+const commandOperationIcon = (command: string): ToolOperationIcon => {
+  // ponytail: direct executables only; use shell parsing if compound commands need icons.
+  const [executable = ""] = command.trimStart().split(/\s+/u);
+  if (executable === "git") {
+    return ToolOperationIcon.Git;
+  }
+  if (executable === "gh") {
+    return ToolOperationIcon.GitHub;
+  }
+  return packageManagers.has(executable)
+    ? ToolOperationIcon.PackageManager
+    : ToolOperationIcon.Terminal;
+};
+
+const fileOperationKind = (
+  item: RenderedTranscriptItem
+): FileOperation | undefined => {
+  if (item.toolKind === "read") {
+    return "read";
+  }
+  if (item.toolKind !== "edit") {
+    return undefined;
+  }
+  return item.title?.toLowerCase() === "write" ? "write" : "edit";
+};
+
+const toolOperation = (
+  item?: RenderedTranscriptItem
+): ToolOperation | undefined => {
+  if (item?.kind !== "tool" || item.title === "ask_user") {
+    return undefined;
+  }
+  if (item.toolKind === "execute") {
+    const command = item.title ?? "";
+    const iconClass = commandOperationIcon(command);
+    const operationIcon = toolOperationIcons[iconClass];
+    return {
+      group: "terminal" as const,
+      icon: operationIcon.icon,
+      iconTitle: operationIcon.title,
+      label: undefined,
+      target: command.length > 0 ? command : undefined,
+      targetTitle: command.length > 0 ? command : undefined,
+    };
+  }
+  const kind = fileOperationKind(item);
+  if (!kind) {
+    return genericToolOperation(item);
+  }
+  const operation = fileOperations[kind];
+  const location = item.locations?.[0];
+  const path = location?.path ?? item.diffs?.[0]?.path;
+  const line = isNonZero(location?.line) ? `:${location.line}` : "";
+  return {
+    group: "files" as const,
+    ...operation,
+    iconTitle: operation.label,
+    target: isNonEmpty(path)
+      ? `${path.split(/[\\/]/u).at(-1) ?? path}${line}`
+      : undefined,
+    targetTitle: isNonEmpty(path) ? `${path}${line}` : undefined,
+  };
+};
+
+const toolGroupKind = (
+  item?: RenderedTranscriptItem
+): ToolGroupKind | undefined => toolOperation(item)?.group;
+
+const ToolOperationItem = ({
+  item,
+}: {
+  item: RenderedTranscriptItem;
+}): React.JSX.Element | null => {
+  const operation = toolOperation(item);
+  const [expanded, setExpanded] = useState(false);
+  return operation ? (
+    <details
+      className="tool-operation"
+      onToggle={(event) => {
+        setExpanded(event.currentTarget.open);
+      }}
+    >
+      <summary>
+        <Icon
+          className="entry-icon"
+          kind={operation.icon}
+          title={operation.iconTitle}
+        />
+        <span className="tool-operation-description">
+          {isNonEmpty(operation.label) ? (
+            <span className="tool-operation-label">{operation.label}</span>
+          ) : null}
+          {isNonEmpty(operation.target) ? (
+            <>
+              {isNonEmpty(operation.label) ? (
+                <span className="tool-operation-separator">{" · "}</span>
+              ) : null}
+              <span
+                className={`tool-operation-target${
+                  operation.group === "terminal" ? " terminal-command" : ""
+                }`}
+                title={operation.targetTitle}
+              >
+                {operation.target}
+              </span>
+            </>
+          ) : null}
+        </span>
+        <ToolOperationStatus status={item.status} />
+      </summary>
+      <ToolBody expanded={expanded} item={item} />
+    </details>
+  ) : null;
+};
+
+const ToolGroup = ({
+  group,
+  items,
+}: {
+  group: ToolGroupKind;
+  items: RenderedTranscriptItem[];
+}): React.JSX.Element => {
+  const metadata = toolGroups[group];
+  return (
+    <section className={`entry tool tool-group ${metadata.className}`}>
+      <div className="tool-group-heading">
+        <Icon
+          className="entry-icon"
+          kind={metadata.icon}
+          title={metadata.label}
+        />
+        {metadata.label}
+      </div>
+      <div className="tool-group-content">
+        {items.map((item) => (
+          <ToolOperationItem item={item} key={item.id} />
+        ))}
+      </div>
+    </section>
+  );
+};
+
+const entryMeta: Partial<
+  Record<
+    RenderedTranscriptItem["kind"],
+    { icon: "alert" | "bot" | "brain" | "user"; label: string }
+  >
+> = {
+  assistant: { icon: "bot", label: "Agent" },
+  system: { icon: "alert", label: "Mischief" },
+  thought: { icon: "brain", label: "Thinking" },
+  user: { icon: "user", label: "You" },
+};
+
+const isCompactionRequest = (item: RenderedTranscriptItem): boolean =>
+  item.kind === "user" && /^\/compact(?:\s|$)/u.test(item.text?.trim() ?? "");
+
+const isCompactionSummary = (item: RenderedTranscriptItem): boolean =>
+  item.kind === "assistant" &&
+  item.text?.startsWith("Compaction completed.") === true;
+
+const CompactionBlock = ({
+  result,
+}: {
+  result?: RenderedTranscriptItem;
+}): React.JSX.Element => (
+  <details className="entry tool compaction">
+    <summary>
+      <Icon className="entry-icon" kind="shrink" title="Compaction" />
+      <span>Compaction</span>
+    </summary>
+    {result ? (
+      <div className="tool-body">
+        <pre>{result.text ?? ""}</pre>
+      </div>
+    ) : null}
+  </details>
+);
+
+const MessageContent = ({
+  item,
+}: {
+  item: RenderedTranscriptItem;
+}): React.JSX.Element => {
+  const body = (
+    <>
+      <MarkdownBody item={item} />
+      {isNonZero(item.images?.length) ? (
+        <ImageGallery images={item.images} />
+      ) : null}
+      {isNonZero(item.queued) ? (
+        <div className="cancelled">Queued · position {item.queued}</div>
+      ) : null}
+      {item.cancelled === true ? (
+        <div className="cancelled">Cancelled</div>
+      ) : null}
+    </>
+  );
+  return item.kind === "user" && (item.text?.length ?? 0) > 500 ? (
+    <details className="entry-content long-user-message">
+      <summary>
+        <span className="message-preview">{item.text?.slice(0, 240)}…</span>
+        <span className="message-expand">Show more</span>
+        <span className="message-collapse">Show less</span>
+      </summary>
+      {body}
+    </details>
+  ) : (
+    <div className="entry-content">{body}</div>
+  );
+};
+
+const TranscriptEntry = ({
+  item,
+  selected,
+}: {
+  item: RenderedTranscriptItem;
+  selected?: RenderedThreadDetail;
+}): React.JSX.Element => {
+  if (item.kind === "branchSummary") {
+    return <BranchSummary item={item} />;
+  }
+  if (isCompactionRequest(item)) {
+    return <CompactionBlock />;
+  }
+  if (isCompactionSummary(item)) {
+    return <CompactionBlock result={item} />;
+  }
+  if (item.kind === "completedPlan") {
+    return (
+      <details className="entry completed-plan">
+        <summary className="completed-plan-title">
+          <Icon className="entry-icon" kind="plan" title="Completed Plan" />
+          Completed Plan
+        </summary>
+        <pre className="completed-plan-body">{item.text ?? ""}</pre>
+      </details>
+    );
+  }
+  if (item.kind === "tool") {
+    return item.title === "ask_user" ? (
+      <AskUserItem item={item} />
+    ) : (
+      <GenericToolItem item={item} />
+    );
+  }
+  const meta = entryMeta[item.kind] ?? {
+    icon: "alert",
+    label: "Mischief",
+  };
+  return (
+    <article
+      className={`entry ${item.kind}`}
+      data-message-id={
+        item.kind === "user" || item.kind === "assistant" ? item.id : undefined
+      }
+    >
+      {item.kind === "assistant" ? null : (
+        <Icon
+          className={`entry-icon${item.kind === "user" ? " user-turn-icon" : ""}`}
+          kind={meta.icon}
+          title={meta.label}
+        />
+      )}
+      <MessageContent item={item} />
+      <MessageActions item={item} selected={selected} />
+    </article>
+  );
+};
+
+const TranscriptItems = memo(
+  ({
+    items,
+    selected,
+  }: {
+    items: RenderedTranscriptItem[];
+    selected?: RenderedThreadDetail;
+  }): React.JSX.Element => {
+    const nodes: ReactNode[] = [];
+    for (let index = 0; index < items.length;) {
+      const item = items[index];
+      if (!isDefined(item)) {
+        break;
+      }
+      if (isCompactionRequest(item)) {
+        const result = items[index + 1];
+        nodes.push(
+          <CompactionBlock
+            key={item.id}
+            result={
+              isDefined(result) && isCompactionSummary(result)
+                ? result
+                : undefined
+            }
+          />
+        );
+        index += isDefined(result) && isCompactionSummary(result) ? 2 : 1;
+        continue;
+      }
+      if (item.kind === "thought") {
+        const thoughts: RenderedTranscriptItem[] = [];
+        while (items[index]?.kind === "thought") {
+          thoughts.push(items[index]);
+          index += 1;
+        }
+        nodes.push(
+          <ThinkingGroup items={thoughts} key={`thought:${item.id}`} />
+        );
+        continue;
+      }
+      const group = toolGroupKind(item);
+      if (group) {
+        const operations: RenderedTranscriptItem[] = [];
+        while (toolGroupKind(items[index]) === group) {
+          operations.push(items[index]);
+          index += 1;
+        }
+        nodes.push(
+          <ToolGroup
+            group={group}
+            items={operations}
+            key={`${group}:${item.id}`}
+          />
+        );
+        continue;
+      }
+      nodes.push(
+        <TranscriptEntry item={item} key={item.id} selected={selected} />
+      );
+      index += 1;
+    }
+    return <>{nodes}</>;
+  }
+);
+
+const plural = (count: number, singular: string): string =>
+  `${count} ${singular}${count === 1 ? "" : "s"}`;
+
+const fileCount = (count: number, action: string): string =>
+  `${count} file${count === 1 ? "" : "s"} ${action}`;
+
+const turnSummary = (
+  items: RenderedTranscriptItem[]
+): { icon: IconKind; label: string }[] => {
+  let toolCalls = 0;
+  const filesRead = new Set<string>();
+  const changedFiles = new Map<string, "created" | "deleted" | "edited">();
+  for (const item of items) {
+    if (item.kind !== "tool") {
+      continue;
+    }
+    toolCalls += 1;
+    if (item.toolKind === "read") {
+      for (const location of item.locations ?? []) {
+        filesRead.add(location.path);
+      }
+    } else if (item.toolKind === "edit") {
+      const fallbackChange =
+        fileOperationKind(item) === "write" ? "created" : "edited";
+      for (const location of item.locations ?? []) {
+        changedFiles.set(location.path, fallbackChange);
+      }
+    }
+    for (const diff of item.diffs ?? []) {
+      let change: "created" | "deleted" | "edited" = "edited";
+      if (diff.newText.length === 0) {
+        change = "deleted";
+      } else if (diff.oldText === undefined) {
+        change = "created";
+      }
+      changedFiles.set(diff.path, change);
+    }
+  }
+  const counts = { created: 0, deleted: 0, edited: 0 };
+  for (const change of changedFiles.values()) {
+    counts[change] += 1;
+  }
+  // shortcut: elapsed time is omitted; add it when ACP exposes turn timestamps.
+  return [
+    { icon: "tool", label: plural(toolCalls, "tool call") },
+    ...(filesRead.size > 0
+      ? [{ icon: "file" as const, label: fileCount(filesRead.size, "read") }]
+      : []),
+    ...(counts.created > 0
+      ? [
+          {
+            icon: "filePlus" as const,
+            label: fileCount(counts.created, "created"),
+          },
+        ]
+      : []),
+    ...(counts.deleted > 0
+      ? [
+          {
+            icon: "fileMinus" as const,
+            label: fileCount(counts.deleted, "deleted"),
+          },
+        ]
+      : []),
+    ...(counts.edited > 0
+      ? [
+          {
+            icon: "pencil" as const,
+            label: fileCount(counts.edited, "edited"),
+          },
+        ]
+      : []),
+  ];
+};
+
+const CollapsedTurn = ({
+  items,
+  response,
+  selected,
+}: {
+  items: RenderedTranscriptItem[];
+  response?: RenderedTranscriptItem;
+  selected?: RenderedThreadDetail;
+}): React.JSX.Element => {
+  const [expanded, setExpanded] = useState(false);
+  let content: ReactNode = null;
+  if (expanded) {
+    content = <TranscriptItems items={items} selected={selected} />;
+  } else if (response) {
+    content = <TranscriptEntry item={response} selected={selected} />;
+  }
+  return (
+    <section className="collapsed-turn assistant-card">
+      <button
+        aria-expanded={expanded}
+        className="entry turn-summary"
+        type="button"
+        onClick={() => {
+          setExpanded((value) => !value);
+        }}
+      >
+        <Icon className="entry-icon" kind="summary" title="Turn summary" />
+        <span className="turn-summary-items">
+          {turnSummary(items).map(({ icon, label }) => (
+            <span className="turn-summary-item" key={label}>
+              {label}
+              <Icon
+                className="turn-summary-item-icon"
+                kind={icon}
+                title={label}
+              />
+            </span>
+          ))}
+        </span>
+      </button>
+      {content}
+    </section>
+  );
+};
+
+const visibleTranscriptItems = (
+  items: RenderedTranscriptItem[],
+  visibleCount: number
+): RenderedTranscriptItem[] => {
+  const start = Math.max(0, items.length - visibleCount);
+  const turnStart = items.findLastIndex(
+    (item, index) => index <= start && item.kind === "user"
+  );
+  return items.slice(turnStart === -1 ? start : turnStart);
+};
+
+const TranscriptNodes = memo(
+  ({
+    items,
+    selected,
+  }: {
+    items: RenderedTranscriptItem[];
+    selected?: RenderedThreadDetail;
+  }): React.JSX.Element => {
+    const nodes: ReactNode[] = [];
+    for (let index = 0; index < items.length;) {
+      const user = items[index];
+      if (user?.kind !== "user") {
+        const nextUser = items.findIndex(
+          (item, candidate) => candidate > index && item.kind === "user"
+        );
+        const end = nextUser === -1 ? items.length : nextUser;
+        nodes.push(
+          <TranscriptItems
+            items={items.slice(index, end)}
+            key={`items:${user?.id ?? index}`}
+            selected={selected}
+          />
+        );
+        index = end;
+        continue;
+      }
+      const nextUser = items.findIndex(
+        (item, candidate) => candidate > index && item.kind === "user"
+      );
+      if (nextUser === -1) {
+        nodes.push(
+          <section className="conversation-turn" key={`turn:${user.id}`}>
+            <TranscriptItems items={items.slice(index)} selected={selected} />
+          </section>
+        );
+        break;
+      }
+      const turnItems = items.slice(index + 1, nextUser);
+      const response = turnItems.findLast((item) => item.kind === "assistant");
+      if (isCompactionRequest(user)) {
+        nodes.push(
+          <section className="conversation-turn" key={`turn:${user.id}`}>
+            <CompactionBlock
+              result={
+                isDefined(response) && isCompactionSummary(response)
+                  ? response
+                  : undefined
+              }
+            />
+          </section>
+        );
+        index = nextUser;
+        continue;
+      }
+      if (turnItems.length === 0) {
+        nodes.push(
+          <section className="conversation-turn" key={`turn:${user.id}`}>
+            <TranscriptEntry item={user} selected={selected} />
+          </section>
+        );
+        index = nextUser;
+        continue;
+      }
+      nodes.push(
+        <section className="conversation-turn" key={`turn:${user.id}`}>
+          <TranscriptEntry item={user} selected={selected} />
+          <CollapsedTurn
+            items={turnItems}
+            response={response}
+            selected={selected}
+          />
+        </section>
+      );
+      index = nextUser;
+    }
+    return <>{nodes}</>;
+  }
+);
+
+export const Transcript = ({
+  onAction,
+  onCopied,
+  onSetupOptionChange,
+  selected,
+  selectedSetupOptions,
+  setup,
+  visibleCount,
+}: {
+  onAction: TranscriptActionHandler;
+  onCopied: () => void;
+  onSetupOptionChange: (id: string, checked: boolean) => void;
+  selected?: RenderedThreadDetail;
+  selectedSetupOptions: string[];
+  setup?: RenderedSetupStep;
+  visibleCount: number;
+}): React.JSX.Element => {
+  const onTranscriptHighlight = async (): Promise<void> => {
+    const selection = window.getSelection();
+    const text = selection?.toString();
+    if (selection && isNonEmpty(text)) {
+      await navigator.clipboard.writeText(text);
+      setTimeout(() => {
+        selection.removeAllRanges();
+      }, 0);
+      onCopied();
+    }
+  };
+  const items = selected?.items.filter((item) => item.kind !== "plan") ?? [];
+  let content: ReactNode;
+  if (setup) {
+    content = (
+      <>
+        <TranscriptNodes items={[setup.item]} selected={selected} />
+        {setup.options?.map((option) => (
+          <label className="settings-option setup-option" key={option.id}>
+            <input
+              type="checkbox"
+              checked={selectedSetupOptions.includes(option.id)}
+              onChange={(event) => {
+                onSetupOptionChange(option.id, event.currentTarget.checked);
+              }}
+            />
+            <span>
+              <span className="settings-name">{option.label}</span>
+              <span className="settings-description">{option.description}</span>
+            </span>
+          </label>
+        ))}
+      </>
+    );
+  } else if (!selected) {
+    content = <div className="empty">Select an active Workspace.</div>;
+  } else if (items.length) {
+    content = (
+      <>
+        {items.length > visibleCount ? (
+          <div className="empty">Scroll up to load older messages.</div>
+        ) : null}
+        <TranscriptNodes
+          items={visibleTranscriptItems(items, visibleCount)}
+          selected={selected}
+        />
+      </>
+    );
+  } else {
+    content = <div className="empty">Send a prompt to start this Thread.</div>;
+  }
+  return (
+    <TranscriptActions value={onAction}>
+      <div
+        id="transcript"
+        onMouseUp={() => {
+          void onTranscriptHighlight();
+        }}
+      >
+        {content}
+      </div>
+    </TranscriptActions>
+  );
+};

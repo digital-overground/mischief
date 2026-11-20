@@ -1,4 +1,9 @@
 node_modules/
+macos/.cache/
+vscode-extension/media/theme.css
+vscode-extension/media/fonts/
+macos/Mischief.xcodeproj/xcuserdata/
+macos/Mischief.xcodeproj/project.xcworkspace/xcuserdata/
 dist/
 *.vsix
 .vscode/*

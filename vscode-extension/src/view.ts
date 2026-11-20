@@ -1,0 +1,1945 @@
+import { realpath } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+import bash from "@shikijs/langs/bash";
+import css from "@shikijs/langs/css";
+import diffLanguage from "@shikijs/langs/diff";
+import html from "@shikijs/langs/html";
+import javascript from "@shikijs/langs/javascript";
+import json from "@shikijs/langs/json";
+import jsx from "@shikijs/langs/jsx";
+import markdownLanguage from "@shikijs/langs/markdown";
+import python from "@shikijs/langs/python";
+import tsx from "@shikijs/langs/tsx";
+import typescript from "@shikijs/langs/typescript";
+import yaml from "@shikijs/langs/yaml";
+import githubDark from "@shikijs/themes/github-dark";
+import githubLight from "@shikijs/themes/github-light";
+import MarkdownIt from "markdown-it";
+import { createHighlighterCore } from "shiki/core";
+import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
+import * as vscode from "vscode";
+
+import { requestAgentInstall } from "./agents/install";
+import type { AgentService, AgentStatus } from "./agents/manager";
+import { AGENTS, AGENT_IDS, isAgentId } from "./agents/update";
+import type { AgentId } from "./agents/update";
+import type { HostConnectionStatus } from "./host/host-client";
+import { isDefined, isNonEmpty, isNonZero, isRecord } from "./present";
+import type { ProfileDatabase } from "./profile-database/profile-database";
+import {
+  copyIgnoredWorkspaceFiles,
+  ignoredWorkspaceFiles,
+} from "./projects/git";
+import {
+  issueWorkspaceName,
+  normalizeGitHubRepository,
+  normalizeWorkspaceName,
+} from "./projects/projects";
+import type {
+  GitSourceBranch,
+  Projects,
+  ProjectsSnapshot,
+} from "./projects/projects";
+import { projectSetupInputs, setupCommandHash } from "./projects/setup";
+import { setTodoExtensionEnabled, todoExtensionEnabled } from "./setup";
+import type { AgentTreeNavigationOptions } from "./threads/acp/models";
+import type { PromptImage } from "./threads/model";
+import type {
+  ThreadHistoryEntry,
+  ThreadInteractionResponse,
+  ThreadsChange,
+  TranscriptItem,
+} from "./threads/threads/models";
+import type { Threads } from "./threads/threads/threads";
+import { webviewHtml } from "./webview";
+import type { HostToWebviewMessage, SetupStep } from "./webview/protocol";
+import {
+  assignWorkspaceColors,
+  ensureWorkspaceColors,
+  workspaceWindowColor,
+} from "./workspace-colors";
+import {
+  readWorkspaceSettings,
+  updateWorkspaceSetting,
+} from "./workspace-settings";
+
+const VIEW_ID = "mischief.view";
+const START_WORKSPACES_KEY = "mischief.startWorkspaces";
+// ponytail: one pending Project focus; use request IDs if launches overlap.
+const FOCUS_WORKSPACE_KEY = "mischief.focusWorkspace";
+const COPY_IGNORED_ITEMS_KEY = "mischief.copyIgnoredItems";
+const PROJECT_SETUP_KEY = "mischief.projectSetup";
+
+interface PendingWorkspaceStart {
+  path: string;
+  prompt?: string;
+  setupCommand?: string;
+  setupInputs?: Record<string, string>;
+}
+
+interface WorkspaceSetupChoice {
+  selected: string[];
+  command: string;
+  hashes: Record<string, string>;
+}
+const DEFAULT_MONO_FONT_FAMILY =
+  '"Lilex", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+type IssueProvider = "GitHub" | "Linear";
+
+interface StartIssue {
+  identifier: string;
+  provider: IssueProvider;
+  title: string;
+  url: string;
+}
+
+const issueDisplayId = (issue: StartIssue): string =>
+  issue.provider === "GitHub" ? `#${issue.identifier}` : issue.identifier;
+
+const issuePrompt = (issue: StartIssue): string =>
+  issue.provider === "GitHub"
+    ? `start planning work on GitHub issue #${issue.identifier}. Read it with gh issue view ${issue.url} --comments.  return to the user once you've read the issue and give them a summary of the item`
+    : `start planning work on Linear issue ${issue.identifier}. Read it with linear issue view ${issue.identifier} --json. Return to the user once you've read the issue and give them a summary of the item`;
+
+const workspaceColorsEnabled = (): boolean =>
+  vscode.workspace
+    .getConfiguration("mischief")
+    .get<boolean>("assignWorkspaceColors", true);
+const markdown = new MarkdownIt({ breaks: true, html: false, linkify: true });
+let markdownHighlighter: Promise<void> | undefined;
+const setupMarkdownHighlighter = async (): Promise<void> => {
+  const highlighter = await createHighlighterCore({
+    engine: createJavaScriptRegexEngine(),
+    langs: [
+      bash,
+      css,
+      diffLanguage,
+      html,
+      javascript,
+      json,
+      jsx,
+      markdownLanguage,
+      python,
+      tsx,
+      typescript,
+      yaml,
+    ],
+    themes: [githubDark, githubLight],
+  });
+  const defaultFence = markdown.renderer.rules.fence;
+  const languages = new Set(highlighter.getLoadedLanguages());
+  markdown.renderer.rules.fence = (tokens, index, options, env, renderer) => {
+    const token = tokens[index];
+    const language = token?.info.trim().split(/\s+/u)[0] ?? "text";
+    if (
+      token === undefined ||
+      (language !== "text" && !languages.has(language))
+    ) {
+      return defaultFence?.(tokens, index, options, env, renderer) ?? "";
+    }
+    return highlighter.codeToHtml(token.content, {
+      defaultColor: false,
+      lang: language,
+      themes: { dark: "github-dark", light: "github-light" },
+    });
+  };
+};
+const initializeMarkdownHighlighter = async (): Promise<void> => {
+  markdownHighlighter ??= setupMarkdownHighlighter();
+  await markdownHighlighter;
+};
+const validateMarkdownLink = markdown.validateLink.bind(markdown);
+markdown.validateLink = (href) =>
+  /^file:/iu.test(href) || validateMarkdownLink(href);
+const fileReference =
+  /^(?<file>[A-Za-z0-9_@.+~-]+(?:[/][A-Za-z0-9_@.+~-]+)*[.][A-Za-z0-9_+-]+):(?<line>[1-9][0-9]*)(?:[-–—][1-9][0-9]*)?$/u;
+const resolveTranscriptFile = async (
+  workspace: string,
+  root: string,
+  requestedPath: string
+): Promise<string | undefined> => {
+  try {
+    return await realpath(requestedPath);
+  } catch {
+    const basename = path.basename(requestedPath);
+    if (
+      path.relative(workspace, requestedPath) !== basename ||
+      !/^[A-Za-z0-9_.-]+$/u.test(basename)
+    ) {
+      return undefined;
+    }
+    let matches: vscode.Uri[];
+    try {
+      matches = await vscode.workspace.findFiles(
+        new vscode.RelativePattern(workspace, `**/${basename}`),
+        "**/{.git,node_modules,dist,build}/**",
+        100
+      );
+    } catch {
+      return undefined;
+    }
+    let selectedPath: string | undefined;
+    if (matches.length === 1) {
+      selectedPath = matches[0]?.fsPath;
+    } else if (matches.length > 1) {
+      const selected = await vscode.window.showQuickPick(
+        matches.map((file) => ({
+          label: path.relative(root, file.fsPath),
+          path: file.fsPath,
+        })),
+        { placeHolder: `Choose a file named ${basename}` }
+      );
+      selectedPath = selected?.path;
+    }
+    if (selectedPath === undefined || selectedPath.length === 0) {
+      return undefined;
+    }
+    try {
+      return await realpath(selectedPath);
+    } catch {
+      return undefined;
+    }
+  }
+};
+const defaultCodeInline = markdown.renderer.rules.code_inline;
+markdown.renderer.rules.code_inline = (
+  tokens,
+  index,
+  options,
+  env,
+  renderer
+) => {
+  const token = tokens[index];
+  if (token === undefined) {
+    return "";
+  }
+  const rendered =
+    defaultCodeInline?.(tokens, index, options, env, renderer) ??
+    `<code>${markdown.utils.escapeHtml(token.content)}</code>`;
+  const match = fileReference.exec(token.content);
+  if (match?.groups === undefined) {
+    return rendered;
+  }
+  const href = `${match.groups.file
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/")}#L${match.groups.line}`;
+  return `<a href="${href}">${rendered}</a>`;
+};
+
+const renderTranscriptItem = (
+  item: TranscriptItem
+): TranscriptItem & {
+  html?: string;
+} =>
+  isNonEmpty(item.text) && item.kind !== "plan" && item.kind !== "tool"
+    ? { ...item, html: markdown.render(item.text) }
+    : item;
+
+const promptImages = (value: unknown): PromptImage[] => {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.length > 10) {
+    throw new Error("Invalid pasted images");
+  }
+  let size = 0;
+  return value.map((candidate) => {
+    if (!isRecord(candidate)) {
+      throw new Error("Invalid pasted image");
+    }
+    const image = candidate;
+    if (
+      typeof image.data !== "string" ||
+      typeof image.mimeType !== "string" ||
+      !["image/gif", "image/jpeg", "image/png", "image/webp"].includes(
+        image.mimeType
+      ) ||
+      !/^[A-Za-z\d+/]*={0,2}$/u.test(image.data)
+    ) {
+      throw new Error("Invalid pasted image");
+    }
+    size += image.data.length;
+    if (size > 20_000_000) {
+      throw new Error("Pasted images are too large");
+    }
+    return { data: image.data, mimeType: image.mimeType };
+  });
+};
+
+interface IssueProviderQuickPickItem extends vscode.QuickPickItem {
+  provider: "github" | "linear";
+}
+
+interface IssueQuickPickItem extends vscode.QuickPickItem {
+  issue: StartIssue;
+}
+
+interface SourceBranchQuickPickItem extends vscode.QuickPickItem {
+  branch?: GitSourceBranch;
+}
+
+interface ThreadHistoryQuickPickItem extends vscode.QuickPickItem {
+  entry: ThreadHistoryEntry;
+}
+
+interface BranchSummaryQuickPickItem extends vscode.QuickPickItem {
+  custom?: true;
+  summarize: boolean;
+}
+
+const historyTime = (value: string, now = Date.now()): string => {
+  const elapsed = Math.max(0, now - Date.parse(value));
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 1) {
+    return "now";
+  }
+  if (minutes < 60) {
+    return `${minutes}min`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours}h`;
+  }
+  const days = Math.floor(hours / 24);
+  return days <= 5 ? `${days}d` : new Date(value).toLocaleDateString();
+};
+
+const loadWithQuickPick = async <Value>(
+  title: string,
+  placeholder: string,
+  load: () => Promise<Value>
+): Promise<Value | undefined> => {
+  const picker = vscode.window.createQuickPick();
+  picker.busy = true;
+  picker.placeholder = placeholder;
+  picker.title = title;
+  let cancelled = false;
+  const hidden = picker.onDidHide(() => {
+    cancelled = true;
+  });
+  picker.show();
+  try {
+    const value = await load();
+    return cancelled ? undefined : value;
+  } finally {
+    hidden.dispose();
+    picker.hide();
+    picker.dispose();
+  }
+};
+
+const interactionResponse = (
+  value: unknown
+): ThreadInteractionResponse | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const response = value;
+  if (response.action === "cancel") {
+    return { action: "cancel" };
+  }
+  if (response.action === "select" && typeof response.optionId === "string") {
+    return { action: "select", optionId: response.optionId };
+  }
+  if (response.action === "accept" && isRecord(response.values)) {
+    return {
+      action: "accept",
+      values: response.values,
+    };
+  }
+  return undefined;
+};
+
+export interface ThreadSetup {
+  advance: (selected: string[]) => Promise<SetupStep | undefined>;
+  prompt: (agentId?: AgentId) => SetupStep | undefined;
+}
+
+export class MischiefView implements vscode.WebviewViewProvider {
+  private view?: vscode.WebviewView;
+  private pendingProjectSetup?: {
+    project: string;
+    entries: string[];
+    hashes: Record<string, string>;
+    creating: boolean;
+    resolve: (choice?: WorkspaceSetupChoice) => void;
+  };
+  private projectsSnapshot: ProjectsSnapshot = {
+    navigation: { workspaces: [] },
+  };
+  private readonly database: ProfileDatabase;
+  private databaseWorkspaces: string;
+  private profileRefresh = Promise.resolve();
+  private hostConnection?: HostConnectionStatus;
+  private setupPrompt?: string;
+  private setupStep?: SetupStep;
+  private setupAgentId?: AgentId;
+  private readonly extensionUri: vscode.Uri;
+  private readonly setup?: ThreadSetup;
+  private readonly projects: Projects;
+  private readonly storage: Pick<vscode.Memento, "get" | "update">;
+  private readonly threads: Threads;
+  private readonly agentManager?: AgentService;
+
+  constructor(
+    projects: Projects,
+    threads: Threads,
+    extensionUri: vscode.Uri,
+    storage: Pick<vscode.Memento, "get" | "update">,
+    database: ProfileDatabase,
+    setup?: ThreadSetup,
+    agentManager?: AgentService
+  ) {
+    this.projects = projects;
+    this.threads = threads;
+    this.extensionUri = extensionUri;
+    this.storage = storage;
+    this.database = database;
+    this.databaseWorkspaces = JSON.stringify(database.snapshot().workspaces);
+    database.onChange(() => {
+      this.databaseChanged();
+    });
+    this.setup = setup;
+    this.agentManager = agentManager;
+    threads.onChange((change) => {
+      if (change?.type === "transcript") {
+        this.renderTranscript(change);
+      } else if (change?.type === "sessionOperation") {
+        this.renderSessionOperation(change);
+      } else if (change?.type === "remoteSelection") {
+        this.render();
+        void MischiefView.run(
+          (async () => {
+            await vscode.commands.executeCommand(
+              "workbench.view.extension.mischief"
+            );
+            this.view?.show(false);
+          })()
+        );
+      } else {
+        this.render();
+      }
+    });
+  }
+
+  async initialize(folder?: string): Promise<void> {
+    await this.setProjects(
+      isNonEmpty(folder) ? this.projects.open(folder) : this.projects.refresh()
+    );
+    await this.syncThreads();
+    const focusWorkspace = this.storage.get<string>(FOCUS_WORKSPACE_KEY);
+    if (
+      isNonEmpty(focusWorkspace) &&
+      focusWorkspace ===
+        this.projectsSnapshot.navigation.current?.workspace.path
+    ) {
+      // oxlint-disable-next-line unicorn/no-useless-undefined -- undefined removes a VS Code Memento key.
+      await this.storage.update(FOCUS_WORKSPACE_KEY, undefined);
+      await vscode.commands.executeCommand("workbench.view.extension.mischief");
+    }
+    if (
+      this.threads.snapshot().selected?.id === null &&
+      this.agentManager?.availableAgents().length === 0
+    ) {
+      this.setupStep = this.setup?.prompt();
+    }
+    this.render();
+    await this.startPendingWorkspace();
+  }
+
+  async addWorkspace(): Promise<void> {
+    const selected = await vscode.window.showOpenDialog({
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: "Add Workspace",
+    });
+    if (!selected?.[0]) {
+      return;
+    }
+    await this.setProjects(this.projects.add(selected[0].fsPath));
+    await this.syncThreads();
+    this.render();
+  }
+
+  async newWorkspace(projectRoot: string): Promise<void> {
+    const name = await vscode.window.showInputBox({
+      prompt: "Create a linked worktree and branch",
+      title: `New Workspace for ${path.basename(projectRoot)}`,
+      validateInput: (value) => {
+        const normalized = normalizeWorkspaceName(value);
+        if (!normalized) {
+          return "Enter a Workspace name";
+        }
+        return /[/\\]/u.test(normalized)
+          ? "Workspace names cannot contain slashes"
+          : undefined;
+      },
+    });
+    if (name === undefined) {
+      return;
+    }
+    await this.createWorkspace(projectRoot, name);
+  }
+
+  async refresh(): Promise<void> {
+    await this.setProjects(this.projects.refresh());
+    await this.syncThreads();
+    this.render();
+  }
+
+  private async openIssues(projectRoot: string): Promise<void> {
+    const projectName = path.basename(projectRoot);
+    const selectedProvider = await vscode.window.showQuickPick(
+      [
+        {
+          description: "Issues from the configured GitHub repository",
+          label: "GitHub",
+          provider: "github",
+        },
+        {
+          description: "Issues from the configured Linear team",
+          label: "Linear",
+          provider: "linear",
+        },
+      ] satisfies IssueProviderQuickPickItem[],
+      {
+        placeHolder: "Choose an issue tracker",
+        title: `Start work on an issue · ${projectName}`,
+      }
+    );
+    if (!selectedProvider) {
+      return;
+    }
+    const providerName =
+      selectedProvider.provider === "github" ? "GitHub" : "Linear";
+    let issues: StartIssue[] | undefined;
+    if (selectedProvider.provider === "github") {
+      const githubIssues = await this.projects.listOpenIssues(
+        projectRoot,
+        async (defaultRepository) => {
+          const repository = await vscode.window.showInputBox({
+            prompt: "Enter the GitHub issue repository as owner/repo",
+            title: `Issue Repository for ${projectName}`,
+            validateInput: (value) =>
+              isNonEmpty(normalizeGitHubRepository(value))
+                ? undefined
+                : "Enter a GitHub repository as owner/repo",
+            value: defaultRepository,
+          });
+          return repository === undefined
+            ? undefined
+            : normalizeGitHubRepository(repository);
+        }
+      );
+      issues = githubIssues?.map((issue) => ({
+        identifier: String(issue.number),
+        provider: "GitHub" as const,
+        title: issue.title,
+        url: issue.url,
+      }));
+    } else {
+      const linearIssues =
+        await this.projects.listOpenLinearIssues(projectRoot);
+      issues = linearIssues.map((issue) => ({
+        ...issue,
+        provider: "Linear" as const,
+      }));
+    }
+    if (!issues) {
+      return;
+    }
+    if (!issues.length) {
+      await vscode.window.showInformationMessage(
+        `No open ${providerName} issues for ${projectName}.`
+      );
+      return;
+    }
+    const picker = vscode.window.createQuickPick<IssueQuickPickItem>();
+    picker.title = `Open ${providerName} Issues · ${projectName}`;
+    picker.items = issues.map((issue) => ({
+      buttons: [
+        {
+          iconPath: new vscode.ThemeIcon("link-external"),
+          tooltip: `Open ${issueDisplayId(issue)} on ${issue.provider}`,
+        },
+      ],
+      issue,
+      label: `${issueDisplayId(issue)} ${issue.title}`,
+    }));
+    const disposables = [
+      picker.onDidAccept(() => {
+        const [selected] = picker.selectedItems;
+        if (isDefined(selected)) {
+          picker.hide();
+          void MischiefView.run(
+            this.newIssueWorkspace(projectRoot, selected.issue)
+          );
+        }
+      }),
+      picker.onDidTriggerItemButton(async ({ item }) => {
+        try {
+          const opened = await vscode.env.openExternal(
+            vscode.Uri.parse(item.issue.url)
+          );
+          if (!opened) {
+            throw new Error("VS Code declined the URL");
+          }
+        } catch (error) {
+          void vscode.window.showErrorMessage(
+            `Mischief: Could not open ${issueDisplayId(item.issue)}: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }),
+      picker.onDidHide(() => {
+        for (const disposable of disposables) {
+          disposable.dispose();
+        }
+        picker.dispose();
+      }),
+    ];
+    picker.show();
+  }
+
+  private async newIssueWorkspace(
+    projectRoot: string,
+    issue: StartIssue
+  ): Promise<void> {
+    const branches = await this.projects.sourceBranches(projectRoot);
+    if (!branches.length) {
+      await vscode.window.showInformationMessage(
+        `No source branches for ${path.basename(projectRoot)}.`
+      );
+      return;
+    }
+    const local = branches.filter((branch) => !branch.remoteOnly);
+    const remote = branches.filter((branch) => branch.remoteOnly);
+    const items: SourceBranchQuickPickItem[] = [
+      { kind: vscode.QuickPickItemKind.Separator, label: "Local" },
+      ...local.map((branch) => ({
+        branch,
+        description:
+          branch.ahead === undefined
+            ? "local only"
+            : `↑${branch.ahead} ↓${branch.behind ?? 0}`,
+        label: branch.name,
+      })),
+      ...(remote.length
+        ? [
+            {
+              kind: vscode.QuickPickItemKind.Separator,
+              label: "Remote only",
+            },
+            ...remote.map((branch) => ({ branch, label: branch.name })),
+          ]
+        : []),
+    ];
+    const picker = vscode.window.createQuickPick<SourceBranchQuickPickItem>();
+    picker.items = items;
+    picker.title = `Source Branch for ${issueDisplayId(issue)}`;
+    const current = items.find((item) => item.branch?.current === true);
+    if (current) {
+      picker.activeItems = [current];
+    }
+    const disposables = [
+      picker.onDidAccept(() => {
+        const [selected] = picker.selectedItems;
+        if (selected?.branch) {
+          picker.hide();
+          void MischiefView.run(
+            this.nameIssueWorkspace(projectRoot, issue, selected.branch)
+          );
+        }
+      }),
+      picker.onDidHide(() => {
+        for (const disposable of disposables) {
+          disposable.dispose();
+        }
+        picker.dispose();
+      }),
+    ];
+    picker.show();
+  }
+
+  private async nameIssueWorkspace(
+    projectRoot: string,
+    issue: StartIssue,
+    branch: GitSourceBranch
+  ): Promise<void> {
+    const name = await vscode.window.showInputBox({
+      prompt: `Create a linked worktree and branch from ${branch.name}`,
+      title: `New Workspace for ${issueDisplayId(issue)}`,
+      validateInput: (value) => {
+        const normalized = normalizeWorkspaceName(value);
+        if (!normalized) {
+          return "Enter a Workspace name";
+        }
+        return /[/\\]/u.test(normalized)
+          ? "Workspace names cannot contain slashes"
+          : undefined;
+      },
+      value: issueWorkspaceName(issue),
+    });
+    if (name !== undefined) {
+      await this.createWorkspace(
+        projectRoot,
+        name,
+        branch.name,
+        issuePrompt(issue)
+      );
+    }
+  }
+
+  private async showProjectSetup(
+    project: string,
+    creating: boolean,
+    branch?: string
+  ): Promise<WorkspaceSetupChoice | undefined> {
+    if (this.pendingProjectSetup) {
+      throw new Error("A setup dialog is already open");
+    }
+    const root = await realpath(project);
+    const entries = await ignoredWorkspaceFiles(project);
+    const { settings } = await readWorkspaceSettings(project);
+    const saved = settings[COPY_IGNORED_ITEMS_KEY];
+    const setup = settings[PROJECT_SETUP_KEY];
+    const { hashes, suggestions } = await projectSetupInputs(project);
+    const command =
+      isRecord(setup) && typeof setup.command === "string" ? setup.command : "";
+    const review =
+      isRecord(setup) &&
+      (setup.approvedCommandHash !== setupCommandHash(command) ||
+        JSON.stringify(setup.inputHashes) !== JSON.stringify(hashes));
+    const previous = Array.isArray(saved) ? new Set<unknown>(saved) : null;
+    const selected = entries.filter((entry) =>
+      previous
+        ? previous.has(entry)
+        : !entry.endsWith("/") &&
+          !/^(?:\.env(?:\..*)?|\.envrc(?:\.local)?|.*\.xcconfig)$/u.test(
+            entry.split("/").at(-1) ?? ""
+          )
+    );
+    if (!this.view) {
+      return undefined;
+    }
+    const postMessage = this.view.webview.postMessage.bind(this.view.webview);
+    // oxlint-disable-next-line promise/avoid-new
+    return await new Promise<WorkspaceSetupChoice | undefined>((resolve) => {
+      this.pendingProjectSetup = {
+        creating,
+        entries,
+        hashes,
+        project,
+        resolve,
+      };
+      void postMessage({
+        command,
+        creating,
+        ...(branch === undefined
+          ? {}
+          : {
+              workspace: {
+                branch,
+                path: path.join(
+                  path.dirname(root),
+                  "worktrees",
+                  `${path.basename(root)}-${branch}`
+                ),
+              },
+            }),
+        entries,
+        project,
+        review,
+        selected,
+        suggestions,
+        type: "showProjectSetup",
+      } satisfies HostToWebviewMessage);
+    });
+  }
+
+  private async createWorkspace(
+    projectRoot: string,
+    name: string,
+    sourceRef?: string,
+    prompt?: string
+  ): Promise<void> {
+    let choice: WorkspaceSetupChoice | undefined;
+    try {
+      choice = await this.showProjectSetup(
+        projectRoot,
+        true,
+        normalizeWorkspaceName(name)
+      );
+    } catch (error) {
+      void vscode.window.showErrorMessage(
+        `Mischief could not prepare the new Workspace: ${error instanceof Error ? error.message : String(error)}`
+      );
+      return;
+    }
+    if (choice === undefined) {
+      return;
+    }
+    const workspace = await this.projects.createWorkspace(
+      projectRoot,
+      name,
+      sourceRef
+    );
+    try {
+      if (choice.selected.length > 0) {
+        await copyIgnoredWorkspaceFiles(
+          projectRoot,
+          workspace,
+          choice.selected
+        );
+      }
+    } catch (error) {
+      void vscode.window.showWarningMessage(
+        `Mischief created the Workspace but could not copy ignored items: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+    if (workspaceColorsEnabled()) {
+      try {
+        await assignWorkspaceColors(workspace, projectRoot);
+      } catch (error) {
+        void vscode.window.showWarningMessage(
+          `Mischief created the Workspace but could not assign its color: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+    await this.setProjects(this.projects.refresh());
+    const pending = this.storage.get<PendingWorkspaceStart[]>(
+      START_WORKSPACES_KEY,
+      []
+    );
+    await this.storage.update(START_WORKSPACES_KEY, [
+      ...pending.filter((candidate) => candidate.path !== workspace),
+      {
+        path: workspace,
+        ...(isNonEmpty(prompt) ? { prompt } : {}),
+        ...(isNonEmpty(choice.command)
+          ? { setupCommand: choice.command, setupInputs: choice.hashes }
+          : {}),
+      },
+    ]);
+    this.render();
+    await this.openWorkspace(workspace);
+  }
+
+  async newThread(
+    preserveFocus = true,
+    initialPrompt?: string
+  ): Promise<boolean> {
+    const available = this.agentManager?.availableAgents() ?? [];
+    let agentId = this.threads.preferredAgentId?.();
+    if (agentId === undefined && (available.length > 0 || !this.setup)) {
+      agentId = await this.pickAgent();
+    }
+    const setupStep = this.setup?.prompt(agentId);
+    if (setupStep) {
+      this.setupAgentId = agentId;
+      this.setupPrompt = initialPrompt;
+      this.setupStep = setupStep;
+      this.view?.show(preserveFocus);
+      this.render();
+      return true;
+    }
+    if (agentId === undefined) {
+      return false;
+    }
+    await this.startThread(agentId, preserveFocus, initialPrompt);
+    return true;
+  }
+
+  private async pickAgent(): Promise<AgentId | undefined> {
+    if (!this.agentManager) {
+      return this.threads.preferredAgentId?.();
+    }
+    const available = this.agentManager.availableAgents();
+    const selected = await vscode.window.showQuickPick(
+      AGENT_IDS.map((id) => ({
+        description: available.includes(id) ? undefined : "Install required",
+        id,
+        label: AGENTS[id].name,
+      })),
+      {
+        placeHolder: "This Agent is fixed for the Thread",
+        title: "Choose Agent",
+      }
+    );
+    if (!selected) {
+      return undefined;
+    }
+    if (
+      !available.includes(selected.id) &&
+      !(await requestAgentInstall(this.agentManager, selected.id))
+    ) {
+      return undefined;
+    }
+    return selected.id;
+  }
+
+  async stageEditorSelection(target: "current" | "new"): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (
+      !editor ||
+      editor.selection.isEmpty ||
+      (editor.document.uri.scheme !== "file" &&
+        editor.document.uri.scheme !== "git")
+    ) {
+      return;
+    }
+    const { workspace } = this.threads.snapshot();
+    if (!isNonEmpty(workspace)) {
+      void vscode.window.showWarningMessage("Mischief: No active Workspace.");
+      return;
+    }
+    const relative = path.relative(workspace, editor.document.uri.fsPath);
+    if (
+      !relative ||
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    ) {
+      void vscode.window.showWarningMessage(
+        "Mischief: Selection is outside the current Workspace."
+      );
+      return;
+    }
+    const { selection, document } = editor;
+    const firstLine = selection.start.line + 1;
+    const lastLine =
+      selection.end.line + (selection.end.character === 0 ? 0 : 1);
+    const prompt = `Discuss this selection in @${relative.split(path.sep).join("/")} lines ${firstLine}-${Math.max(firstLine, lastLine)}.\n\n\`\`\`${document.languageId}\n${document.getText(selection)}\n\`\`\``;
+    if (target === "new" && !(await this.newThread())) {
+      return;
+    }
+    this.threads.stageDraft(prompt);
+    await vscode.commands.executeCommand("workbench.view.extension.mischief");
+    this.view?.show(false);
+  }
+
+  configurationChanged(): void {
+    this.render();
+  }
+
+  setAllExpanded(expanded: boolean): void {
+    const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
+    void postMessage?.({
+      expanded,
+      type: "setAllExpanded",
+    } satisfies HostToWebviewMessage);
+  }
+
+  toggleProjectsMenu(): void {
+    const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
+    void postMessage?.({
+      type: "toggleProjectsMenu",
+    } satisfies HostToWebviewMessage);
+  }
+
+  showSettings(): void {
+    const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
+    const defaultAgent = vscode.workspace
+      .getConfiguration("mischief")
+      .get<unknown>("defaultAgent");
+    void postMessage?.({
+      agents: this.agentManager?.snapshot() ?? [],
+      assignWorkspaceColors: workspaceColorsEnabled(),
+      defaultAgent: isAgentId(defaultAgent) ? defaultAgent : "",
+      todoExtensionEnabled: todoExtensionEnabled(),
+      type: "showSettings",
+    } satisfies HostToWebviewMessage);
+  }
+
+  forwardAgentStatuses(statuses: AgentStatus[]): void {
+    if (
+      this.setupStep?.id === "agents" &&
+      this.setupPrompt === undefined &&
+      (this.agentManager?.availableAgents().length ?? 0) > 0
+    ) {
+      this.setupStep = this.setup?.prompt();
+      this.render();
+    }
+    const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
+    void postMessage?.({
+      agents: statuses,
+      type: "agents",
+    } satisfies HostToWebviewMessage);
+  }
+
+  forwardHostConnection(status: HostConnectionStatus): void {
+    this.hostConnection = { ...status };
+    const postMessage = this.view?.webview.postMessage.bind(this.view.webview);
+    void postMessage?.({
+      ...status,
+      type: "hostConnection",
+    } satisfies HostToWebviewMessage);
+  }
+
+  async resolveWebviewView(view: vscode.WebviewView): Promise<void> {
+    await initializeMarkdownHighlighter();
+    this.view = view;
+    const media = vscode.Uri.joinPath(this.extensionUri, "media");
+    const dist = vscode.Uri.joinPath(this.extensionUri, "dist");
+    view.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [media, dist],
+    };
+    view.webview.html = await webviewHtml(view.webview, this.extensionUri);
+    view.webview.onDidReceiveMessage((message: unknown) => {
+      void this.handleMessage(message);
+    });
+    view.onDidChangeVisibility?.(() => {
+      if (view.visible) {
+        this.threads.markViewed();
+      } else {
+        this.threads.markHidden();
+      }
+    });
+    view.onDidDispose(() => {
+      this.pendingProjectSetup?.resolve();
+      this.pendingProjectSetup = undefined;
+      this.threads.markHidden();
+      if (this.view === view) {
+        this.view = undefined;
+      }
+    });
+    if (view.visible) {
+      this.threads.markViewed();
+    }
+    this.render();
+  }
+
+  private async setProjects(
+    snapshot: Promise<ProjectsSnapshot>
+  ): Promise<void> {
+    this.projectsSnapshot = await snapshot;
+    const { current } = this.projectsSnapshot.navigation;
+    if (current && workspaceColorsEnabled()) {
+      try {
+        await ensureWorkspaceColors(
+          current.workspace.path,
+          current.projectRoot ?? current.workspace.path
+        );
+      } catch (error) {
+        void vscode.window.showWarningMessage(
+          `Mischief could not assign this Workspace's color: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+    await Promise.all(
+      this.projectsSnapshot.navigation.workspaces.map(async (workspace) => {
+        workspace.color = await workspaceWindowColor(workspace.path);
+      })
+    );
+  }
+
+  private async syncThreads(): Promise<void> {
+    const current = this.projectsSnapshot.navigation.current?.workspace;
+    const active = this.threads.snapshot().workspace;
+    if (current && active !== current.path) {
+      await this.threads.openWorkspace(current.path);
+    } else if (!current && isNonEmpty(active)) {
+      const closing = this.database
+        .snapshot()
+        .workspaces.some(
+          (workspace) =>
+            workspace.path === active && workspace.status === "inactive"
+        );
+      await this.threads.closeWorkspace();
+      if (closing) {
+        await vscode.commands.executeCommand("workbench.action.closeWindow");
+      }
+    }
+  }
+
+  private databaseChanged(): void {
+    const workspaces = JSON.stringify(this.database.snapshot().workspaces);
+    if (this.databaseWorkspaces === workspaces) {
+      this.render();
+      return;
+    }
+    this.databaseWorkspaces = workspaces;
+    const previous = this.profileRefresh;
+    this.profileRefresh = MischiefView.run(
+      (async () => {
+        await previous;
+        await this.setProjects(this.projects.refresh());
+        await this.syncThreads();
+        this.render();
+      })()
+    );
+  }
+
+  private async handleMessage(message: unknown): Promise<void> {
+    if (!isRecord(message)) {
+      return;
+    }
+    const data = message;
+    try {
+      if (
+        data.type === "saveProjectSetup" ||
+        data.type === "dismissProjectSetup"
+      ) {
+        await this.handleProjectSetupMessage(data);
+        return;
+      }
+      if (await this.handleWorkspaceMessage(data)) {
+        return;
+      }
+      if (await this.handleAgentMessage(data)) {
+        return;
+      }
+      if (await this.handleThreadMessage(data)) {
+        return;
+      }
+      await this.handleInteractionMessage(data);
+    } catch (error) {
+      if (data.type === "setTodoExtensionEnabled") {
+        this.showSettings();
+      }
+      void vscode.window.showErrorMessage(
+        `Mischief: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  private async handleWorkspaceMessage(
+    data: Record<string, unknown>
+  ): Promise<boolean> {
+    if (data.type === "ready") {
+      this.threads.markViewed();
+      this.render();
+      return true;
+    }
+    if (
+      data.type === "setAssignWorkspaceColors" &&
+      typeof data.value === "boolean"
+    ) {
+      await vscode.workspace
+        .getConfiguration("mischief")
+        .update(
+          "assignWorkspaceColors",
+          data.value,
+          vscode.ConfigurationTarget.Global
+        );
+      return true;
+    }
+    if (
+      data.type === "setTodoExtensionEnabled" &&
+      typeof data.value === "boolean"
+    ) {
+      setTodoExtensionEnabled(data.value);
+      this.showSettings();
+      return true;
+    }
+    if (data.type === "contextItems") {
+      await this.sendContextItems();
+      return true;
+    }
+    if (data.type === "addWorkspace") {
+      await this.addWorkspace();
+      return true;
+    }
+    if (data.type === "refresh") {
+      await this.refresh();
+      return true;
+    }
+    if (data.type === "showSettings") {
+      this.showSettings();
+      return true;
+    }
+    if (data.type === "newThread") {
+      await this.newThread();
+      return true;
+    }
+    if (data.type === "threadHistory") {
+      await this.showThreadHistory();
+      return true;
+    }
+    if (data.type === "setupContinue") {
+      const selected = Array.isArray(data.selected)
+        ? data.selected
+            .filter((item): item is string => typeof item === "string")
+            .slice(0, 10)
+        : [];
+      await this.continueSetup(selected);
+      return true;
+    }
+    return await this.handleWorkspaceNavigationMessage(data);
+  }
+
+  private async handleProjectSetupMessage(
+    data: Record<string, unknown>
+  ): Promise<boolean> {
+    if (
+      data.type !== "saveProjectSetup" &&
+      data.type !== "dismissProjectSetup"
+    ) {
+      return false;
+    }
+    const pending = this.pendingProjectSetup;
+    if (!pending || data.project !== pending.project) {
+      return true;
+    }
+    if (data.type === "dismissProjectSetup") {
+      this.pendingProjectSetup = undefined;
+      pending.resolve();
+      return true;
+    }
+    if (
+      typeof data.command !== "string" ||
+      !Array.isArray(data.selected) ||
+      data.selected.some(
+        (entry) => typeof entry !== "string" || !pending.entries.includes(entry)
+      )
+    ) {
+      throw new Error("Invalid Project setup selection");
+    }
+    const selected = data.selected.filter(
+      (entry): entry is string => typeof entry === "string"
+    );
+    this.pendingProjectSetup = undefined;
+    try {
+      const { hashes } = await projectSetupInputs(pending.project);
+      if (JSON.stringify(hashes) !== JSON.stringify(pending.hashes)) {
+        throw new Error(
+          "Project settings inputs changed while reviewing; reopen Project Settings"
+        );
+      }
+      if (!pending.creating) {
+        await updateWorkspaceSetting(pending.project, PROJECT_SETUP_KEY, {
+          approvedCommandHash: setupCommandHash(data.command),
+          command: data.command,
+          inputHashes: hashes,
+        });
+        await updateWorkspaceSetting(
+          pending.project,
+          COPY_IGNORED_ITEMS_KEY,
+          selected
+        );
+      }
+      pending.resolve({ command: data.command, hashes, selected });
+    } catch (error) {
+      pending.resolve();
+      throw error;
+    }
+    return true;
+  }
+
+  private async handleWorkspaceNavigationMessage(
+    data: Record<string, unknown>
+  ): Promise<boolean> {
+    if (typeof data.path !== "string") {
+      return false;
+    }
+    if (data.type === "openIssues") {
+      await this.openIssues(data.path);
+      return true;
+    }
+    if (data.type === "newWorkspace") {
+      await this.newWorkspace(data.path);
+      return true;
+    }
+    if (data.type === "projectSetup") {
+      if (data.path !== this.projectsSnapshot.navigation.current?.projectRoot) {
+        return true;
+      }
+      await this.showProjectSetup(data.path, false);
+      return true;
+    }
+    if (data.type === "openWorkspace" || data.type === "focusWorkspace") {
+      await (data.type === "openWorkspace"
+        ? this.openWorkspace(data.path)
+        : this.focusWorkspace(data.path));
+      return true;
+    }
+    if (data.type === "closeWorkspace") {
+      await this.closeWorkspace(data.path);
+      return true;
+    }
+    return false;
+  }
+
+  private async handleAgentMessage(
+    data: Record<string, unknown>
+  ): Promise<boolean> {
+    if (data.type === "setDefaultAgent") {
+      if (
+        typeof data.id !== "string" ||
+        (data.id !== "" && !isAgentId(data.id))
+      ) {
+        return false;
+      }
+      await vscode.workspace
+        .getConfiguration("mischief")
+        .update(
+          "defaultAgent",
+          data.id || undefined,
+          vscode.ConfigurationTarget.Global
+        );
+      return true;
+    }
+    if (data.type === "chooseAgent") {
+      if (this.threads.snapshot().selected?.id === null) {
+        const agentId = await this.pickAgent();
+        if (agentId !== undefined) {
+          this.threads.selectDraftAgent(agentId);
+        }
+      }
+      return true;
+    }
+    if (
+      (data.type !== "installAgent" && data.type !== "checkAgent") ||
+      !isAgentId(data.id) ||
+      !this.agentManager
+    ) {
+      return false;
+    }
+    await (data.type === "installAgent"
+      ? requestAgentInstall(this.agentManager, data.id)
+      : this.agentManager.check(data.id, true));
+    return true;
+  }
+
+  // oxlint-disable-next-line complexity -- message routing is intentionally flat
+  private async handleThreadMessage(
+    data: Record<string, unknown>
+  ): Promise<boolean> {
+    if (data.type === "selectThread" && typeof data.id === "string") {
+      const workspace = this.threads
+        .snapshot()
+        .threads.find((thread) => thread.id === data.id)?.workspace;
+      const current = this.projectsSnapshot.navigation.current?.workspace;
+      if (isNonEmpty(workspace) && workspace !== current?.path) {
+        await this.openWorkspace(workspace);
+      }
+      await this.threads.select(data.id);
+      return true;
+    }
+    if (data.type === "removeThread" && typeof data.id === "string") {
+      await this.threads.remove(data.id);
+      return true;
+    }
+    if (data.type === "forkThread" || data.type === "navigateThreadTree") {
+      if (
+        typeof data.threadId !== "string" ||
+        !isNonEmpty(data.threadId) ||
+        data.threadId.length > 200 ||
+        typeof data.messageId !== "string" ||
+        !isNonEmpty(data.messageId) ||
+        data.messageId.length > 1000
+      ) {
+        throw new Error("Invalid transcript message target");
+      }
+      if (data.type === "forkThread") {
+        await this.threads.forkMessage(data.threadId, data.messageId);
+      } else {
+        const options = await MischiefView.chooseBranchSummary(
+          this.threads.branchSummarySupported(data.threadId),
+          false
+        );
+        if (options) {
+          await this.threads.navigateTreeMessage(
+            data.threadId,
+            data.messageId,
+            options
+          );
+          await this.render();
+        }
+      }
+      return true;
+    }
+    if (data.type === "renameThread" && typeof data.id === "string") {
+      await this.renameThread(data.id);
+      return true;
+    }
+    if (data.type === "prompt" && typeof data.text === "string") {
+      if (data.text.length > 1_000_000) {
+        throw new Error("Prompt is too large");
+      }
+      const images = promptImages(data.images);
+      void MischiefView.run(this.threads.prompt(data.text, images));
+      return true;
+    }
+    if (data.type === "cancel") {
+      await this.threads.cancel();
+      return true;
+    }
+    if (data.type === "clearPlan") {
+      this.threads.clearPlan();
+      return true;
+    }
+    if (data.type === "clearSteering") {
+      this.threads.clearSteering();
+      return true;
+    }
+    if (data.type === "removeSteering" && typeof data.id === "string") {
+      this.threads.removeSteering(data.id);
+      return true;
+    }
+    if (data.type === "sendSteering" && typeof data.id === "string") {
+      await this.threads.sendSteering(data.id);
+      return true;
+    }
+    if (data.type === "retry") {
+      void MischiefView.run(this.threads.retry());
+      return true;
+    }
+    if (data.type === "loadOlder") {
+      void MischiefView.run(this.threads.loadOlder());
+      return true;
+    }
+    if (
+      data.type === "setConfig" &&
+      typeof data.id === "string" &&
+      (typeof data.value === "string" || typeof data.value === "boolean")
+    ) {
+      await this.threads.setConfig(data.id, data.value);
+      return true;
+    }
+    return false;
+  }
+
+  private async handleInteractionMessage(
+    data: Record<string, unknown>
+  ): Promise<void> {
+    if (data.type === "respond" && typeof data.id === "string") {
+      const response = interactionResponse(data.response);
+      if (response) {
+        this.threads.respond(data.id, response);
+      }
+      return;
+    }
+    if (data.type === "draftsConsumed") {
+      this.threads.consumeDrafts();
+      return;
+    }
+    if (data.type === "authenticate") {
+      await this.authenticate();
+      return;
+    }
+    if (data.type === "openLocation" && typeof data.path === "string") {
+      await this.openLocation(
+        data.path,
+        typeof data.line === "number" ? data.line : undefined
+      );
+      return;
+    }
+    if (data.type === "openTranscriptLink" && typeof data.href === "string") {
+      await this.openTranscriptLink(data.href);
+      return;
+    }
+    if (data.type === "openDiff" && typeof data.path === "string") {
+      await this.openDiff(data.path);
+    }
+  }
+
+  private static async chooseBranchSummary(
+    supported: boolean,
+    current: boolean
+  ): Promise<AgentTreeNavigationOptions | undefined> {
+    let options: AgentTreeNavigationOptions = { summarize: false };
+    if (supported && !current) {
+      const summary =
+        await vscode.window.showQuickPick<BranchSummaryQuickPickItem>(
+          [
+            { label: "No summary", summarize: false },
+            { label: "Pi's default branch summary", summarize: true },
+            {
+              custom: true,
+              label: "Pi's branch summary with custom focus…",
+              summarize: true,
+            },
+          ],
+          {
+            placeHolder: "Choose how to handle the abandoned branch",
+            title: "Branch Summary",
+          }
+        );
+      if (!summary) {
+        return undefined;
+      }
+      options = { summarize: summary.summarize };
+      if (summary.custom) {
+        const customInstructions = await vscode.window.showInputBox({
+          placeHolder: "Focus on decisions, errors, or another topic",
+          prompt: "Enter custom instructions for Pi's branch summary",
+          title: "Branch Summary Focus",
+          validateInput: (value) =>
+            value.trim() ? undefined : "Enter summary instructions",
+        });
+        if (customInstructions === undefined) {
+          return undefined;
+        }
+        options.customInstructions = customInstructions;
+      }
+    }
+    return options;
+  }
+
+  private async showThreadHistory(): Promise<void> {
+    const agentId = await this.pickAgent();
+    if (agentId === undefined) {
+      return;
+    }
+    const entries = await loadWithQuickPick(
+      "Thread History",
+      "Loading previous Threads…",
+      async () => await this.threads.history(agentId)
+    );
+    if (!entries) {
+      return;
+    }
+    if (!entries.length) {
+      await vscode.window.showInformationMessage(
+        "No previous Threads in this Workspace."
+      );
+      return;
+    }
+    const selected =
+      await vscode.window.showQuickPick<ThreadHistoryQuickPickItem>(
+        entries.map((entry) => ({
+          entry,
+          label: entry.title,
+          ...(isNonEmpty(entry.updatedAt)
+            ? { description: historyTime(entry.updatedAt) }
+            : {}),
+          ...(isNonEmpty(entry.preview) && entry.previewRole
+            ? {
+                detail: `${entry.previewRole === "user" ? "You" : "Agent"}: ${entry.preview}`,
+              }
+            : {}),
+        })),
+        {
+          placeHolder: "Select a Thread to reopen",
+          title: "Thread History",
+        }
+      );
+    if (selected) {
+      await this.threads.reopen(selected.entry);
+    }
+  }
+
+  private async continueSetup(selected: string[]): Promise<void> {
+    if (!this.setup || !this.setupStep) {
+      return;
+    }
+    this.setupStep = await this.setup.advance(selected);
+    if (this.setupStep) {
+      this.render();
+    } else {
+      const prompt = this.setupPrompt;
+      const available = this.agentManager?.availableAgents() ?? [];
+      const agentId =
+        this.setupAgentId !== undefined && available.includes(this.setupAgentId)
+          ? this.setupAgentId
+          : (this.threads.preferredAgentId?.() ??
+            (available.length === 1 ? available[0] : undefined));
+      this.setupPrompt = undefined;
+      this.setupAgentId = undefined;
+      await (agentId === undefined
+        ? this.newThread(true, prompt)
+        : this.startThread(agentId, true, prompt));
+    }
+  }
+
+  private async startThread(
+    agentId: AgentId,
+    preserveFocus = true,
+    initialPrompt?: string
+  ): Promise<void> {
+    this.setupStep = undefined;
+    const creating = this.threads.newThread(agentId);
+    this.view?.show(preserveFocus);
+    await creating;
+    if (isNonEmpty(initialPrompt)) {
+      void MischiefView.run(this.threads.prompt(initialPrompt));
+    }
+  }
+
+  private static async run(operation: Promise<void>): Promise<void> {
+    try {
+      await operation;
+    } catch (error) {
+      void vscode.window.showErrorMessage(
+        `Mischief: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  private async startPendingWorkspace(): Promise<void> {
+    const workspace = this.projectsSnapshot.navigation.current?.workspace;
+    const pending = this.storage.get<PendingWorkspaceStart[]>(
+      START_WORKSPACES_KEY,
+      []
+    );
+    if (!workspace) {
+      return;
+    }
+    const canonical = await Promise.all(
+      pending.map(async (candidate) => {
+        try {
+          return (await realpath(candidate.path)) === workspace.path;
+        } catch {
+          return false;
+        }
+      })
+    );
+    const index = canonical.indexOf(true);
+    const start = pending[index];
+    if (!isDefined(start)) {
+      return;
+    }
+    await this.storage.update(
+      START_WORKSPACES_KEY,
+      pending.toSpliced(index, 1)
+    );
+    await vscode.commands.executeCommand("workbench.view.extension.mischief");
+    if (isNonEmpty(start.setupCommand)) {
+      try {
+        const projectRoot =
+          this.projectsSnapshot.navigation.current?.projectRoot;
+        const { hashes } = isNonEmpty(projectRoot)
+          ? await projectSetupInputs(projectRoot)
+          : { hashes: undefined };
+        if (
+          start.setupInputs !== undefined &&
+          JSON.stringify(start.setupInputs) === JSON.stringify(hashes)
+        ) {
+          const terminal = vscode.window.createTerminal({
+            cwd: workspace.path,
+            name: "Mischief Project setup",
+          });
+          terminal.show();
+          terminal.sendText(start.setupCommand, true);
+        } else {
+          void vscode.window.showWarningMessage(
+            "Project settings changed before the Workspace opened. Verify Project Settings before running the command."
+          );
+        }
+      } catch (error) {
+        void vscode.window.showWarningMessage(
+          `Could not verify Project setup: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+    await this.newThread(false, start.prompt);
+  }
+
+  private async openWorkspace(candidate: string): Promise<void> {
+    const workspace = this.projectsSnapshot.navigation.workspaces.find(
+      (item) => item.path === candidate
+    );
+    if (!workspace || workspace.current) {
+      return;
+    }
+    await vscode.commands.executeCommand(
+      "vscode.openFolder",
+      vscode.Uri.file(candidate),
+      {
+        forceNewWindow: true,
+      }
+    );
+  }
+
+  private async focusWorkspace(candidate: string): Promise<void> {
+    const workspace = this.projectsSnapshot.navigation.workspaces.find(
+      (item) => item.path === candidate
+    );
+    if (!workspace) {
+      return;
+    }
+    if (workspace.current) {
+      await vscode.commands.executeCommand("workbench.view.extension.mischief");
+      return;
+    }
+    await this.storage.update(FOCUS_WORKSPACE_KEY, workspace.path);
+    await vscode.commands.executeCommand(
+      "vscode.openFolder",
+      vscode.Uri.file(workspace.path),
+      { forceNewWindow: true }
+    );
+  }
+
+  private async closeWorkspace(candidate: string): Promise<void> {
+    if (
+      !this.projectsSnapshot.navigation.workspaces.some(
+        (workspace) => workspace.path === candidate
+      )
+    ) {
+      return;
+    }
+    await this.setProjects(this.projects.remove(candidate));
+    this.render();
+  }
+
+  private async renameThread(id: string): Promise<void> {
+    const thread = this.threads
+      .snapshot()
+      .threads.find((candidate) => candidate.id === id);
+    if (!thread) {
+      return;
+    }
+    const name = await vscode.window.showInputBox({
+      title: "Rename Thread",
+      validateInput: (value) =>
+        value.trim() ? undefined : "Enter a Thread name",
+      value: thread.name,
+    });
+    if (name !== undefined) {
+      await this.threads.rename(thread.id, name);
+    }
+  }
+
+  private async authenticate(): Promise<void> {
+    const authentication = this.threads.snapshot().selected?.authentication;
+    if (!authentication) {
+      return;
+    }
+    if ("methodId" in authentication) {
+      await this.threads.authenticate();
+      return;
+    }
+    const terminal = vscode.window.createTerminal({
+      name: `Mischief: ${authentication.label}`,
+      shellArgs: authentication.args,
+      shellPath: authentication.command,
+      ...(authentication.env ? { env: authentication.env } : {}),
+    });
+    const closed = vscode.window.onDidCloseTerminal((candidate) => {
+      if (candidate !== terminal) {
+        return;
+      }
+      closed.dispose();
+      if (candidate.exitStatus?.code === 0) {
+        void MischiefView.run(this.threads.retry());
+      }
+    });
+    terminal.show();
+  }
+
+  private async openLocation(candidate: string, line?: number): Promise<void> {
+    const item = this.threads
+      .snapshot()
+      .selected?.items.find(
+        (entry) =>
+          entry.locations?.some((location) => location.path === candidate) ===
+            true ||
+          entry.diffs?.some((diff) => diff.path === candidate) === true
+      );
+    if (!item) {
+      return;
+    }
+    const selection =
+      isNonZero(line) && line > 0
+        ? new vscode.Range(line - 1, 0, line - 1, 0)
+        : undefined;
+    await vscode.window.showTextDocument(vscode.Uri.file(candidate), {
+      preview: true,
+      ...(selection ? { selection } : {}),
+    });
+  }
+
+  private async openTranscriptLink(href: string): Promise<void> {
+    const { workspace } = this.threads.snapshot();
+    if (workspace === undefined) {
+      return;
+    }
+    let target: URL;
+    try {
+      target = new URL(href, pathToFileURL(`${workspace}${path.sep}`));
+    } catch {
+      return;
+    }
+    const { hash, protocol } = target;
+    if (protocol !== "file:") {
+      return;
+    }
+    let root: string;
+    try {
+      root = await realpath(workspace);
+    } catch {
+      return;
+    }
+    const candidate = await resolveTranscriptFile(
+      workspace,
+      root,
+      fileURLToPath(target)
+    );
+    if (candidate === undefined) {
+      return;
+    }
+    const relative = path.relative(root, candidate);
+    if (
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    ) {
+      return;
+    }
+    const line = /^#L(?<line>[1-9]\d*)$/iu.exec(hash)?.groups?.line;
+    const selection =
+      line === undefined
+        ? undefined
+        : new vscode.Range(Number(line) - 1, 0, Number(line) - 1, 0);
+    await vscode.window.showTextDocument(vscode.Uri.file(candidate), {
+      preview: true,
+      ...(selection ? { selection } : {}),
+    });
+  }
+
+  private async openDiff(candidate: string): Promise<void> {
+    const diff = this.threads
+      .snapshot()
+      .selected?.items.flatMap((item) => item.diffs ?? [])
+      .find((item) => item.path === candidate);
+    if (!diff) {
+      return;
+    }
+    const [before, after] = await Promise.all([
+      vscode.workspace.openTextDocument({ content: diff.oldText ?? "" }),
+      vscode.workspace.openTextDocument({ content: diff.newText }),
+    ]);
+    await vscode.commands.executeCommand(
+      "vscode.diff",
+      before.uri,
+      after.uri,
+      `${path.basename(candidate)} (Agent Diff)`
+    );
+  }
+
+  private async sendContextItems(): Promise<void> {
+    const workspace = this.projectsSnapshot.navigation.current?.workspace;
+    if (!workspace || !this.view) {
+      return;
+    }
+    const files = await vscode.workspace.findFiles(
+      new vscode.RelativePattern(workspace.path, "**/*"),
+      "**/{.git,node_modules,dist,build}/**",
+      5000
+    );
+    const items = new Set<string>();
+    for (const file of files) {
+      const relative = path.relative(workspace.path, file.fsPath);
+      const parts = relative.split(path.sep);
+      for (let index = 1; index < parts.length; index += 1) {
+        items.add(`${parts.slice(0, index).join("/")}/`);
+      }
+      items.add(parts.join("/"));
+    }
+    const postMessage = this.view.webview.postMessage.bind(this.view.webview);
+    void postMessage({
+      items: [...items].toSorted((a, b) => a.localeCompare(b)),
+      type: "contextItems",
+    } satisfies HostToWebviewMessage);
+  }
+
+  private renderSessionOperation(
+    change: Extract<ThreadsChange, { type: "sessionOperation" }>
+  ): void {
+    if (!this.view) {
+      return;
+    }
+    const postMessage = this.view.webview.postMessage.bind(this.view.webview);
+    void postMessage(change satisfies HostToWebviewMessage);
+  }
+
+  private renderTranscript(
+    change: Extract<ThreadsChange, { type: "transcript" }>
+  ): void {
+    if (!this.view) {
+      return;
+    }
+    const postMessage = this.view.webview.postMessage.bind(this.view.webview);
+    void postMessage({
+      ...change,
+      item: renderTranscriptItem(change.item),
+    } satisfies HostToWebviewMessage);
+  }
+
+  private render(): PromiseLike<boolean> | undefined {
+    if (!this.view) {
+      return undefined;
+    }
+    const font = vscode.workspace
+      .getConfiguration("mischief")
+      .get<string>("fontFamily")
+      ?.trim();
+    const threads = this.threads.snapshot();
+    const visible = new Set(
+      this.projectsSnapshot.navigation.workspaces.map(
+        (workspace) => workspace.path
+      )
+    );
+    const attentionCount = threads.threads.filter(
+      (thread) => visible.has(thread.workspace) && thread.needsAttention
+    ).length;
+    this.view.badge = attentionCount
+      ? {
+          tooltip: `${attentionCount} Thread${attentionCount === 1 ? "" : "s"} need attention`,
+          value: attentionCount,
+        }
+      : { tooltip: "", value: 0 };
+    if (threads.selected) {
+      threads.selected = {
+        ...threads.selected,
+        items: threads.selected.items.map(renderTranscriptItem),
+      };
+    }
+    const { webview } = this.view;
+    const postMessage = webview.postMessage.bind(webview);
+    if (this.hostConnection) {
+      void postMessage({
+        ...this.hostConnection,
+        type: "hostConnection",
+      } satisfies HostToWebviewMessage);
+    }
+    return postMessage({
+      agentIcons: Object.fromEntries(
+        AGENT_IDS.map((id) => [
+          id,
+          webview
+            .asWebviewUri(
+              vscode.Uri.joinPath(this.extensionUri, AGENTS[id].icon)
+            )
+            .toString(),
+        ])
+      ),
+      font:
+        font !== undefined && font.length > 0 ? font : DEFAULT_MONO_FONT_FAMILY,
+      projects: this.projectsSnapshot,
+      ...(this.setupStep
+        ? {
+            setup: {
+              id: this.setupStep.id,
+              item: renderTranscriptItem({
+                id: `setup:${this.setupStep.id}`,
+                kind: "system",
+                text: this.setupStep.message,
+              }),
+              ...(this.setupStep.options
+                ? { options: this.setupStep.options }
+                : {}),
+            },
+          }
+        : {}),
+      threads,
+      type: "state",
+    } satisfies HostToWebviewMessage);
+  }
+}
+
+export const registerMischiefView = (
+  context: vscode.ExtensionContext,
+  provider: MischiefView
+): void => {
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(VIEW_ID, provider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    })
+  );
+};

@@ -1,0 +1,7 @@
+{
+  "extends": "../vscode-extension/tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["acp/*.ts", "threads/*.ts", "webview/**/*.ts", "webview/**/*.tsx"]
+}

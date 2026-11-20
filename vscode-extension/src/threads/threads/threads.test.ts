@@ -1,0 +1,1816 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
+import type { AgentId } from "../../agents/update";
+import { isNonEmpty } from "../../present";
+import { ProfileDatabase } from "../../profile-database/profile-database";
+import { testValue } from "../../test-value";
+import { unavailableAgent } from "../acp/acp";
+import type { AgentTreeNavigationOptions } from "../acp/models";
+import type {
+  AgentConnection,
+  AgentConnectionFactory,
+  AgentHandlers,
+  AgentPromptResult,
+  PromptImage,
+  ThreadConfigOption,
+} from "../model";
+import type { ThreadHistoryEntry, ThreadsChange } from "./models";
+import { Threads } from "./threads";
+
+interface Deferred {
+  promise: Promise<void>;
+  resolve: () => void;
+}
+
+const deferred = (): Deferred => {
+  let resolver: (() => void) | undefined;
+  // oxlint-disable-next-line promise/avoid-new
+  const promise = new Promise<void>((resolve) => {
+    resolver = resolve;
+  });
+  return {
+    promise,
+    resolve: () => resolver?.(),
+  };
+};
+
+class FakeAgent {
+  createCalls = 0;
+  authenticatedMethods: string[] = [];
+  loadCalls = 0;
+  loadGate?: Deferred;
+  loadRequests: { sessionId: string; cwd: string }[] = [];
+  initialConfigOptions: ThreadConfigOption[] = [];
+  operations = {
+    branchSummary: true,
+    forkMessage: true,
+    treeNavigation: true,
+  };
+  failCreate = false;
+  createError?: Error;
+  replayOnLoad = false;
+  replayBranchSummary = false;
+  failLoad = false;
+  askPermission = false;
+  askElicitation = false;
+  richUpdates = false;
+  completePlan = false;
+  holdPrompts = false;
+  cancelCalls = 0;
+  cancelGate?: Deferred;
+  permissionResponse?: unknown;
+  elicitationResponse?: unknown;
+  configChange?: {
+    sessionId: string;
+    configId: string;
+    value: string | boolean;
+  };
+  disposed = false;
+  historyEntries: {
+    sessionId: string;
+    cwd: string;
+    title?: string;
+    updatedAt?: string;
+    preview?: string;
+    previewRole?: "user" | "assistant";
+  }[] = [];
+  historyCalls: string[] = [];
+  forkCalls: { sessionId: string; cwd: string; messageId: string }[] = [];
+  forkGate?: Deferred;
+  navigateTreeCalls: {
+    sessionId: string;
+    messageId: string;
+    options: AgentTreeNavigationOptions;
+  }[] = [];
+  navigationResult: { draft?: string } = { draft: "Try this again" };
+  navigationError?: Error;
+  navigationGate?: Deferred;
+  metadata?: AgentHandlers["metadata"];
+  interactionResolved?: AgentHandlers["interactionResolved"];
+  update?: AgentHandlers["update"];
+  private readonly permissionStartedDeferred = deferred();
+  private readonly elicitationStartedDeferred = deferred();
+  private readonly firstPromptStartedDeferred = deferred();
+  private readonly secondPromptStartedDeferred = deferred();
+  readonly promptResolvers: ((response: AgentPromptResult) => void)[] = [];
+  promptImages: PromptImage[] = [];
+  promptCalls = 0;
+  responseCount = 0;
+  readonly permissionStarted = this.permissionStartedDeferred.promise;
+  readonly elicitationStarted = this.elicitationStartedDeferred.promise;
+  readonly firstPromptStarted = this.firstPromptStartedDeferred.promise;
+  readonly secondPromptStarted = this.secondPromptStartedDeferred.promise;
+  readonly factory: AgentConnectionFactory = (handlers) =>
+    this.connection(handlers);
+
+  markPermissionStarted(): void {
+    this.permissionStartedDeferred.resolve();
+  }
+
+  markElicitationStarted(): void {
+    this.elicitationStartedDeferred.resolve();
+  }
+
+  markPromptStarted(count: number): void {
+    if (count === 1) {
+      this.firstPromptStartedDeferred.resolve();
+    }
+    if (count === 2) {
+      this.secondPromptStartedDeferred.resolve();
+    }
+  }
+
+  private connection(handlers: AgentHandlers): AgentConnection {
+    this.metadata = handlers.metadata;
+    this.interactionResolved = handlers.interactionResolved;
+    this.update = handlers.update;
+    return {
+      authenticate: async (methodId) => {
+        await Promise.resolve();
+        this.authenticatedMethods.push(methodId);
+        this.createError = undefined;
+      },
+      cancel: async () => {
+        this.cancelCalls += 1;
+        await this.cancelGate?.promise;
+        await Promise.resolve();
+        for (const resolve of this.promptResolvers.splice(0)) {
+          resolve({ stopReason: "cancelled" });
+        }
+      },
+      create: async () => {
+        await Promise.resolve();
+        this.createCalls += 1;
+        if (this.createError) {
+          throw this.createError;
+        }
+        if (this.failCreate) {
+          throw new Error("Agent unavailable");
+        }
+        return {
+          configOptions: this.initialConfigOptions,
+          operations: this.operations,
+          sessionId: "session-1",
+        };
+      },
+      dispose: () => {
+        this.disposed = true;
+        for (const resolve of this.promptResolvers.splice(0)) {
+          resolve({ stopReason: "cancelled" });
+        }
+      },
+      forkMessage: async (sessionId, cwd, messageId) => {
+        this.forkCalls.push({ cwd, messageId, sessionId });
+        await this.forkGate?.promise;
+        return {
+          configOptions: [],
+          operations: this.operations,
+          sessionId: "forked-session",
+        };
+      },
+      history: async (cwd) => {
+        await Promise.resolve();
+        this.historyCalls.push(cwd);
+        return this.historyEntries;
+      },
+      load: async (sessionId, cwd) => {
+        await Promise.resolve();
+        this.loadCalls += 1;
+        this.loadRequests.push({ cwd, sessionId });
+        await this.loadGate?.promise;
+        if (this.failLoad) {
+          throw new Error("Load failed");
+        }
+        if (this.replayOnLoad) {
+          handlers.update({
+            kind: "user",
+            messageId: "pi-user-1",
+            text: "Restore me",
+            type: "message",
+          });
+          handlers.update({
+            kind: "assistant",
+            messageId: "pi-assistant-1",
+            text: "Restored.",
+            type: "message",
+          });
+          if (this.replayBranchSummary) {
+            handlers.update({
+              kind: "branchSummary",
+              text: "Preserve the adapter decision.",
+              type: "message",
+            });
+          }
+        }
+        return {
+          configOptions: [],
+          operations: this.operations,
+          sessionId,
+        };
+      },
+      navigateTreeMessage: async (sessionId, messageId, options) => {
+        this.navigateTreeCalls.push({ messageId, options, sessionId });
+        if (this.navigationError) {
+          throw this.navigationError;
+        }
+        await this.navigationGate?.promise;
+        return this.navigationResult;
+      },
+      prompt: async (_sessionId, _text, images) => {
+        this.promptImages = images;
+        if (this.holdPrompts) {
+          this.promptCalls += 1;
+          if (this.promptCalls === 1) {
+            handlers.update({
+              kind: "assistant",
+              messageId: "pi-assistant-held-1",
+              text: "Partial",
+              type: "message",
+            });
+          }
+          // oxlint-disable-next-line promise/avoid-new
+          const result = new Promise<AgentPromptResult>((resolve) => {
+            this.promptResolvers.push(resolve);
+          });
+          this.markPromptStarted(this.promptCalls);
+          return await result;
+        }
+        if (this.richUpdates) {
+          handlers.update({
+            kind: "thought",
+            text: "Checking…",
+            type: "message",
+          });
+          handlers.update({
+            diffs: [
+              {
+                newText: "new",
+                oldText: "old",
+                path: "/workspace/src/a.ts",
+              },
+            ],
+            input: '{\n  "path": "src/a.ts"\n}',
+            locations: [{ line: 2, path: "/workspace/src/a.ts" }],
+            status: "in_progress",
+            title: "Read file",
+            toolCallId: "tool-1",
+            type: "tool",
+          });
+          handlers.update({
+            output: "contents",
+            status: "completed",
+            toolCallId: "tool-1",
+            type: "tool",
+          });
+          handlers.update({
+            allCompleted: this.completePlan,
+            entries: [
+              { content: "Inspect", status: "completed" },
+              {
+                content: "Fix",
+                status: this.completePlan ? "completed" : "in_progress",
+              },
+            ],
+            text: this.completePlan ? "✓ Inspect\n✓ Fix" : "✓ Inspect\n• Fix",
+            type: "plan",
+          });
+          handlers.update({
+            type: "usage",
+            usage: { size: 245_000, used: 125_000 },
+          });
+          handlers.update({
+            options: [
+              {
+                currentValue: "high",
+                id: "thinking",
+                name: "Thinking",
+                options: [{ name: "High", value: "high" }],
+                type: "select",
+              },
+            ],
+            type: "config",
+          });
+        }
+        if (this.askElicitation) {
+          const response = handlers.elicitation({
+            fields: [
+              {
+                label: "Choice",
+                name: "choice",
+                options: [{ name: "Option A", value: "a" }],
+                required: true,
+                type: "select",
+              },
+            ],
+            message: "Pick one",
+          });
+          this.markElicitationStarted();
+          this.elicitationResponse = await response;
+        }
+        if (this.askPermission) {
+          const response = handlers.permission({
+            message: "Run tests?",
+            options: [{ id: "yes", kind: "allow_once", name: "Yes" }],
+          });
+          this.markPermissionStarted();
+          this.permissionResponse = await response;
+        }
+        this.responseCount += 1;
+        handlers.update({
+          kind: "assistant",
+          messageId: `pi-assistant-${this.responseCount}`,
+          text: "Done.",
+          type: "message",
+        });
+        handlers.update({ title: "Fix tests", type: "sessionInfo" });
+        return { stopReason: "completed" };
+      },
+      setConfig: async (sessionId, configId, value) => {
+        await Promise.resolve();
+        this.configChange = { configId, sessionId, value };
+      },
+    };
+  }
+}
+
+describe("threads module", () => {
+  let database: ProfileDatabase;
+  let profileDirectory: string;
+  let instances: Threads[];
+
+  beforeEach(async () => {
+    profileDirectory = await mkdtemp(path.join(tmpdir(), "mischief-threads-"));
+    database = await ProfileDatabase.open({
+      currentWorkspace: "/workspace",
+      instanceId: "00000000-0000-4000-8000-000000000001",
+      log: vi.fn<(message: string) => void>(),
+      profileDirectory,
+    });
+    instances = [];
+  });
+
+  afterEach(async () => {
+    await Promise.all(
+      instances.map(async (threads) => {
+        await threads.dispose();
+      })
+    );
+    await database.dispose();
+    await rm(profileDirectory, { force: true, recursive: true });
+  });
+
+  const createThreads = (
+    factory: AgentConnectionFactory,
+    preferredAgent: AgentId = "magpi-acp",
+    owner?: "host"
+  ): Threads => {
+    const threads = new Threads(database, factory, preferredAgent, owner);
+    instances.push(threads);
+    return threads;
+  };
+
+  test("exposes profile-wide Thread summaries with owning Workspaces", async () => {
+    const createdAt = "2026-09-11T12:00:00.000Z";
+    await database.apply({
+      thread: {
+        createdAt,
+        id: "10000000-0000-4000-8000-000000000001",
+        name: "Waiting",
+        status: "waiting",
+        updatedAt: createdAt,
+        workspace: "/workspace",
+      },
+      type: "putThread",
+    });
+    const threads = createThreads(new FakeAgent().factory);
+
+    expect(threads.snapshot().threads).toStrictEqual([
+      {
+        agentId: "magpi-acp",
+        id: "10000000-0000-4000-8000-000000000001",
+        indicator: "waiting",
+        name: "Waiting",
+        needsAttention: true,
+        updatedAt: createdAt,
+        workspace: "/workspace",
+      },
+    ]);
+  });
+
+  test("remote selection is restored only by the owning Workspace", async () => {
+    const remoteDatabase = await ProfileDatabase.open({
+      currentWorkspace: "/remote",
+      instanceId: "00000000-0000-4000-8000-000000000002",
+      log: vi.fn<(message: string) => void>(),
+      profileDirectory,
+    });
+    const createdAt = "2026-09-11T12:00:00.000Z";
+    const firstId = "10000000-0000-4000-8000-000000000001";
+    const secondId = "10000000-0000-4000-8000-000000000002";
+    await Promise.all(
+      (
+        [
+          [firstId, "first-session"],
+          [secondId, "second-session"],
+        ] as const
+      ).map(async ([id, sessionId]) => {
+        await remoteDatabase.apply({
+          thread: {
+            createdAt,
+            id,
+            name: sessionId,
+            sessionId,
+            status: "idle",
+            updatedAt: createdAt,
+            workspace: "/remote",
+          },
+          type: "putThread",
+        });
+      })
+    );
+    await remoteDatabase.apply({
+      threadId: firstId,
+      type: "selectThread",
+      workspace: "/remote",
+    });
+    await vi.waitFor(
+      () => {
+        expect(database.snapshot().threads).toHaveLength(2);
+      },
+      { timeout: 2000 }
+    );
+    const sourceAgent = new FakeAgent();
+    const ownerAgent = new FakeAgent();
+    const source = createThreads(sourceAgent.factory);
+    const owner = new Threads(remoteDatabase, ownerAgent.factory);
+    instances.push(owner);
+    await owner.openWorkspace("/remote");
+    const ownerChanges = vi.fn<(change?: ThreadsChange) => void>();
+    owner.onChange(ownerChanges);
+    ownerAgent.loadGate = deferred();
+
+    await expect(source.select(secondId)).resolves.toBe("/remote");
+    await vi.waitFor(
+      () => {
+        expect(owner.snapshot().selected?.id).toBe(secondId);
+      },
+      { timeout: 2000 }
+    );
+    try {
+      await vi.waitFor(
+        () => {
+          expect(ownerAgent.loadCalls).toBe(2);
+          expect(ownerChanges).toHaveBeenCalledWith({
+            type: "remoteSelection",
+          });
+        },
+        { timeout: 2000 }
+      );
+    } finally {
+      ownerAgent.loadGate.resolve();
+    }
+
+    expect(sourceAgent.loadCalls).toBe(0);
+    expect(sourceAgent.createCalls).toBe(0);
+    expect(ownerAgent.loadCalls).toBe(2);
+    expect(ownerChanges).toHaveBeenCalledWith({ type: "remoteSelection" });
+    ownerChanges.mockClear();
+    await source.select(secondId);
+    await vi.waitFor(() => {
+      expect(ownerChanges).toHaveBeenCalledWith({ type: "remoteSelection" });
+    });
+    await remoteDatabase.dispose();
+  });
+
+  test("opening a Workspace clears stale live Thread statuses", async () => {
+    const createdAt = "2026-09-11T12:00:00.000Z";
+    await Promise.all(
+      (["running", "waiting"] as const).map(async (status, index) => {
+        await database.apply({
+          thread: {
+            createdAt,
+            id: `10000000-0000-4000-8000-00000000000${index + 1}`,
+            name: status,
+            status,
+            updatedAt: createdAt,
+            workspace: "/workspace",
+          },
+          type: "putThread",
+        });
+      })
+    );
+    const threads = createThreads(new FakeAgent().factory);
+
+    await threads.openWorkspace("/workspace");
+
+    expect(
+      database.snapshot().threads.map((thread) => thread.status)
+    ).toStrictEqual(["idle", "idle"]);
+  });
+
+  test("sends a pasted image without requiring text", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    await threads.prompt("", [
+      { data: "c2NyZWVuc2hvdA==", mimeType: "image/png" },
+    ]);
+
+    expect(agent.promptImages).toStrictEqual([
+      { data: "c2NyZWVuc2hvdA==", mimeType: "image/png" },
+    ]);
+    expect(
+      threads.snapshot().selected?.items.find((item) => item.kind === "user")
+    ).toMatchObject({
+      images: [{ data: "c2NyZWVuc2hvdA==", mimeType: "image/png" }],
+      text: "Pasted image",
+    });
+  });
+
+  test("stages drafts in both an unregistered composer and an existing Thread", async () => {
+    const threads = createThreads(new FakeAgent().factory);
+    await threads.openWorkspace("/workspace");
+    threads.stageDraft("First selection");
+    expect(threads.snapshot().selected?.drafts).toStrictEqual([
+      "First selection",
+    ]);
+    threads.consumeDrafts();
+    expect(threads.snapshot().selected?.drafts).toStrictEqual([]);
+
+    await threads.newThread();
+    threads.stageDraft("Second selection");
+    expect(threads.snapshot().selected?.drafts).toStrictEqual([
+      "Second selection",
+    ]);
+    threads.consumeDrafts();
+    expect(threads.snapshot().selected?.drafts).toStrictEqual([]);
+  });
+
+  test("ignores invalid Agent Thread metadata", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.newThread();
+    const updatedAt = threads.snapshot().threads[0]?.updatedAt;
+
+    agent.update?.({
+      title: "Invalid\nThread",
+      type: "sessionInfo",
+      updatedAt: "not-a-timestamp",
+    });
+
+    expect(threads.snapshot()).toMatchObject({
+      selected: { name: "New Thread" },
+      threads: [{ updatedAt }],
+    });
+  });
+
+  test("uses the Host title and clears a stale client-only manual-name flag", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.newThread();
+    const id = threads.snapshot().selected?.id ?? "";
+    await threads.rename(id, "New Thread");
+    agent.metadata?.({ manualName: false, name: "Agent title" });
+    await vi.waitFor(() => {
+      expect(database.snapshot().threads).toMatchObject([
+        { manualName: false, name: "Agent title" },
+      ]);
+    });
+    expect(threads.snapshot().selected?.name).toBe("Agent title");
+  });
+
+  test("a user-renamed Thread ignores later automatic titles", async () => {
+    const threads = createThreads(new FakeAgent().factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Name me");
+    const id = threads.snapshot().selected?.id;
+
+    await threads.rename(id ?? "", "My Thread");
+    await threads.prompt("Keep the name");
+
+    expect(threads.snapshot().selected?.name).toBe("My Thread");
+  });
+
+  test("Workspace shutdown terminates the Agent without waiting for cancellation", async () => {
+    const agent = new FakeAgent();
+    agent.cancelGate = deferred();
+    agent.holdPrompts = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    const prompting = threads.prompt("Keep running");
+    await agent.firstPromptStarted;
+
+    const closing = threads.closeWorkspace();
+    const disposedBeforeCancelRelease = await vi
+      .waitFor(() => {
+        expect(agent.disposed).toBeTruthy();
+      })
+      .then(
+        () => true,
+        () => false
+      );
+    agent.cancelGate.resolve();
+    await Promise.all([closing, prompting]);
+
+    expect({
+      cancelCalls: agent.cancelCalls,
+      disposedBeforeCancelRelease,
+      indicator: threads.snapshot().threads[0]?.indicator,
+    }).toStrictEqual({
+      cancelCalls: 0,
+      disposedBeforeCancelRelease: true,
+      indicator: "idle",
+    });
+  });
+
+  test("closing a Workspace cancels its running Threads and hides them", async () => {
+    const agent = new FakeAgent();
+    agent.holdPrompts = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    const prompting = threads.prompt("Keep running");
+    await agent.firstPromptStarted;
+
+    await threads.closeWorkspace();
+    await prompting;
+
+    expect(threads.snapshot()).toMatchObject({
+      threads: [{ indicator: "idle", workspace: "/workspace" }],
+    });
+  });
+
+  test("removing a running Thread cannot resurrect its registration", async () => {
+    const agent = new FakeAgent();
+    agent.holdPrompts = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    const prompting = threads.prompt("Remove me");
+    await agent.firstPromptStarted;
+    const id = threads.snapshot().selected?.id;
+
+    await threads.remove(id ?? "");
+    await prompting;
+
+    expect(database.snapshot().threads).toStrictEqual([]);
+    expect(threads.snapshot().threads).toStrictEqual([]);
+  });
+
+  test("Threads stay newest-first and restore the last selection", async () => {
+    const threads = createThreads(new FakeAgent().factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("First");
+    const firstId = threads.snapshot().selected?.id;
+    await threads.newThread();
+    await threads.prompt("Second");
+    const secondId = threads.snapshot().selected?.id;
+
+    expect(threads.snapshot().threads.map((thread) => thread.id)).toStrictEqual(
+      [secondId, firstId]
+    );
+    await threads.select(firstId ?? "");
+
+    const restored = createThreads(new FakeAgent().factory);
+    await restored.openWorkspace("/workspace");
+    expect(restored.snapshot().selected?.id).toBe(firstId);
+
+    await restored.remove(firstId ?? "");
+    expect(restored.snapshot()).toMatchObject({
+      selected: { id: secondId },
+      threads: [{ id: secondId }],
+    });
+  });
+
+  test("keeps Agent authentication in memory and re-requests it after restart", async () => {
+    const agent = new FakeAgent();
+    agent.createError = Object.assign(new Error("Authentication required"), {
+      authentication: {
+        args: ["/magpi/index.js", "--terminal-login"],
+        command: "node",
+        env: { TOKEN: "secret" },
+        label: "Launch Pi",
+      },
+    });
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    await threads.prompt("Hello");
+
+    expect(threads.snapshot().selected).toMatchObject({
+      authentication: {
+        args: ["/magpi/index.js", "--terminal-login"],
+        command: "node",
+        env: { TOKEN: "secret" },
+        label: "Launch Pi",
+      },
+      status: "error",
+    });
+    expect(database.snapshot().threads[0]).not.toHaveProperty("authentication");
+    const filename = path.join(
+      profileDirectory,
+      "profile-db-v1",
+      "threads",
+      `${threads.snapshot().selected?.id}.json`
+    );
+    await expect(readFile(filename, "utf-8")).resolves.not.toContain("secret");
+
+    const restored = createThreads(agent.factory);
+    await restored.openWorkspace("/workspace");
+    expect(restored.snapshot().selected?.authentication).toBeUndefined();
+    await restored.retry();
+    expect(restored.snapshot().selected?.authentication).toMatchObject({
+      env: { TOKEN: "secret" },
+    });
+  });
+
+  test("new Threads start the Agent and expose its configuration", async () => {
+    const agent = new FakeAgent();
+    agent.initialConfigOptions = [
+      {
+        currentValue: "high",
+        id: "thinking",
+        name: "Thinking",
+        options: [{ name: "High", value: "high" }],
+        type: "select",
+      },
+    ];
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    await threads.newThread();
+
+    expect(agent.createCalls).toBe(1);
+    expect(threads.snapshot().selected).toMatchObject({
+      configOptions: [{ currentValue: "high", id: "thinking" }],
+      id: testValue<unknown>(expect.any(String)),
+      status: "idle",
+    });
+  });
+
+  test("marks new Host Threads without changing legacy ownership", async () => {
+    const agent = new FakeAgent();
+    const contexts: unknown[] = [];
+    const factory: AgentConnectionFactory = (handlers, id, context) => {
+      contexts.push(context);
+      return agent.factory(handlers, id, context);
+    };
+    const threads = createThreads(factory, "magpi-acp", "host");
+    await threads.openWorkspace("/workspace");
+    await threads.newThread();
+
+    expect({ contexts, stored: database.snapshot().threads[0] }).toMatchObject({
+      contexts: [
+        { owner: "host", threadId: testValue<unknown>(expect.any(String)) },
+      ],
+      stored: { owner: "host" },
+    });
+  });
+
+  test("new empty Threads are durable and can be added repeatedly", async () => {
+    const threads = createThreads(new FakeAgent().factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Keep me");
+
+    await threads.newThread();
+    const firstId = threads.snapshot().selected?.id;
+    await threads.newThread();
+    const secondId = threads.snapshot().selected?.id;
+
+    expect(threads.snapshot()).toMatchObject({
+      selected: { id: secondId, name: "New Thread", status: "idle" },
+      threads: [
+        { id: secondId, name: "New Thread" },
+        { id: firstId, name: "New Thread" },
+        { name: "Fix tests" },
+      ],
+    });
+    const restored = createThreads(new FakeAgent().factory);
+    await restored.openWorkspace("/workspace");
+    expect(restored.snapshot().selected?.id).toBe(secondId);
+  });
+
+  test("forks the selected transcript user message by ACP ID", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Original prompt");
+    const sourceId = threads.snapshot().selected?.id;
+    if (!isNonEmpty(sourceId)) {
+      throw new Error("Missing source Thread");
+    }
+    agent.update?.({
+      kind: "user",
+      messageId: "acp-user",
+      text: "Fork me",
+      type: "message",
+    });
+    agent.update?.({
+      kind: "assistant",
+      messageId: "acp-assistant",
+      text: "Answer",
+      type: "message",
+    });
+    await expect(
+      threads.forkMessage(sourceId, "assistant:acp-assistant")
+    ).rejects.toThrow("identity is unavailable");
+
+    await threads.forkMessage(sourceId, "user:acp-user");
+
+    expect(agent.forkCalls).toStrictEqual([
+      { cwd: "/workspace", messageId: "acp-user", sessionId: "session-1" },
+    ]);
+    expect(threads.snapshot().selected).toMatchObject({
+      drafts: ["Fork me"],
+      name: "Fix tests (fork)",
+    });
+  });
+
+  test("navigates by transcript ACP ID and retains branch summary behavior", async () => {
+    const agent = new FakeAgent();
+    agent.replayOnLoad = true;
+    agent.replayBranchSummary = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Original prompt");
+    const sourceId = threads.snapshot().selected?.id;
+    if (!isNonEmpty(sourceId)) {
+      throw new Error("Missing source Thread");
+    }
+    agent.update?.({
+      kind: "user",
+      messageId: "acp-user",
+      text: "Prompt",
+      type: "message",
+    });
+    agent.update?.({
+      kind: "assistant",
+      messageId: "acp-assistant",
+      text: "Answer",
+      type: "message",
+    });
+
+    await threads.navigateTreeMessage(sourceId, "assistant:acp-assistant", {
+      customInstructions: "Focus on unresolved errors",
+      summarize: true,
+    });
+
+    expect(agent.navigateTreeCalls).toStrictEqual([
+      {
+        messageId: "acp-assistant",
+        options: {
+          customInstructions: "Focus on unresolved errors",
+          summarize: true,
+        },
+        sessionId: "session-1",
+      },
+    ]);
+    expect(threads.snapshot().selected).toMatchObject({
+      drafts: [],
+      id: sourceId,
+      items: [
+        { kind: "user", text: "Restore me" },
+        { kind: "assistant", text: "Restored." },
+        { kind: "branchSummary", text: "Preserve the adapter decision." },
+      ],
+    });
+  });
+
+  test("rejects unsupported, stale, and busy transcript actions", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Original prompt");
+    const sourceId = threads.snapshot().selected?.id;
+    if (!isNonEmpty(sourceId)) {
+      throw new Error("Missing source Thread");
+    }
+    agent.update?.({
+      kind: "user",
+      messageId: "acp-user",
+      text: "Prompt",
+      type: "message",
+    });
+    await threads.newThread();
+    await expect(
+      threads.forkMessage(sourceId, "user:acp-user")
+    ).rejects.toThrow("selected Thread changed");
+    await threads.select(sourceId);
+    agent.operations.forkMessage = false;
+    await expect(
+      threads.forkMessage(sourceId, "user:acp-user")
+    ).rejects.toThrow("does not support Fork Thread");
+    agent.operations.forkMessage = true;
+    agent.holdPrompts = true;
+    const running = threads.prompt("Still running");
+    await agent.firstPromptStarted;
+    await expect(
+      threads.navigateTreeMessage(sourceId, "user:acp-user")
+    ).rejects.toThrow("current turn to finish");
+    await threads.cancel();
+    await running;
+  });
+
+  test("failed transcript navigation preserves the old transcript", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Original prompt");
+    const threadId = threads.snapshot().selected?.id;
+    if (!isNonEmpty(threadId)) {
+      throw new Error("Missing Thread");
+    }
+    agent.update?.({
+      kind: "user",
+      messageId: "acp-user",
+      text: "Prompt",
+      type: "message",
+    });
+    const oldItems = threads.snapshot().selected?.items;
+    agent.navigationError = new Error("Navigation failed");
+
+    await expect(
+      threads.navigateTreeMessage(threadId, "user:acp-user", {
+        summarize: true,
+      })
+    ).rejects.toThrow("Navigation failed");
+
+    expect(threads.snapshot().selected).toMatchObject({
+      items: oldItems,
+      status: "idle",
+    });
+    expect(threads.snapshot().selected?.sessionOperation).toBeUndefined();
+  });
+
+  test("reconciles only the active prompt's ACP ID without duplicating echoed content", async () => {
+    const agent = new FakeAgent();
+    agent.holdPrompts = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    const changes: (ThreadsChange | undefined)[] = [];
+    threads.onChange((change) => {
+      changes.push(change);
+    });
+    const image = { data: "abc", mimeType: "image/png" };
+    const first = threads.prompt("Same", [image]);
+    await agent.firstPromptStarted;
+    const second = threads.prompt("Same");
+    expect(threads.snapshot().selected?.steering).toMatchObject([
+      { text: "Same" },
+    ]);
+    agent.update?.({
+      kind: "user",
+      messageId: "acp-first",
+      text: "Same",
+      type: "message",
+    });
+    agent.update?.({
+      images: [image],
+      kind: "user",
+      messageId: "acp-first",
+      type: "message",
+    });
+    expect(threads.snapshot().selected?.items[0]).toMatchObject({
+      id: "user:acp-first",
+      images: [image],
+      text: "Same",
+    });
+    expect(
+      threads.snapshot().selected?.items.filter((item) => item.kind === "user")
+    ).toHaveLength(1);
+    expect(changes.at(-1)).toBeUndefined();
+    agent.promptResolvers[0]?.({ stopReason: "completed" });
+    await first;
+    await agent.secondPromptStarted;
+    agent.update?.({
+      kind: "user",
+      messageId: "acp-second",
+      text: "Same",
+      type: "message",
+    });
+    expect(
+      threads
+        .snapshot()
+        .selected?.items.filter((item) => item.kind === "user")
+        .map(({ id, text }) => ({ id, text }))
+    ).toStrictEqual([
+      { id: "user:acp-first", text: "Same" },
+      { id: "user:acp-second", text: "Same" },
+    ]);
+    agent.promptResolvers[1]?.({ stopReason: "completed" });
+    await second;
+    await vi.waitFor(() => {
+      expect(threads.snapshot().selected?.status).toBe("idle");
+    });
+  });
+
+  test("cancelling after identity reconciliation removes queued drafts without losing the active message", async () => {
+    const agent = new FakeAgent();
+    agent.holdPrompts = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    const first = threads.prompt("First");
+    await agent.firstPromptStarted;
+    await threads.prompt("Queued");
+    agent.update?.({
+      kind: "user",
+      messageId: "acp-first",
+      text: "First",
+      type: "message",
+    });
+    await threads.cancel();
+    await first;
+    expect(threads.snapshot().selected).toMatchObject({
+      drafts: ["Queued"],
+      items: [
+        { cancelled: true, id: "user:acp-first", kind: "user", text: "First" },
+        { kind: "assistant", text: "Partial" },
+      ],
+      status: "idle",
+    });
+  });
+
+  test("stopping a running Thread preserves output and restores queued prompts as drafts", async () => {
+    const agent = new FakeAgent();
+    agent.holdPrompts = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    const changes: (ThreadsChange | undefined)[] = [];
+    threads.onChange((change) => {
+      changes.push(change);
+    });
+
+    const first = threads.prompt("First");
+    expect(threads.snapshot().selected).toMatchObject({
+      status: "running",
+      streaming: false,
+    });
+    await agent.firstPromptStarted;
+    expect(threads.snapshot().selected?.streaming).toBeTruthy();
+    expect(changes).toContainEqual(
+      expect.objectContaining({
+        item: testValue<unknown>(
+          expect.objectContaining({ kind: "assistant", text: "Partial" })
+        ),
+        streaming: true,
+        type: "transcript",
+      })
+    );
+    const second = threads.prompt("Second");
+
+    expect(threads.snapshot().selected).toMatchObject({
+      items: [
+        { kind: "user", text: "First" },
+        { kind: "assistant", text: "Partial" },
+      ],
+      status: "running",
+      steering: [{ text: "Second" }],
+    });
+
+    await threads.cancel();
+    await Promise.all([first, second]);
+
+    expect(threads.snapshot().selected).toMatchObject({
+      drafts: ["Second"],
+      items: [
+        { cancelled: true, kind: "user", text: "First" },
+        { kind: "assistant", text: "Partial" },
+      ],
+      status: "idle",
+      streaming: false,
+    });
+  });
+
+  test("queued steering messages can be removed or sent immediately", async () => {
+    const agent = new FakeAgent();
+    agent.holdPrompts = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    const first = threads.prompt("First");
+    await agent.firstPromptStarted;
+    await threads.prompt("Remove me");
+    await threads.prompt("Send me now");
+    const steering = threads.snapshot().selected?.steering ?? [];
+
+    threads.removeSteering(steering[0]?.id ?? "");
+    await threads.sendSteering(steering[1]?.id ?? "");
+    await agent.secondPromptStarted;
+
+    expect(threads.snapshot().selected).toMatchObject({
+      items: testValue<unknown>(
+        expect.arrayContaining([
+          expect.objectContaining({
+            cancelled: true,
+            kind: "user",
+            text: "First",
+          }),
+          expect.objectContaining({ kind: "user", text: "Send me now" }),
+        ])
+      ),
+      steering: [],
+    });
+    agent.promptResolvers[0]?.({ stopReason: "completed" });
+    await first;
+  });
+
+  test("ACP thoughts, tools, plans, and configuration update the Thread", async () => {
+    const agent = new FakeAgent();
+    agent.richUpdates = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    await threads.prompt("Inspect it");
+    await threads.setConfig("thinking", "high");
+
+    expect(agent.configChange).toStrictEqual({
+      configId: "thinking",
+      sessionId: "session-1",
+      value: "high",
+    });
+    expect(threads.snapshot().selected).toMatchObject({
+      configOptions: [{ currentValue: "high", id: "thinking" }],
+      items: [
+        { kind: "user", text: "Inspect it" },
+        { kind: "thought", text: "Checking…" },
+        {
+          diffs: [
+            { newText: "new", oldText: "old", path: "/workspace/src/a.ts" },
+          ],
+          input: '{\n  "path": "src/a.ts"\n}',
+          kind: "tool",
+          locations: [{ line: 2, path: "/workspace/src/a.ts" }],
+          output: "contents",
+          status: "completed",
+          title: "Read file",
+        },
+        { kind: "plan", text: "✓ Inspect\n• Fix" },
+        { kind: "assistant", text: "Done." },
+      ],
+      usage: { size: 245_000, used: 125_000 },
+    });
+
+    threads.clearPlan();
+
+    expect(
+      threads.snapshot().selected?.items.some((item) => item.kind === "plan")
+    ).toBeFalsy();
+  });
+
+  test("archives a completed plan for each turn", async () => {
+    const agent = new FakeAgent();
+    agent.richUpdates = true;
+    agent.completePlan = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    await threads.prompt("Inspect it");
+    await threads.prompt("Inspect it again");
+
+    expect(
+      threads
+        .snapshot()
+        .selected?.items.filter((item) => item.kind === "completedPlan")
+    ).toHaveLength(2);
+    expect(
+      threads.snapshot().selected?.items.some((item) => item.kind === "plan")
+    ).toBeFalsy();
+  });
+
+  test("replaces advertised commands, including with an empty list", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.newThread();
+
+    agent.update?.({
+      commands: [
+        { description: "Run checks", inputHint: "[files]", name: "check" },
+      ],
+      type: "commands",
+    });
+    expect(threads.snapshot().selected?.commands).toStrictEqual([
+      { description: "Run checks", inputHint: "[files]", name: "check" },
+    ]);
+
+    agent.update?.({ commands: [], type: "commands" });
+    expect(threads.snapshot().selected?.commands).toStrictEqual([]);
+  });
+
+  test("context usage survives a Thread reload", async () => {
+    const agent = new FakeAgent();
+    agent.richUpdates = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Inspect it");
+
+    const restored = createThreads(new FakeAgent().factory);
+    await restored.openWorkspace("/workspace");
+
+    expect(restored.snapshot().selected?.usage).toStrictEqual({
+      size: 245_000,
+      used: 125_000,
+    });
+  });
+
+  test("elicitation forms wait for an inline Thread response", async () => {
+    const agent = new FakeAgent();
+    agent.askElicitation = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    const prompting = threads.prompt("Choose a path");
+    await agent.elicitationStarted;
+
+    const interaction = threads.snapshot().selected?.interaction;
+    expect(interaction).toMatchObject({
+      fields: [
+        {
+          label: "Choice",
+          name: "choice",
+          options: [{ name: "Option A", value: "a" }],
+          type: "select",
+        },
+      ],
+      kind: "elicitation",
+      message: "Pick one",
+    });
+    threads.respond(interaction?.id ?? "", {
+      action: "accept",
+      values: { choice: "a" },
+    });
+    await prompting;
+
+    expect(agent.elicitationResponse).toStrictEqual({
+      action: "accept",
+      values: { choice: "a" },
+    });
+  });
+
+  test("remote completion dismisses only the matching inline interaction", async () => {
+    const agent = new FakeAgent();
+    agent.askElicitation = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    const prompting = threads.prompt("Choose a path");
+    await agent.elicitationStarted;
+    const interaction = threads.snapshot().selected?.interaction;
+    agent.interactionResolved?.("different-request");
+    expect(threads.snapshot().selected?.interaction).toStrictEqual(interaction);
+    agent.interactionResolved?.(interaction?.id ?? "");
+    expect(threads.snapshot().selected).toMatchObject({ status: "running" });
+    expect(threads.snapshot().selected?.interaction).toBeUndefined();
+    await prompting;
+  });
+
+  test("stopping during an elicitation cancels the request and the turn", async () => {
+    const agent = new FakeAgent();
+    agent.askElicitation = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    const prompting = threads.prompt("Choose a path");
+    await agent.elicitationStarted;
+    agent.update?.({
+      input: '{"question":"Pick one"}',
+      status: "in_progress",
+      title: "ask_user",
+      toolCallId: "ask-1",
+      type: "tool",
+    });
+    await threads.cancel();
+    await prompting;
+
+    expect(agent.elicitationResponse).toStrictEqual({ action: "cancel" });
+    expect(threads.snapshot().selected?.items).toContainEqual(
+      expect.objectContaining({ cancelled: true, id: "tool:ask-1" })
+    );
+    expect(threads.snapshot().selected?.interaction).toBeUndefined();
+    expect(threads.snapshot().selected?.status).toBe("idle");
+  });
+
+  test("permission requests wait for an inline Thread response", async () => {
+    const agent = new FakeAgent();
+    agent.askPermission = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    const prompting = threads.prompt("Run the tests");
+    await agent.permissionStarted;
+
+    const interaction = threads.snapshot().selected?.interaction;
+    expect(threads.snapshot()).toMatchObject({
+      selected: {
+        interaction: {
+          kind: "permission",
+          message: "Run tests?",
+          options: [{ id: "yes", name: "Yes" }],
+        },
+        status: "waiting",
+      },
+      threads: [
+        {
+          indicator: "waiting",
+          needsAttention: true,
+        },
+      ],
+    });
+    await vi.waitFor(() => {
+      expect(database.snapshot().threads[0]?.status).toBe("waiting");
+    });
+    threads.respond(interaction?.id ?? "", {
+      action: "select",
+      optionId: "yes",
+    });
+    await prompting;
+
+    expect(agent.permissionResponse).toStrictEqual({ optionId: "yes" });
+    expect(database.snapshot().threads[0]?.status).toBe("idle");
+    expect(threads.snapshot()).toMatchObject({
+      selected: { status: "idle" },
+      threads: [{ indicator: "idle", needsAttention: false }],
+    });
+  });
+
+  test("completed background Threads stay green until viewed", async () => {
+    const agent = new FakeAgent();
+    agent.holdPrompts = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    const firstPrompt = threads.prompt("First");
+    await agent.firstPromptStarted;
+    const firstId = threads.snapshot().selected?.id;
+    await threads.newThread();
+    agent.promptResolvers[0]?.({ stopReason: "completed" });
+    await firstPrompt;
+
+    expect(threads.snapshot()).toMatchObject({
+      threads: [
+        { indicator: "idle", needsAttention: false },
+        { id: firstId, indicator: "completed", needsAttention: true },
+      ],
+    });
+
+    await threads.select(firstId ?? "");
+
+    expect(threads.snapshot()).toMatchObject({
+      threads: [
+        { indicator: "idle", needsAttention: false },
+        { id: firstId, indicator: "idle", needsAttention: false },
+      ],
+    });
+  });
+
+  test("lists inactive Agent Threads for the current Workspace newest-first", async () => {
+    const agent = new FakeAgent();
+    agent.historyEntries = [
+      {
+        cwd: "/workspace",
+        sessionId: "session-1",
+        title: "Already open",
+        updatedAt: "2026-09-16T09:00:00.000Z",
+      },
+      {
+        cwd: "/workspace",
+        preview: "Fix the login cache",
+        previewRole: "user",
+        sessionId: "session-newest",
+        title: "Newest",
+        updatedAt: "2026-09-16T12:00:00.000Z",
+      },
+      {
+        cwd: "/other",
+        sessionId: "other-workspace",
+        title: "Other Workspace",
+        updatedAt: "2026-09-16T13:00:00.000Z",
+      },
+      { cwd: "/workspace", sessionId: "session-unknown" },
+    ];
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Register this session");
+
+    await expect(threads.history("magpi-acp")).resolves.toStrictEqual([
+      {
+        agentId: "magpi-acp",
+        preview: "Fix the login cache",
+        previewRole: "user",
+        sessionId: "session-newest",
+        title: "Newest",
+        updatedAt: "2026-09-16T12:00:00.000Z",
+      },
+      {
+        agentId: "magpi-acp",
+        sessionId: "session-unknown",
+        title: "Untitled Thread",
+      },
+    ]);
+    expect(agent.historyCalls).toStrictEqual(["/workspace"]);
+    expect(agent.disposed).toBeTruthy();
+  });
+
+  test("authenticates through the selected Agent and retries on the same connection", async () => {
+    const codex = new FakeAgent();
+    codex.createError = Object.assign(new Error("Authentication required"), {
+      authentication: { label: "Log in with ChatGPT", methodId: "chatgpt" },
+    });
+    const threads = createThreads(codex.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.newThread("codex-acp");
+    expect(threads.snapshot().selected).toMatchObject({
+      agentId: "codex-acp",
+      authentication: { label: "Log in with ChatGPT", methodId: "chatgpt" },
+      status: "error",
+    });
+    await threads.authenticate();
+    expect({
+      methods: codex.authenticatedMethods,
+      status: threads.snapshot().selected?.status,
+    }).toStrictEqual({ methods: ["chatgpt"], status: "idle" });
+  });
+
+  test("Retry reloads an existing session before resending a failed prompt", async () => {
+    const agent = new FakeAgent();
+    agent.replayOnLoad = true;
+    let failPrompt = true;
+    let sent = 0;
+    const factory: AgentConnectionFactory = (handlers, agentId) => {
+      const connection = agent.factory(handlers, agentId);
+      let ready = false;
+      return {
+        ...connection,
+        create: async (cwd) => {
+          const setup = await connection.create(cwd);
+          ready = true;
+          return setup;
+        },
+        dispose: () => {
+          ready = false;
+          connection.dispose();
+        },
+        load: async (sessionId, cwd) => {
+          const setup = await connection.load(sessionId, cwd);
+          ready = true;
+          return setup;
+        },
+        prompt: async (sessionId, text, images) => {
+          if (!ready) {
+            throw new Error("Session not loaded");
+          }
+          sent += 1;
+          if (text === "Retry me" && failPrompt) {
+            failPrompt = false;
+            throw new Error("Agent exited");
+          }
+          return await connection.prompt(sessionId, text, images);
+        },
+      };
+    };
+    const threads = createThreads(factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("Start");
+    const images = [{ data: "c2NyZWVuc2hvdA==", mimeType: "image/png" }];
+    await threads.prompt("Retry me", images);
+    expect(threads.snapshot().selected?.error).toBe("Agent exited");
+
+    agent.failLoad = true;
+    await threads.retry();
+    expect({ error: threads.snapshot().selected?.error, sent }).toStrictEqual({
+      error: "Load failed",
+      sent: 2,
+    });
+
+    agent.failLoad = false;
+    await threads.retry();
+    expect({
+      images: agent.promptImages,
+      loads: agent.loadRequests,
+      sent,
+    }).toStrictEqual({
+      images,
+      loads: [
+        { cwd: "/workspace", sessionId: "session-1" },
+        { cwd: "/workspace", sessionId: "session-1" },
+      ],
+      sent: 3,
+    });
+    expect(threads.snapshot().selected).toMatchObject({
+      items: [
+        { kind: "user", text: "Restore me" },
+        { kind: "assistant", text: "Restored." },
+        { kind: "user", text: "Retry me" },
+        { kind: "assistant", text: "Done." },
+      ],
+      status: "idle",
+    });
+  });
+
+  test("a missing Agent stays visible and can be installed before retry", async () => {
+    const claude = new FakeAgent();
+    let installed = false;
+    const factory: AgentConnectionFactory = (handlers) =>
+      installed
+        ? claude.factory(handlers, "claude-agent-acp")
+        : unavailableAgent(
+            "Claude Agent is not installed. Install it from Mischief Settings."
+          )(handlers, "claude-agent-acp");
+    const threads = createThreads(factory);
+    await threads.openWorkspace("/workspace");
+    await threads.newThread("claude-agent-acp");
+    expect(threads.snapshot().selected).toMatchObject({
+      agentId: "claude-agent-acp",
+      error:
+        "Claude Agent is not installed. Install it from Mischief Settings.",
+      status: "error",
+    });
+    installed = true;
+    await threads.retry();
+    expect(threads.snapshot().selected).toMatchObject({
+      agentId: "claude-agent-acp",
+      status: "idle",
+    });
+    expect(claude.createCalls).toBe(1);
+  });
+
+  test("does not invent a default Agent for empty Threads", async () => {
+    const agent = new FakeAgent();
+    const threads = new Threads(database, agent.factory);
+    instances.push(threads);
+    await threads.openWorkspace("/workspace");
+    expect(threads.snapshot().selected).toMatchObject({ id: null });
+    expect(threads.snapshot().selected?.agentId).toBeUndefined();
+    await expect(threads.newThread()).rejects.toThrow(
+      "Choose an Agent before starting a Thread"
+    );
+    await expect(threads.prompt("Choose an Agent first")).rejects.toThrow(
+      "Choose an Agent before starting a Thread"
+    );
+    expect(agent.createCalls).toBe(0);
+  });
+
+  test("keeps an explicitly selected draft Agent across default changes", async () => {
+    const threads = new Threads(database, new FakeAgent().factory);
+    instances.push(threads);
+    await threads.openWorkspace("/workspace");
+    threads.setPreferredAgent("codex-acp");
+    threads.selectDraftAgent("magpi-acp");
+    threads.setPreferredAgent("codex-acp");
+    expect(threads.snapshot().selected?.agentId).toBe("magpi-acp");
+  });
+
+  test("uses the available Agent for empty drafts and new Threads", async () => {
+    const codex = new FakeAgent();
+    const threads = createThreads(codex.factory, "codex-acp");
+    await threads.openWorkspace("/workspace");
+    expect(threads.snapshot().selected?.agentId).toBe("codex-acp");
+    await threads.prompt("Use Codex");
+    expect(database.snapshot().threads[0]?.agentId).toBe("codex-acp");
+    const id = threads.snapshot().selected?.id;
+    if (isNonEmpty(id)) {
+      await threads.remove(id);
+    }
+    expect(threads.snapshot().selected?.agentId).toBe("codex-acp");
+  });
+
+  test("pins each Thread and history to its Agent across restoration", async () => {
+    const magpi = new FakeAgent();
+    const codex = new FakeAgent();
+    magpi.historyEntries = [
+      { cwd: "/workspace", sessionId: "session-1", title: "MagPi history" },
+    ];
+    codex.historyEntries = [
+      { cwd: "/workspace", sessionId: "session-1", title: "Codex history" },
+    ];
+    const factory: AgentConnectionFactory = (handlers, id) =>
+      id === "codex-acp"
+        ? codex.factory(handlers, id)
+        : magpi.factory(handlers, id);
+    const first = createThreads(factory);
+    await first.openWorkspace("/workspace");
+    first.selectDraftAgent("codex-acp");
+    await first.prompt("Use Codex");
+    const codexId = first.snapshot().selected?.id;
+    expect({
+      codexCreates: codex.createCalls,
+      magpiCreates: magpi.createCalls,
+      owner: database.snapshot().threads[0]?.agentId,
+    }).toStrictEqual({ codexCreates: 1, magpiCreates: 0, owner: "codex-acp" });
+    const magpiHistory = await first.history("magpi-acp");
+    expect(magpiHistory.map(({ sessionId }) => sessionId)).toStrictEqual([
+      "session-1",
+    ]);
+    await expect(first.history("codex-acp")).resolves.toStrictEqual([]);
+    await first.reopen({
+      agentId: "magpi-acp",
+      sessionId: "session-1",
+      title: "MagPi history",
+    });
+    const second = createThreads(factory);
+    await second.openWorkspace("/workspace");
+    if (codexId !== null && codexId !== undefined) {
+      await second.select(codexId);
+    }
+    expect({
+      codexLoads: codex.loadCalls,
+      ids: second
+        .snapshot()
+        .threads.map(({ agentId }) => agentId)
+        .toSorted((left, right) => (left ?? "").localeCompare(right ?? "")),
+      magpiLoads: magpi.loadCalls,
+    }).toStrictEqual({
+      codexLoads: 1,
+      ids: ["codex-acp", "magpi-acp"],
+      magpiLoads: 2,
+    });
+  });
+
+  test("reopens an Agent session once as the selected durable Thread", async () => {
+    const agent = new FakeAgent();
+    agent.replayOnLoad = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    const entry: ThreadHistoryEntry = {
+      agentId: "magpi-acp",
+      sessionId: "previous-session",
+      title: "Previous Thread",
+      updatedAt: "2026-09-15T12:00:00.000Z",
+    };
+
+    await threads.reopen(entry);
+    await threads.reopen(entry);
+
+    expect(database.snapshot().threads).toMatchObject([
+      {
+        name: "Previous Thread",
+        sessionId: "previous-session",
+        updatedAt: "2026-09-15T12:00:00.000Z",
+        workspace: "/workspace",
+      },
+    ]);
+    expect(database.snapshot().selections).toMatchObject([
+      { threadId: database.snapshot().threads[0]?.id, workspace: "/workspace" },
+    ]);
+    expect(agent.loadRequests).toStrictEqual([
+      { cwd: "/workspace", sessionId: "previous-session" },
+    ]);
+    expect(threads.snapshot().selected).toMatchObject({
+      items: [
+        { kind: "user", text: "Restore me" },
+        { kind: "assistant", text: "Restored." },
+      ],
+      name: "Previous Thread",
+    });
+  });
+
+  test("opening a durable Thread restores its transcript from ACP", async () => {
+    const original = createThreads(new FakeAgent().factory);
+    await original.openWorkspace("/workspace");
+    await original.prompt("Restore me");
+
+    const loadingAgent = new FakeAgent();
+    loadingAgent.replayOnLoad = true;
+    const restored = createThreads(loadingAgent.factory);
+    await restored.openWorkspace("/workspace");
+
+    expect(restored.snapshot().selected?.items).toMatchObject([
+      { id: "user:pi-user-1", kind: "user", text: "Restore me" },
+      {
+        id: "assistant:pi-assistant-1",
+        kind: "assistant",
+        text: "Restored.",
+      },
+    ]);
+  });
+
+  test("a failed first prompt remains durable and can be retried", async () => {
+    const failingAgent = new FakeAgent();
+    failingAgent.failCreate = true;
+    const threads = createThreads(failingAgent.factory);
+    await threads.openWorkspace("/workspace");
+
+    await threads.prompt("Try again");
+
+    expect(threads.snapshot()).toMatchObject({
+      selected: { error: "Agent unavailable", status: "error" },
+      threads: [{ indicator: "error" }],
+    });
+
+    const recovered = createThreads(new FakeAgent().factory);
+    await recovered.openWorkspace("/workspace");
+    await recovered.retry();
+
+    expect(recovered.snapshot().selected).toMatchObject({
+      items: [
+        { kind: "user", text: "Try again" },
+        { kind: "assistant", text: "Done." },
+      ],
+      status: "idle",
+    });
+  });
+
+  test("an image-only failed prompt retains its attachment across a restart", async () => {
+    const failingAgent = new FakeAgent();
+    failingAgent.failCreate = true;
+    const first = createThreads(failingAgent.factory);
+    await first.openWorkspace("/workspace");
+    const image = { data: "aW1hZ2U=", mimeType: "image/png" };
+    await first.prompt("", [image]);
+    const id = database.snapshot().threads[0]?.id;
+    expect(database.snapshot().threads[0]).toMatchObject({
+      retryHasImages: true,
+      retryText: "",
+    });
+    const savedImages = path.join(
+      profileDirectory,
+      "profile-db-v1",
+      "retry-images",
+      `${id}.json`
+    );
+    await expect(readFile(savedImages, "utf-8")).resolves.toContain(image.data);
+
+    const reopenedDatabase = await ProfileDatabase.open({
+      currentWorkspace: "/workspace",
+      instanceId: "00000000-0000-4000-8000-000000000002",
+      log: vi.fn<(message: string) => void>(),
+      profileDirectory,
+    });
+    const recoveredAgent = new FakeAgent();
+    const recovered = new Threads(reopenedDatabase, recoveredAgent.factory);
+    try {
+      await recovered.openWorkspace("/workspace");
+      await recovered.retry();
+      expect(recoveredAgent.promptImages).toStrictEqual([image]);
+      expect(recovered.snapshot().selected).toMatchObject({ status: "idle" });
+      await expect(readFile(savedImages, "utf-8")).rejects.toThrow(/ENOENT/u);
+    } finally {
+      await recovered.dispose();
+      await reopenedDatabase.dispose();
+    }
+  });
+
+  test("removing a failed Thread deletes its saved image", async () => {
+    const agent = new FakeAgent();
+    agent.failCreate = true;
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+    await threads.prompt("", [{ data: "aW1hZ2U=", mimeType: "image/png" }]);
+    const id = database.snapshot().threads[0]?.id;
+    const savedImages = path.join(
+      profileDirectory,
+      "profile-db-v1",
+      "retry-images",
+      `${id}.json`
+    );
+    await threads.remove(id ?? "");
+    await expect(readFile(savedImages, "utf-8")).rejects.toThrow(/ENOENT/u);
+  });
+
+  test("Retry does not silently drop a missing saved image", async () => {
+    const failingAgent = new FakeAgent();
+    failingAgent.failCreate = true;
+    const first = createThreads(failingAgent.factory);
+    await first.openWorkspace("/workspace");
+    await first.prompt("Describe this", [
+      { data: "aW1hZ2U=", mimeType: "image/png" },
+    ]);
+    const id = database.snapshot().threads[0]?.id;
+    await rm(
+      path.join(profileDirectory, "profile-db-v1", "retry-images", `${id}.json`)
+    );
+
+    const agent = new FakeAgent();
+    const recovered = createThreads(agent.factory);
+    await recovered.openWorkspace("/workspace");
+    await expect(recovered.retry()).rejects.toThrow(
+      "Saved retry images are missing"
+    );
+    expect(agent.promptCalls).toBe(0);
+  });
+
+  test("the first prompt registers a Thread and streams its transcript", async () => {
+    const agent = new FakeAgent();
+    const threads = createThreads(agent.factory);
+    await threads.openWorkspace("/workspace");
+
+    await threads.prompt("Fix the tests");
+
+    expect(threads.snapshot()).toMatchObject({
+      selected: {
+        items: [
+          { kind: "user", text: "Fix the tests" },
+          { kind: "assistant", text: "Done." },
+        ],
+        name: "Fix tests",
+        status: "idle",
+      },
+      threads: [{ name: "Fix tests" }],
+      workspace: "/workspace",
+    });
+  });
+});

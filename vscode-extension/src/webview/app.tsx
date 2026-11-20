@@ -1,0 +1,184 @@
+import { useEffect, useRef, useState } from "react";
+
+import { postMessage } from "./bridge";
+import { ButtonTooltip } from "./button-tooltip";
+import { NavigatorPane } from "./navigator-pane";
+import { ProjectSetupDialog } from "./project-setup-dialog";
+import type { HostToWebviewMessage, RenderedTranscriptItem } from "./protocol";
+import { SettingsDialog } from "./settings-dialog";
+import { ThreadView } from "./threads/detail/thread-view";
+
+const initialState: Extract<HostToWebviewMessage, { type: "state" }> = {
+  font: "ui-monospace, monospace",
+  projects: { navigation: { workspaces: [] } },
+  threads: { threads: [] },
+  type: "state",
+};
+
+export const App = (): React.JSX.Element => {
+  const [snapshot, setSnapshot] = useState(initialState);
+  const [contextItems, setContextItems] = useState<string[]>([]);
+  const [hostConnection, setHostConnection] = useState<{
+    message?: string;
+    state: "connecting" | "connected" | "unreachable";
+  }>({ state: "connected" });
+  const [expandAllRequest, setExpandAllRequest] = useState(0);
+  const [projectsMenuOpen, setProjectsMenuOpen] = useState(false);
+  const [threadMaximized, setThreadMaximized] = useState(false);
+  const [transcript, setTranscript] = useState<{
+    items: RenderedTranscriptItem[];
+    streaming: boolean;
+    threadId?: string;
+  }>({ items: [], streaming: false });
+  const previousWorkspace = useRef<string | null>(null);
+  const selectedThreadId = useRef<string | null>(null);
+
+  useEffect(() => {
+    const receive = (event: MessageEvent<HostToWebviewMessage>): void => {
+      if (event.data.type === "hostConnection") {
+        setHostConnection({
+          ...(event.data.message === undefined
+            ? {}
+            : { message: event.data.message }),
+          state: event.data.state,
+        });
+      } else if (event.data.type === "contextItems") {
+        setContextItems(event.data.items);
+      } else if (event.data.type === "toggleProjectsMenu") {
+        setProjectsMenuOpen((open) => !open);
+      } else if (event.data.type === "setAllExpanded") {
+        if (event.data.expanded) {
+          setExpandAllRequest((request) => request + 1);
+        }
+        setThreadMaximized(!event.data.expanded);
+      } else if (event.data.type === "state") {
+        const nextThreadId = event.data.threads.selected?.id ?? null;
+        if (
+          selectedThreadId.current !== nextThreadId ||
+          (event.data.threads.selected?.items.length ?? 0) > 0
+        ) {
+          setTranscript({ items: [], streaming: false });
+        }
+        selectedThreadId.current = nextThreadId;
+        setSnapshot(event.data);
+      } else if (event.data.type === "sessionOperation") {
+        const { data: update } = event;
+        setSnapshot((current) => {
+          const { selected } = current.threads;
+          if (selected?.id !== update.threadId) {
+            return current;
+          }
+          return {
+            ...current,
+            threads: {
+              ...current.threads,
+              selected: {
+                ...selected,
+                sessionOperation: update.operation,
+              },
+            },
+          };
+        });
+      } else if (event.data.type === "transcript") {
+        const update = event.data;
+        if (update.threadId !== selectedThreadId.current) {
+          return;
+        }
+        setTranscript((current) => {
+          const items =
+            current.threadId === update.threadId ? current.items : [];
+          const index = items.findIndex((item) => item.id === update.item.id);
+          return {
+            items:
+              index === -1
+                ? [...items, update.item]
+                : items.with(index, update.item),
+            streaming: update.streaming,
+            threadId: update.threadId,
+          };
+        });
+      }
+    };
+    window.addEventListener("message", receive);
+    postMessage({ type: "ready" });
+    return () => {
+      window.removeEventListener("message", receive);
+    };
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--mischief-mono-font",
+      snapshot.font
+    );
+  }, [snapshot.font]);
+
+  const currentWorkspace = snapshot.projects.navigation.current?.workspace;
+  useEffect(() => {
+    if ((currentWorkspace?.path ?? null) === previousWorkspace.current) {
+      return;
+    }
+    previousWorkspace.current = currentWorkspace?.path ?? null;
+    setContextItems([]);
+    postMessage({ type: "contextItems" });
+  }, [currentWorkspace?.path]);
+
+  return (
+    <>
+      <main>
+        <NavigatorPane
+          agentIcons={snapshot.agentIcons}
+          collapseAll={threadMaximized}
+          expandAllRequest={expandAllRequest}
+          onDismissProjectsMenu={() => {
+            setProjectsMenuOpen(false);
+          }}
+          onExpand={() => {
+            setThreadMaximized(false);
+          }}
+          onToggleProjectsMenu={() => {
+            setProjectsMenuOpen((open) => !open);
+          }}
+          projects={snapshot.projects}
+          projectsMenuOpen={projectsMenuOpen}
+          threads={snapshot.threads}
+        />
+        <ThreadView
+          agentIcons={snapshot.agentIcons}
+          contextItems={contextItems}
+          setup={snapshot.setup}
+          snapshot={snapshot.threads}
+          transcript={transcript}
+        />
+      </main>
+      <SettingsDialog icons={snapshot.agentIcons} />
+      <ProjectSetupDialog />
+      <ButtonTooltip />
+      {hostConnection.state === "connected" ? null : (
+        <div
+          aria-live="assertive"
+          className="host-connection-overlay"
+          role="status"
+        >
+          <div className="host-connection-message">
+            <h2>
+              {hostConnection.state === "connecting"
+                ? "Connecting to Mischief Host…"
+                : "Mischief Host is unavailable"}
+            </h2>
+            <p>
+              {hostConnection.state === "connecting"
+                ? "Your Projects and Threads will return when the connection is ready."
+                : "Reconnecting automatically. Open the Mischief macOS app if the Host is not installed."}
+            </p>
+            {hostConnection.state === "unreachable" &&
+            hostConnection.message !== undefined &&
+            hostConnection.message.length > 0 ? (
+              <code>{hostConnection.message}</code>
+            ) : null}
+          </div>
+        </div>
+      )}
+    </>
+  );
+};

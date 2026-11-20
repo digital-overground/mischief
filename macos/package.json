@@ -1,0 +1,31 @@
+{
+  "name": "mischief-macos-diagnostic",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bash build.sh",
+    "test": "vitest run --maxWorkers=2",
+    "typecheck": "tsc --noEmit",
+    "format": "oxfmt -c ../vscode-extension/oxfmt.config.ts host.ts host-acp.ts host-acp-manager.ts host-acp.test.ts host-agent-installer.ts host-agent-installer.test.ts host-ownership.ts host-output.ts host-threads.ts host-threads.test.ts host.test.ts library.ts library.test.ts page.tsx thread-smoke.js app.css index.html package.json README.md",
+    "format:check": "oxfmt --check -c ../vscode-extension/oxfmt.config.ts host.ts host-acp.ts host-acp-manager.ts host-acp.test.ts host-agent-installer.ts host-agent-installer.test.ts host-ownership.ts host-output.ts host-threads.ts host-threads.test.ts host.test.ts library.ts library.test.ts page.tsx thread-smoke.js app.css index.html package.json README.md",
+    "lint": "oxlint -c ../vscode-extension/oxlint.config.ts --deny-warnings host.ts host-acp.ts host-acp-manager.ts host-acp.test.ts host-agent-installer.ts host-agent-installer.test.ts host-ownership.ts host-output.ts host-threads.ts host-threads.test.ts host.test.ts library.ts library.test.ts page.tsx thread-smoke.js",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm build && pnpm test"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^1.4.0",
+    "markdown-it": "^14.3.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.2.0",
+    "@types/node": "^22.20.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "esbuild": "^0.25.0",
+    "oxfmt": "0.68.0",
+    "oxlint": "1.83.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.7"
+  }
+}

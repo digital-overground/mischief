@@ -33,5 +33,5 @@ jobs:
           HEAD_BRANCH: ${{ github.head_ref }}
         run: |
           test "$HEAD_BRANCH" = dev
-          git show "$BASE_SHA:package.json" > /tmp/base-package.json
-          test "$(node -p "require('./package.json').version")" != "$(node -p "require('/tmp/base-package.json').version")"
+          (git show "$BASE_SHA:vscode-extension/package.json" || git show "$BASE_SHA:package.json") > /tmp/base-package.json
+          test "$(node -p "require('./vscode-extension/package.json').version")" != "$(node -p "require('/tmp/base-package.json').version")"

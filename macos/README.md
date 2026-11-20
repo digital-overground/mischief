@@ -1,0 +1,47 @@
+# Mischief for macOS
+
+Phase 1 proved the diagnostic app shape; Phase 2 is building a read-mostly companion for real Projects, Workspaces, and Threads. See the [plan](../docs/macos-app-plan.md) and [architecture decision](../docs/adr/0002-macos-shell-webview-host.md).
+
+Phase 1 validated the packaged shell. The companion Host reads Workspace and Thread summaries from the Default VS Code profile and opens no network port. VS Code still owns live Threads. Both clients use `shared/theme/tokens.css`, the bundled IBM Plex Sans and Lilex fonts in `shared/theme/fonts/`, and the React icons in `shared/icons/icon.tsx`. The fonts' OFL licenses are included with the font files. macOS-specific layout lives in `macos/app.css`; theme CSS and font files are copied into both packaged apps on build.
+
+## Experimental local Host connection
+
+On launch, the app installs private copies of `node`, npm, and `Host.mjs` in `~/Library/Application Support/Mischief/Host/`. The install is replaced from a staging directory so the files are never copied into place partially. It registers the on-demand per-user `works.digitaloverground.mischief.host` launch agent and asks `launchd` to start it. That daemon survives app Quit and is not configured to start automatically at login. The app connects to its private Unix socket for snapshots and commands; it no longer starts a child Host.
+
+The bundled `node` can run `Host.mjs --daemon` independently of the app. It publishes read-only library snapshots to clients that send `{"type":"hello","version":1}` followed by a newline on a Unix socket at `~/Library/Application Support/Mischief/host.sock` (override with `MISCHIEF_HOST_SOCKET` for tests). The socket directory must be private to the current user. The macOS app now launches and uses this background process, but this does **not** yet replace VS Code's ACP ownership. The experimental Host acquires an exclusive lock beside its socket before binding; it reclaims a crashed process's stale lock and socket only when the recorded PID is gone and the socket does not answer; a dead socket without a lock is also recovered after acquiring the lock. Live or unverifiable owners, or a crash during recovery, fail closed for manual inspection. A socket client with more than 8 MiB of pending output is disconnected and can reconnect for the latest snapshot. Before serving clients, the Host exclusively locks its private future profile at `~/Library/Application Support/Mischief/profile/`; a second Host cannot use that profile even through another socket. The Host can explicitly install, probe, and launch MagPi, Claude Agent, or Codex from the same versioned managed-install layout used by the extension, rooted in its private `profile/agents/` directory. Install requests use the bundled npm, ignore package scripts, publish atomically only after an ACP handshake, and coalesce simultaneous requests. Automatic updates remain deferred until they can be staged around active turns. It routes durable Thread create, load, prompt, cancel, update, permission, and elicitation messages over the socket. `threadTranscript` returns up to 256 ACP events or about 1 MiB per response, newest page first, with an optional numeric cursor for older pages. Agent history loaded through ACP is kept by the Host and is not broadcast to clients during session load; clients request older pages when scrolling. Host and VS Code share the canonical Thread record type and validator in `shared/threads/record.ts`. Host Thread records use serialized atomic files under `profile/profile-db-v1/threads/`; failed ACP session creation remains durable for retry, and running or waiting records found after a restart are marked interrupted instead of replaying their prompts. Additional prompts run sequentially in Host memory; cancellation stops the active turn, cancels pending interactions, and broadcasts queued text back as editable drafts. The VS Code extension uses this protocol for newly created Host-marked Threads and keeps unmarked existing Threads on its legacy ACP connections. The existing VS Code profile database is not locked or migrated and still stores the client-side records used during this transition.
+
+## Build and check
+
+Requires an arm64 Mac, Xcode at `/Applications/Xcode.app`, pnpm, an Apple Development signing identity in the keychain, and internet access to download the pinned Node 22 arm64 archive from nodejs.org. The Node download is SHA-256 checked against Node's published SHASUMS. Build outputs and the download cache are ignored by Git.
+
+To use Xcode, first run `pnpm install` at the repo root, then open `macos/Mischief.xcodeproj`, choose the **Mischief** scheme and **My Mac**, and press Run (⌘R). The project uses the development team available on this machine; change the target's Signing & Capabilities team if using another account. Xcode builds and signs the app and bundled Node; edits to the React page and Host are included on the next build. The command-line build below remains available; it sets `DEVELOPER_DIR` only for its own process, without changing `xcode-select`.
+
+```sh
+pnpm install
+pnpm --dir macos format:check             # shared extension Ultracite/Oxfmt config
+pnpm --dir macos lint                     # shared extension Ultracite/Oxlint config
+pnpm --dir macos typecheck
+pnpm --dir macos build                   # SIGN_IDENTITY='Apple Development: Name (TEAM)' to disambiguate
+pnpm --dir macos test                    # exercises the signed Host and close/reopen lifecycle
+codesign --verify --strict --deep --verbose=2 macos/dist/Mischief.app
+open macos/dist/Mischief.app
+# or run pnpm --dir macos check for the full macOS gate
+```
+
+Oxlint and Oxfmt cover macOS TypeScript/TSX using the same Ultracite configurations as the extension; `swift-format` is separate and Oxlint does not parse Swift. Root `pnpm check` includes the macOS format, lint, and typecheck checks; packaged-app tests require macOS and a signing identity.
+
+## Phase 2 companion check
+
+Manual Xcode run against the Default VS Code profile confirmed: correct Project/Workspace/Thread grouping; opening the correct Workspace and Thread in VS Code; adding and deactivating a disposable Workspace in both clients; an accurate Dock count and one notification when a Thread newly needs attention; clicking that notification with the app window closed reopened the app and selected the Thread in VS Code; restarting with pre-existing attention restored the count without another notification. Automated build, signing, lint, typecheck, and tests also pass.
+
+**Decision: go for Phase 2.** For this companion release, Deactivate hides the Workspace record but deliberately leaves any already-open VS Code window open. It is not equivalent to the extension's Close Workspace action. The macOS app still does not own live Threads; that transition belongs to Phase 3.
+
+## Phase 1 packaged-app gate (passed)
+
+1. The original diagnostic screen showed Host `running` and a PID and could toggle the badge. Phase 2 uses the badge for real Thread attention instead of a manual toggle.
+2. Close the window (not Quit). Confirm the Host PID is still alive. Click the Dock icon; confirm one window opens with the **same** PID. Repeat to check no second Host starts.
+3. Click **Notify diagnostic view**. Observe authorization or denial on the screen. If authorized, confirm a banner appears; close the window and click the notification. Confirm it opens the window on `diagnostic`. If denied, enable notifications in System Settings and retry.
+4. With the window open, `kill <Host PID>` from a terminal. Confirm `stopped` appears and **Restart Host** starts a new PID. Check that badge state clears on exit.
+5. Quit via ⌘Q. Confirm neither the app nor its child PID remains (e.g. `ps -p <Host PID>`). Reopen the `.app` to confirm a fresh Host starts.
+
+**Observed on this machine:** Apple Development signature verified, both packaged executables are arm64, bundled Node starts, the Host round-trip and automated window close/reopen tests pass, `open` launched one app and one Host child, and AppleScript Quit removed both. Manual testing confirmed the diagnostic page, badge changes, notification permission and click routing to the view. macOS initially muted banners while the display was shared; the notifications appeared in Notification Center. Manual testing of the Xcode-built, development-signed app also confirmed Dock-click reopen retained the same Host PID, killing the Host exposed the stopped state and allowed restart, and ⌘Q left no Host child (`ps -p <Host PID>` showed no process). **Decision: go for Phase 2.** This validates the diagnostic app shape, not a release build; Developer ID signing, notarization, and product behavior remain later work.

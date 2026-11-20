@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft. This plan starts with product shape and delivery order. Technical interfaces, storage formats, and remote networking will be designed as each phase approaches.
+Phases 1 and 2 passed their signed-app and cross-client checks; see [build and observed results](../macos/README.md). The Phase 2 companion deliberately leaves a VS Code window open when it deactivates a Workspace. Phase 3 now has an installed, `launchd`-owned Host used by the macOS app and VS Code over a private Unix socket; legacy VS Code Threads remain VS Code-owned until cutover. The Host exclusively locks its private future profile before serving clients. Its socket now has a tested ACP runtime protocol, durable Host Thread records with interrupted-turn recovery, and sequential prompt queues with cancellation. VS Code and the Host share one canonical Thread record schema and validator. Explicit first-time Agent installation, the tested VS Code Host socket client, and its `AgentConnection` adapter are implemented. The VS Code adapter is active for newly created Threads and Agent history. Its Host transport reconnects automatically after disconnects and blocks the webview with a connection-status overlay while the Host is unreachable. VS Code and macOS now translate ACP transcript updates and render Host-owned transcripts through the same shared modules and stylesheet; legacy Threads remain VS Code-only. Running tool output stays expandable and, once expanded, follows the output tail in a terminal-sized viewport. The macOS client can create, prompt, queue, stop, retry, rename, and unregister Host Threads; answer shared permission and elicitation controls; change ACP configuration; attach images; open workspace-scoped files; and preview structured diffs in-app. New records are explicitly marked `owner: "host"`; records without that marker keep their legacy VS Code ACP owner until final migration. Authentication, history adoption, image prompts, session configuration, bounded in-workspace `@file` context, interrupted-turn errors, and explicit Agent installation run through the Host. MagPi message Fork is routed through the Host for VS Code; tree navigation stays hidden until its transcript reset reaches every client. Staged automatic updates, final handoff, and profile migration remain unimplemented. Later phases remain draft. Storage formats, Host update details, and remote networking remain to be designed.
 
 ## Goal
 
@@ -38,7 +38,7 @@ A `WKWebView` renders the existing React interface, adapted for a full applicati
 - The selected Thread transcript and composer
 - Settings and Agent controls
 
-The macOS app and VS Code extension should share this interface where their behavior matches. Platform-specific actions remain outside React.
+The macOS app and VS Code extension should share this interface where their behavior matches. During Phase 2, move platform-independent React controls and domain classes out of `vscode-extension/` into a root-level `shared/` library as real second callers emerge. VS Code APIs remain in `vscode-extension/`; AppKit and WebKit APIs remain in `macos/`. Do not extract the extension's interface for the Phase 1 diagnostic page.
 
 ### Mischief Host
 
@@ -75,9 +75,13 @@ The prototype should:
 6. Show a notification and open the correct view when it is clicked.
 7. Quit cleanly without leaving an unknown child process behind.
 
-This phase is complete when the shell, webview, and Host work together in a packaged app. The UI can remain a small diagnostic screen.
+The prototype lives in `macos/` and has a small, separate React diagnostic screen, not the VS Code navigator. It reads no profile data and performs no real Thread actions. Bundle the React assets and a Node runtime with the app; do not require a development server or an installed Node. For this prototype, Swift launches Node and exchanges messages over the child process's standard input/output; Swift and React exchange typed, runtime-validated messages through WebKit. No TCP listener is needed. These choices do not define the Phase 3 client-to-Host transport.
 
-If bundling, signing, or supervising the Node Host proves unreliable, stop and reconsider Electron before moving more code.
+Closing the window leaves the diagnostic Host running. Clicking the Dock icon reopens one window and reconnects it without starting a second Host. Quit stops and reaps the Host. An unexpected Host exit is visible, with an explicit restart action rather than a silent restart loop. This does not decide what happens to running Threads on Quit in Phase 3.
+
+A manual test action sets and clears a badge from diagnostic Host state and sends a notification addressed to a diagnostic view. Show notification authorization or denial clearly. Clicking the notification opens the target view while the app is running, even if its window was closed; notification handling after Quit is deferred.
+
+This phase is complete only after a repeatable check of the packaged arm64 `.app` signed with an Apple Development identity verifies launch, local React loading, typed round-trip, Host start/reconnect and failure, badge changes, notification permission and click routing, and Quit without an orphaned child. Record the commands, prerequisites, observed results, and a go/no-go decision. If bundling, signing, or supervising the Node Host proves unreliable, stop and reconsider Electron before moving product behavior. Universal binaries and minimum supported macOS version are release decisions, not prototype gates.
 
 ## Phase 2: Ship a local companion app
 
@@ -85,7 +89,7 @@ Build the first useful macOS release without changing ownership of live Threads.
 
 The app should:
 
-1. Connect to one existing local Mischief profile.
+1. Connect to the Default VS Code profile. Profile selection can follow if needed.
 2. Show Projects, Workspaces, and Threads in one window.
 3. Group Git Workspaces under their derived Project and list untracked Workspaces separately.
 4. Add or deactivate a Workspace and refresh Workspace status.
@@ -96,7 +100,7 @@ The app should:
 9. Avoid sending a notification for every existing attention item at startup.
 10. Open the relevant Thread when the user clicks a notification.
 
-The companion app may read all Thread summaries, but VS Code still owns Agent processes and Thread mutation during this phase. Thread creation, prompts, cancellation, permission responses, rename, and removal continue in VS Code.
+The companion app may read all Thread summaries, but VS Code still owns Agent processes and Thread mutation during this phase. Thread creation, prompts, cancellation, permission responses, rename, and removal continue in VS Code. For this companion release, Deactivate hides a Workspace record without closing an already-open VS Code window; it is not the extension's Close Workspace action.
 
 This phase tests whether the Project hierarchy, background behavior, and native shell are useful before the runtime moves.
 
@@ -106,20 +110,26 @@ Make the macOS app an independent Mischief client.
 
 Work through the transition in this order:
 
-1. Give the Host a stable application-support directory for its database and Agent installations.
-2. Add a one-time import from the selected VS Code profile.
-3. Make the Host the single owner of ACP connections and Thread writes.
-4. Connect the macOS app to the Host for all Project, Workspace, and Thread actions.
-5. Connect the VS Code extension to the same Host instead of opening its own Agent sessions.
-6. Preserve existing Thread behavior: create, load, prompt, queue, cancel, retry, rename, unregister, history, permissions, elicitation, configuration, fork, and rollback.
-7. Keep running turns alive when the app window closes.
-8. Define what happens when the user quits while work is running.
-9. Detect incompatible client and Host versions and explain the required update.
-10. Verify that two clients cannot start duplicate runtimes for one Thread.
+1. Install the signed Host outside the replaceable app bundle, with private application-support storage. Start on local demand; keep it running independently of app Quit, and enable start-at-login only when remote access is enabled.
+2. Add one per-user local client transport, exclusive profile ownership, safe stale-owner recovery, version rejection, and two-launcher/crash/update tests **before** accepting ACP work. The macOS app now uses the `--daemon` socket, the Host locks its private future profile, and a fake Agent proves durable ACP-backed Threads over that socket; staged Agent updates, safe cross-client MagPi tree navigation, and final legacy-Thread migration are still missing.
+3. Move ACP connections and Thread writes into that single Host. Keep requests waiting while clients are disconnected; never replay an interrupted turn automatically. Stage updates until running turns finish.
+4. Back up and validate the Default VS Code profile, then cut over only when its VS Code windows are closed and turns have finished. Retire the old active Thread index so old extensions cannot automatically restore migrated registrations; require an updated extension. Preserve Agent history and the backup.
+5. Connect VS Code and the macOS app to the Host. Neither may start a duplicate ACP connection or silently fall back when the Host is unavailable.
+6. Preserve existing Thread behavior: create, load, prompt, queue, cancel, retry, rename, unregister, history, permissions, elicitation, configuration, fork, and rollback; test simultaneous clients, app Quit/reconnect, and incompatible versions.
 
 This phase is complete when the app can create and continue a Thread with VS Code closed, and the same Thread can then be viewed and controlled from VS Code without transferring or duplicating its Agent session.
 
-The existing Profile Database ADR must be superseded here. It currently assigns Thread writes to a Workspace's VS Code extension instance and explicitly avoids a broker process.
+[ADR 0003](adr/0003-host-thread-ownership.md) describes the target and safe handoff. The existing Profile Database ADR remains in force until the actual cutover; it currently assigns Thread writes to a Workspace's VS Code extension instance and explicitly avoids a broker process.
+
+### macOS Thread viewing and prompting
+
+Sharing transcript components does not mean the macOS client has feature parity. These Phase 3 requirements now have packaged WKWebView coverage against a disposable Host and fake Agent (`macos/host.test.ts`, `macos/thread-smoke.js`):
+
+- [x] **Send messages end to end.** The page announces readiness before the Swift client connects, so initial Host snapshots are not lost during WebView loading. Packaged UI tests verify Send and Enter each deliver exactly one prompt to the selected Agent session and display its streamed reply. The composer clears only after Host acceptance, blocks duplicate submissions while awaiting acceptance, preserves rejected text/images, and does not submit during IME composition or Shift+Enter. Disconnection rejects pending requests without automatically replaying prompts.
+- [x] **Render Markdown.** macOS now supplies `item.html` using the same MarkdownIt settings as VS Code (raw HTML disabled). Packaged UI tests cover restored formatting, incrementally streamed headings/emphasis, lists, fenced code, and rejection of active HTML and JavaScript links.
+- [x] **Load older messages on scroll.** The Host returns the newest transcript page and serves older pages by cursor as the client scrolls. The macOS view initially shows 100 items and increases the window in batches of 100 near the top. It preserves the prepend scroll offset and follows streamed output only while at the bottom. The packaged UI test loads a 300-item Thread and verifies older pages, scroll anchoring, tail following, and nonduplicated replies.
+
+Real-Agent manual validation remains separate from the automated fake-Agent gate. The test runs against temporary profiles and does not restart or migrate the user's live Host.
 
 ## Phase 4: Finish the macOS product
 
@@ -139,18 +149,13 @@ Include:
 
 ## Phase 5: Add remote access
 
-Treat remote access as a separate product and security plan built on the same Host.
+Treat remote access as a separate product and security plan built on the same Host. [ADR 0004](adr/0004-tailscale-remote-clients.md) records the first client, direct Tailscale connection, pairing model, and initial remote-action scope. Tailscale supplies the private network path, not Mischief's client pairing, authorization, or revocation.
 
 Before implementation, decide:
 
-- Where the Host runs and which files and Agent credentials it can access
-- Whether clients connect through a private network, direct connection, or managed relay
-- How a user pairs a client, reviews access, and revokes it
-- How transport encryption and Host identity are verified
-- Which actions are allowed remotely, especially permission and elicitation responses
-- How file links, diffs, images, and large tool output are delivered
-- What happens when the Host sleeps, disconnects, or changes networks
-- Whether a remote client can install Agents or change Host settings
+- The pairing invitation lifetime, Host-identity check, per-device credential storage, and immediate revocation behavior
+- How to limit binding to the tailnet and handle a changed Tailscale address or Host sleep
+- Safe size limits and delivery for streamed transcripts, images, and tool output (remote file links and uploads are deferred)
 - What audit history the user can inspect
 
 Start remote access as an explicit opt-in. The Host must not bind an unauthenticated port to the LAN or internet.
@@ -184,13 +189,10 @@ Notifications should represent transitions, not periodic reminders. Notification
 
 Resolve these before their phase begins:
 
-1. Whether the first companion release supports only the Default VS Code profile or lets the user select another profile.
-2. Whether Phase 3 merges multiple local VS Code profiles into one Host library.
-3. How the Host is bundled, launched, upgraded, and stopped by the signed app.
-4. How the VS Code extension finds and starts the local Host when the app is not open.
-5. Whether app Quit stops an idle Host and what happens during a running turn.
-6. Which remote connection model to pursue.
-7. Whether a future Windows or Linux client is a product goal. This plan covers macOS only.
+1. How Host upgrades are staged until active turns finish. The signed Host is installed outside the app bundle, starts on demand through `launchd`, and remains running after clients quit; enabling remote access will also start it at login.
+2. How VS Code finds or starts the Host. The macOS app now safely starts and connects to it.
+3. Whether future VS Code profiles get separate Host libraries or an explicit merge. Phase 3 imports only the Default profile.
+4. Whether a future Windows or Linux client is a product goal. This plan covers macOS only.
 
 ## Documentation changes
 

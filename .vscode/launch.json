@@ -5,8 +5,8 @@
       "name": "Run Mischief",
       "type": "extensionHost",
       "request": "launch",
-      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "${workspaceFolder}"],
-      "outFiles": ["${workspaceFolder}/dist/**/*.js"]
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/vscode-extension", "${workspaceFolder}"],
+      "outFiles": ["${workspaceFolder}/vscode-extension/dist/**/*.js"]
     }
   ]
 }

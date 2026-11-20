@@ -1,0 +1,373 @@
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+
+import type { AgentId } from "../../../agents/update";
+import { isNonEmpty } from "../../../present";
+import { AgentIcon } from "../../agent-icon";
+import { postMessage } from "../../bridge";
+import { SvgIcon } from "../../icon";
+import type {
+  RenderedSetupStep,
+  RenderedThreadsSnapshot,
+  RenderedTranscriptItem,
+} from "../../protocol";
+import { Composer } from "./composer/composer";
+import { Interaction, InteractionQuestion } from "./interaction";
+import { PlanControl } from "./plan-control";
+import { SteeringControl } from "./steering-control";
+import { Transcript } from "./transcript";
+
+const noTranscriptItems: RenderedTranscriptItem[] = [];
+
+const Processing = ({ hidden }: { hidden: boolean }): React.JSX.Element => (
+  <div
+    id="processing"
+    aria-hidden={hidden}
+    aria-label={hidden ? undefined : "Agent is working"}
+    hidden={hidden}
+    role={hidden ? undefined : "status"}
+  />
+);
+
+// oxlint-disable-next-line complexity -- the component renders Thread state branches
+export const ThreadView = ({
+  agentIcons,
+  contextItems,
+  setup,
+  snapshot,
+  transcript,
+}: {
+  agentIcons?: Partial<Record<AgentId, string>>;
+  contextItems: string[];
+  setup?: RenderedSetupStep;
+  snapshot: RenderedThreadsSnapshot;
+  transcript: {
+    items: RenderedTranscriptItem[];
+    streaming: boolean;
+    threadId?: string;
+  };
+}): React.JSX.Element => {
+  const chat = useRef<HTMLDivElement>(null);
+  const chatContent = useRef<HTMLDivElement>(null);
+  const previousThread = useRef<string | null>(null);
+  const [copyNotice, setCopyNotice] = useState(0);
+  const [selectedSetupOptions, setSelectedSetupOptions] = useState<string[]>(
+    []
+  );
+  const shouldStick = useRef(true);
+  const [visibleCount, setVisibleCount] = useState(100);
+  const [visibleThread, setVisibleThread] = useState<string | null>(null);
+  const prependHeight = useRef<number | null>(null);
+  const previousItemCount = useRef(0);
+  const selected = setup ? undefined : snapshot.selected;
+  if (visibleThread !== (selected?.id ?? null)) {
+    setVisibleThread(selected?.id ?? null);
+    setVisibleCount(100);
+  }
+  useEffect(() => {
+    setSelectedSetupOptions(setup?.options?.map(({ id }) => id) ?? []);
+  }, [setup?.id, setup?.options]);
+  const transcriptItems =
+    transcript.threadId === selected?.id ? transcript.items : noTranscriptItems;
+  const historyItems = [...(selected?.items ?? [])];
+  const indices = new Map(historyItems.map((item, index) => [item.id, index]));
+  for (const item of transcriptItems) {
+    const index = indices.get(item.id);
+    if (index === undefined) {
+      indices.set(item.id, historyItems.length);
+      historyItems.push(item);
+    } else {
+      historyItems[index] = item;
+    }
+  }
+  const visibleMessages = historyItems.filter(
+    (item) => item.kind === "user" || item.kind === "assistant"
+  );
+  const changed = previousThread.current !== selected?.id;
+  useLayoutEffect(() => {
+    const container = chat.current;
+    if (changed) {
+      shouldStick.current = true;
+      prependHeight.current = null;
+      previousItemCount.current = historyItems.length;
+    }
+    if (
+      prependHeight.current !== null &&
+      historyItems.length > previousItemCount.current
+    ) {
+      previousItemCount.current = historyItems.length;
+      setVisibleCount((count) => count + 100);
+      return;
+    }
+    previousItemCount.current = historyItems.length;
+    if (container && prependHeight.current !== null) {
+      container.scrollTop += container.scrollHeight - prependHeight.current;
+      prependHeight.current = null;
+    } else if (container && shouldStick.current) {
+      container.scrollTop = container.scrollHeight;
+    }
+    previousThread.current = selected?.id ?? null;
+  }, [changed, selected, transcriptItems, visibleCount]);
+  useEffect(() => {
+    const container = chat.current;
+    const content = chatContent.current;
+    const observer =
+      container && content && typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            if (shouldStick.current) {
+              container.scrollTop = container.scrollHeight;
+            }
+          })
+        : undefined;
+    if (content) {
+      observer?.observe(content);
+    }
+    return () => {
+      if (observer) {
+        observer.disconnect();
+      }
+    };
+  }, []);
+  const streaming =
+    transcript.threadId === selected?.id
+      ? transcript.streaming
+      : selected?.streaming;
+  const latestPlan = historyItems.findLast((item) => item.kind === "plan");
+  const plan = isNonEmpty(latestPlan?.text) ? latestPlan : undefined;
+  const processingLabel =
+    selected?.sessionOperation === "branchSummary"
+      ? "Generating branch summary…"
+      : undefined;
+  const processing = selected?.status === "running" && streaming !== true;
+  const blocked = selected?.sessionOperation !== undefined;
+  return (
+    <section id="thread" aria-busy={blocked}>
+      <div
+        id="thread-content"
+        className={
+          selected?.interaction?.kind === "elicitation"
+            ? "answering"
+            : undefined
+        }
+        inert={blocked || selected?.interaction?.kind === "permission"}
+      >
+        <header id="thread-header">
+          <div className="thread-header-agent">
+            {!setup &&
+              selected &&
+              (selected.id === null ? (
+                <button
+                  type="button"
+                  className="thread-agent"
+                  title="Choose Agent for new Thread"
+                  onClick={() => {
+                    postMessage({ type: "chooseAgent" });
+                  }}
+                >
+                  {selected.agentId ? (
+                    <AgentIcon id={selected.agentId} icons={agentIcons} />
+                  ) : (
+                    "Choose Agent"
+                  )}
+                  {" ▾"}
+                </button>
+              ) : (
+                <span
+                  className="thread-agent"
+                  title="This Thread's Agent cannot be changed"
+                >
+                  {selected.agentId ? (
+                    <AgentIcon id={selected.agentId} icons={agentIcons} />
+                  ) : (
+                    "Choose Agent"
+                  )}
+                </span>
+              ))}
+          </div>
+          <div className="thread-title-group">
+            <button
+              id="rename-thread"
+              title={isNonEmpty(selected?.id) ? "Rename Thread" : undefined}
+              aria-label={
+                isNonEmpty(selected?.id)
+                  ? `Rename Thread: ${selected.name}`
+                  : undefined
+              }
+              disabled={!isNonEmpty(selected?.id)}
+              onClick={() => {
+                if (isNonEmpty(selected?.id)) {
+                  postMessage({ id: selected.id, type: "renameThread" });
+                }
+              }}
+            >
+              <span className="heading" id="thread-title">
+                {setup ? "Setup" : (selected?.name ?? "Thread")}
+              </span>
+              <SvgIcon className="thread-action-icon" kind="pencil" />
+            </button>
+          </div>
+          <div className="thread-header-actions">
+            <button
+              className="icon"
+              id="close-thread"
+              title="Close Thread"
+              aria-label="Close Thread"
+              disabled={!isNonEmpty(selected?.id)}
+              onClick={() => {
+                if (isNonEmpty(selected?.id)) {
+                  postMessage({ id: selected.id, type: "removeThread" });
+                }
+              }}
+            >
+              <SvgIcon className="thread-action-icon" kind="x" />
+            </button>
+          </div>
+        </header>
+        <div
+          id="chat"
+          ref={chat}
+          onScroll={(event) => {
+            const container = event.currentTarget;
+            shouldStick.current =
+              container.scrollHeight -
+                container.scrollTop -
+                container.clientHeight <
+              48;
+            if (
+              container.scrollTop < 100 &&
+              prependHeight.current === null &&
+              (selected?.hasOlder === true ||
+                visibleCount < historyItems.length)
+            ) {
+              prependHeight.current = container.scrollHeight;
+              if (selected?.hasOlder === true) {
+                postMessage({ type: "loadOlder" });
+              } else {
+                setVisibleCount((count) => count + 100);
+              }
+            }
+          }}
+        >
+          <div id="chat-content" ref={chatContent}>
+            {selected?.hasOlder === true ? (
+              <button
+                type="button"
+                onClick={() => {
+                  prependHeight.current = chat.current?.scrollHeight ?? null;
+                  postMessage({ type: "loadOlder" });
+                }}
+              >
+                Load older messages
+              </button>
+            ) : null}
+            <Transcript
+              onCopied={() => {
+                setCopyNotice((notice) => notice + 1);
+              }}
+              selected={selected && { ...selected, items: historyItems }}
+              onSetupOptionChange={(id, checked) => {
+                setSelectedSetupOptions((current) =>
+                  checked
+                    ? [...new Set([...current, id])]
+                    : current.filter((candidate) => candidate !== id)
+                );
+              }}
+              selectedSetupOptions={selectedSetupOptions}
+              setup={setup}
+              visibleCount={visibleCount}
+              key={setup ? "setup" : (selected?.id ?? "none")}
+            />
+            {selected?.interaction?.kind === "elicitation" ? (
+              <InteractionQuestion interaction={selected.interaction} />
+            ) : null}
+            <div id="notice">{selected?.error ?? ""}</div>
+            <div id="actions">
+              {selected?.status === "error" ? (
+                <button
+                  className="action primary"
+                  title="Retry"
+                  onClick={() => {
+                    postMessage({ type: "retry" });
+                  }}
+                >
+                  Retry
+                </button>
+              ) : null}
+              {selected?.authentication ? (
+                <button
+                  className="action primary"
+                  title="Authenticate Agent"
+                  onClick={() => {
+                    postMessage({ type: "authenticate" });
+                  }}
+                >
+                  {selected.authentication.label}
+                </button>
+              ) : null}
+            </div>
+            <Processing hidden={!processing} />
+          </div>
+        </div>
+        <SteeringControl messages={selected?.steering ?? []} />
+        <PlanControl plan={plan} key={plan?.id ?? "no-plan"} />
+        {selected?.interaction?.kind === "elicitation" ? (
+          <Interaction interaction={selected.interaction} />
+        ) : null}
+        <Composer
+          historyItems={visibleMessages}
+          onJumpMessage={(id) => {
+            const index = historyItems.findIndex((item) => item.id === id);
+            if (index !== -1 && index < historyItems.length - visibleCount) {
+              shouldStick.current = false;
+              setVisibleCount(historyItems.length);
+              requestAnimationFrame(() => {
+                const container = chat.current;
+                const target = [
+                  ...(container?.querySelectorAll<HTMLElement>(
+                    "[data-message-id]"
+                  ) ?? []),
+                ].find((element) => element.dataset.messageId === id);
+                if (container && target) {
+                  container.scrollTop +=
+                    target.getBoundingClientRect().top -
+                    container.getBoundingClientRect().top;
+                }
+              });
+              return;
+            }
+            const container = chat.current;
+            const target = [
+              ...(container?.querySelectorAll<HTMLElement>(
+                "[data-message-id]"
+              ) ?? []),
+            ].find((element) => element.dataset.messageId === id);
+            if (container && target) {
+              shouldStick.current = false;
+              // scrollIntoView can also shift the transcript horizontally.
+              container.scrollTop +=
+                target.getBoundingClientRect().top -
+                container.getBoundingClientRect().top;
+            }
+          }}
+          contextItems={contextItems}
+          copyNotice={copyNotice}
+          selected={selected}
+          setup={Boolean(setup)}
+          setupSelected={selectedSetupOptions}
+        />
+      </div>
+      {selected?.interaction?.kind === "permission" ? (
+        <Interaction interaction={selected.interaction} />
+      ) : null}
+      {isNonEmpty(processingLabel) ? (
+        <div
+          aria-live="polite"
+          className="thread-operation-overlay"
+          role="status"
+        >
+          <span className="thread-operation-spinner" aria-hidden="true" />
+          <span>{processingLabel}</span>
+        </div>
+      ) : null}
+    </section>
+  );
+};
